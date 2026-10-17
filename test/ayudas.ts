@@ -1,3 +1,5 @@
+import { exports } from "cloudflare:workers";
+import type { JugadorPublico } from "../src/shared/api";
 import type { Carta, Palo, Rng, Valor } from "../src/shared/cartas";
 
 const PALOS: ReadonlySet<string> = new Set<Palo>(["H", "D", "C", "S"]);
@@ -24,4 +26,15 @@ export function cs(texto: string): Carta[] {
 export function rngFijo(...valores: number[]): Rng {
   let i = 0;
   return () => valores[i++ % valores.length];
+}
+
+/** Registra un jugador por la API HTTP y devuelve su token y el jugador. Usa apodos únicos: el DO `Jugadores` global se comparte entre pruebas. */
+export async function registrar(apodo: string, pin = "1234"): Promise<{ token: string; jugador: JugadorPublico }> {
+  const r = await exports.default.fetch("http://x/api/registro", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ apodo, pin }),
+  });
+  if (r.status !== 201) throw new Error(`No se pudo registrar ${apodo}: ${r.status} ${await r.text()}`);
+  return (await r.json()) as { token: string; jugador: JugadorPublico };
 }
