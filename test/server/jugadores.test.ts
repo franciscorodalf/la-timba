@@ -317,6 +317,18 @@ describe("perfil", () => {
     });
   });
 
+  it("mayorPremio es 0 si solo ha perdido o solo ha empatado", async () => {
+    const j = nuevo();
+    const pierde = await crear(j, "Pierde");
+    const empata = await crear(j, "Empata");
+    await jugar(j, pierde, 100, 0);
+    await jugar(j, pierde, 50, 0);
+    await jugar(j, empata, 20, 20);
+
+    expect(await j.perfil(pierde)).toMatchObject({ partidas: 2, gananciasTotales: -150, mayorPremio: 0 });
+    expect(await j.perfil(empata)).toMatchObject({ partidas: 1, gananciasTotales: 0, mayorPremio: 0 });
+  });
+
   it("calcula partidas, ganancias, mayor premio y por juego", async () => {
     const j = nuevo();
     const id = await crear(j);
@@ -382,7 +394,7 @@ describe("ranking", () => {
   describe("otros órdenes", () => {
     /**
      * Ana: 12 partidas (8 ganadas, mejor racha 4, neto +4). Beto: 9 victorias seguidas (+9).
-     * Carla: 1 victoria de +500. Dani: sin partidas. Eva: lo pierde todo y se rescata (1 quiebra).
+     * Carla: 1 victoria de +500. Dani: un solo empate. Eva: lo pierde todo y se rescata (1 quiebra).
      */
     async function escenario() {
       const j = nuevo();
@@ -394,6 +406,7 @@ describe("ranking", () => {
       for (const gana of "WWWLWWWWLLWL") await jugar(j, ana, 1, gana === "W" ? 2 : 0);
       for (let i = 0; i < 9; i++) await jugar(j, beto, 1, 2);
       await jugar(j, carla, 100, 600);
+      await jugar(j, dani, 10, 10);
       await jugar(j, eva, 1000, 0);
       expect(await j.rescate(eva)).toEqual({ ok: true, fichas: 200 });
       return { j, ana, beto, carla, dani, eva };
@@ -431,17 +444,17 @@ describe("ranking", () => {
       expect((await j.ranking("victorias", beto)).yo).toBeNull();
     });
 
-    it("premio: mayor neto, solo con al menos una partida", async () => {
+    it("premio: mayor neto positivo; quien nunca ha ganado no clasifica", async () => {
       const { j, dani, eva } = await escenario();
       const r = await j.ranking("premio", dani);
       expect(r.top).toEqual([
         { posicion: 1, apodo: "Carla", valor: 500 },
         { posicion: 2, apodo: "Ana", valor: 1 },
         { posicion: 3, apodo: "Beto", valor: 1 },
-        { posicion: 4, apodo: "Eva", valor: -1000 },
       ]);
+      // Dani solo empató y Eva solo perdió: ninguno tiene un premio.
       expect(r.yo).toBeNull();
-      expect((await j.ranking("premio", eva)).yo).toEqual({ posicion: 4, apodo: "Eva", valor: -1000 });
+      expect((await j.ranking("premio", eva)).yo).toBeNull();
     });
 
     it("racha: mejor racha", async () => {

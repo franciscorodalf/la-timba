@@ -44,7 +44,8 @@ const ORIGEN_RANKING: Record<OrdenRanking, string> = {
     "SELECT j.id, j.apodo, COALESCE(SUM(r.neto), 0) AS valor FROM jugadores j LEFT JOIN resultados r ON r.jugador_id = j.id GROUP BY j.id",
   victorias: `SELECT j.id, j.apodo, CAST(ROUND(100.0 * SUM(r.resultado = 'gana') / COUNT(*)) AS INTEGER) AS valor
     FROM jugadores j JOIN resultados r ON r.jugador_id = j.id GROUP BY j.id HAVING COUNT(*) >= ${PARTIDAS_MINIMAS_VICTORIAS}`,
-  premio: "SELECT j.id, j.apodo, MAX(r.neto) AS valor FROM jugadores j JOIN resultados r ON r.jugador_id = j.id GROUP BY j.id",
+  premio:
+    "SELECT j.id, j.apodo, MAX(r.neto) AS valor FROM jugadores j JOIN resultados r ON r.jugador_id = j.id WHERE r.neto > 0 GROUP BY j.id",
   racha: "SELECT id, apodo, mejor_racha AS valor FROM jugadores",
   quiebras: "SELECT id, apodo, quiebras AS valor FROM jugadores",
 };
@@ -156,7 +157,7 @@ export class Jugadores extends DurableObject<Env> {
 
     const totales = this.sql
       .exec<{ partidas: number; ganancias: number; premio: number }>(
-        "SELECT COUNT(*) AS partidas, COALESCE(SUM(neto), 0) AS ganancias, COALESCE(MAX(neto), 0) AS premio FROM resultados WHERE jugador_id = ?",
+        "SELECT COUNT(*) AS partidas, COALESCE(SUM(neto), 0) AS ganancias, COALESCE(MAX(CASE WHEN neto > 0 THEN neto END), 0) AS premio FROM resultados WHERE jugador_id = ?",
         jugadorId,
       )
       .one();
