@@ -21,6 +21,8 @@ const fichas = async (jugadorId: number) => (await jugadores().perfil(jugadorId)
 const estadoMesa = (codigo: string) => runInDurableObject(mesa(codigo), (m) => m.estado);
 const alarmaDe = (codigo: string) => runInDurableObject(mesa(codigo), (_m, state) => state.storage.getAlarm());
 const pendientesGuardados = (codigo: string) => runInDurableObject(mesa(codigo), (_m, state) => state.storage.get<unknown[]>("pendientes"));
+/** El cobro a medias que guarda la mesa mientras espera a Jugadores (`undefined` o `null` si no hay ninguno). */
+const cobroGuardado = (codigo: string) => runInDurableObject(mesa(codigo), (_m, state) => state.storage.get("cobro"));
 
 /** Apuestas cobradas en las rondas de esta mesa que aún no se han liquidado. */
 const pendientesDe = (codigo: string) =>
@@ -149,13 +151,14 @@ async function cambiarEnv(codigo: string, cambios: (real: typeof env) => Record<
 type StubJugadores = ReturnType<typeof jugadores>;
 
 /**
- * Cambia, solo para esta mesa, `apostar` y/o `liquidar` de Jugadores por lo que devuelva `cambios(stub)` (el stub
- * real, para poder delegar en él); lo demás va al de verdad. Devuelve `arreglar()`.
+ * Cambia, solo para esta mesa, `apostar`, `anular` y/o `liquidar` de Jugadores por lo que devuelva `cambios(stub)` (el
+ * stub real, para poder delegar en él); lo demás va al de verdad. Devuelve `arreglar()`.
  */
 const cambiarJugadores = (
   codigo: string,
   cambios: (stub: StubJugadores) => {
     apostar?: (...a: Parameters<StubJugadores["apostar"]>) => Promise<unknown>;
+    anular?: (...a: Parameters<StubJugadores["anular"]>) => Promise<unknown>;
     liquidar?: (...a: Parameters<StubJugadores["liquidar"]>) => Promise<unknown>;
   },
 ) =>
@@ -166,6 +169,7 @@ const cambiarJugadores = (
         const stub = real.Jugadores.get(id);
         return {
           apostar: (...a: Parameters<StubJugadores["apostar"]>) => stub.apostar(...a),
+          anular: (...a: Parameters<StubJugadores["anular"]>) => stub.anular(...a),
           liquidar: (...a: Parameters<StubJugadores["liquidar"]>) => stub.liquidar(...a),
           ...cambios(stub),
         };
@@ -176,6 +180,26 @@ const cambiarJugadores = (
 const caido = async (): Promise<never> => {
   throw new Error("Jugadores caído");
 };
+
+/** `apostar` que cobra de verdad pero cuya respuesta no llega a la mesa. */
+const cobraYFalla =
+  (stub: StubJugadores) =>
+  async (...a: Parameters<StubJugadores["apostar"]>): Promise<never> => {
+    await stub.apostar(...a);
+    throw new Error("se perdió la respuesta");
+  };
+
+/**
+ * Deja en la mesa un cobro a medias, como si la instancia hubiera caído tras cobrar en Jugadores y antes de guardar la
+ * jugada: cobro hecho en Jugadores, intención guardada en "cobro" y la mesa fuera de memoria (reloj de vuelta en `T`).
+ */
+async function dejarCobroAMedias(codigo: string, jugadorId: number, cantidad: number): Promise<void> {
+  const cobro = { cobroId: crypto.randomUUID(), jugadorId, cantidad, rondaId: `${codigo}:blackjack:1` };
+  expect(await jugadores().apostar(jugadorId, cantidad, cobro.rondaId, cobro.cobroId)).toBe("ok");
+  await runInDurableObject(mesa(codigo), (_m, state) => state.storage.put("cobro", cobro));
+  await evictDurableObject(mesa(codigo));
+  await reloj(codigo, T);
+}
 
 /** ¿Aparece la carta en algún punto del mensaje? */
 function contiene(valor: unknown, carta: Carta): boolean {
@@ -718,6 +742,7 @@ describe("MesaBlackjack: Jugadores y la sala", () => {
       codigo,
       js: [ana],
     } = await nuevaMesa(1, "10S 9C 8H 7D KS");
+    const sala = await abrir(`/parties/partida/${codigo}`, ana.token);
     const conexion = await sentarse(codigo, ana.token);
     enviar(conexion, { t: "apostar", cantidad: 50 });
     await hasta(conexion, (m) => m.vista.manos.length === 1);
@@ -740,6 +765,8 @@ describe("MesaBlackjack: Jugadores y la sala", () => {
     expect(await fichas(ana.id)).toBe(950);
     expect(await pendientesDe(codigo)).toBe(1);
     expect(await pendientesGuardados(codigo)).toHaveLength(1);
+    // Sin pago no hay nada nuevo en el ranking de la noche.
+    expect((await hasta<MensajeSala>(sala, (m) => m.mesas.blackjack.fase === "resultado", "sala")).rankingNoche).toEqual([]);
 
     await arreglar();
     await vencer(codigo); // ronda nueva: se reintenta
@@ -747,6 +774,10 @@ describe("MesaBlackjack: Jugadores y la sala", () => {
     expect(await fichas(ana.id)).toBe(1050);
     expect(await pendientesDe(codigo)).toBe(0);
     expect(await pendientesGuardados(codigo)).toEqual([]);
+    // El pago tardío sí refresca el ranking de la sala.
+    const refrescada = await hasta<MensajeSala>(sala, (m) => m.rankingNoche.length > 0, "sala");
+    expect(refrescada.mesas.blackjack.fase).toBe("apuestas");
+    expect(refrescada.rankingNoche).toEqual([{ apodo: ana.apodo, neto: 50 }]);
   });
 
   it("si el último se va y la liquidación falla, la mesa dormida programa un reintento y después no deja alarma", async () => {
@@ -754,6 +785,7 @@ describe("MesaBlackjack: Jugadores y la sala", () => {
       codigo,
       js: [ana],
     } = await nuevaMesa(1);
+    const sala = await abrir(`/parties/partida/${codigo}`, ana.token);
     const conexion = await sentarse(codigo, ana.token);
     enviar(conexion, { t: "apostar", cantidad: 50 });
     await hasta(conexion, (m) => m.vista.manos.length === 1);
@@ -771,6 +803,8 @@ describe("MesaBlackjack: Jugadores y la sala", () => {
     expect(await pendientesGuardados(codigo)).toEqual([]);
     expect(await alarmaDe(codigo)).toBeNull();
     expect(await fichas(ana.id)).toBe(950);
+    // La alarma que pagó avisa a la sala para que refresque el ranking.
+    expect((await hasta<MensajeSala>(sala, (m) => m.rankingNoche.length > 0, "sala")).rankingNoche).toEqual([{ apodo: ana.apodo, neto: -50 }]);
   });
 
   it("si la sala no responde, la mesa sigue funcionando", async () => {
@@ -797,5 +831,215 @@ describe("MesaBlackjack: Jugadores y la sala", () => {
     expect(await fichas(ana.id)).toBe(950);
     expect(log).toHaveBeenCalled();
     await arreglar();
+  });
+});
+
+describe("MesaBlackjack: cobro en dos fases", () => {
+  it("si Jugadores cobra pero la respuesta se pierde, se anula: fichas como estaban, sin fila pendiente y el rescate libre", async () => {
+    const {
+      codigo,
+      js: [ana],
+    } = await nuevaMesa(1);
+    await ponerFichas(ana.id, 50);
+    const conexion = await sentarse(codigo, ana.token);
+    await conexion.recibir();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const arreglar = await cambiarJugadores(codigo, (stub) => ({ apostar: cobraYFalla(stub) }));
+
+    enviar(conexion, { t: "apostar", cantidad: 50 });
+    expect(await conexion.recibir()).toEqual({ t: "error", codigo: "no_disponible" });
+    expect(await fichas(ana.id)).toBe(50);
+    expect(await pendientesDe(codigo)).toBe(0);
+    expect(await cobroGuardado(codigo)).toBeUndefined();
+    expect((await estadoMesa(codigo)).manos).toEqual([]);
+
+    await arreglar();
+    await ponerFichas(ana.id, 0);
+    expect(await jugadores().rescate(ana.id)).toEqual({ ok: true, fichas: 200 });
+  });
+
+  it("si Jugadores contesta anulado, la apuesta no entra (no_disponible) y no queda cobro a medias", async () => {
+    const {
+      codigo,
+      js: [ana],
+    } = await nuevaMesa(1);
+    const conexion = await sentarse(codigo, ana.token);
+    await conexion.recibir();
+    const arreglar = await cambiarJugadores(codigo, () => ({ apostar: async () => "anulado" }));
+
+    enviar(conexion, { t: "apostar", cantidad: 50 });
+    expect(await conexion.recibir()).toEqual({ t: "error", codigo: "no_disponible" });
+    expect((await estadoMesa(codigo)).manos).toEqual([]);
+    expect(await cobroGuardado(codigo)).toBeUndefined();
+    expect(await fichas(ana.id)).toBe(1000);
+    await arreglar();
+  });
+
+  it("un cobro a medias de una instancia caída se anula en el siguiente evento", async () => {
+    const {
+      codigo,
+      js: [ana],
+    } = await nuevaMesa(1);
+    const conexion = await sentarse(codigo, ana.token);
+    await conexion.recibir();
+    await dejarCobroAMedias(codigo, ana.id, 50);
+    expect(await fichas(ana.id)).toBe(950);
+
+    enviar(conexion, { t: "pedir" });
+    expect(await conexion.recibir()).toEqual({ t: "error", codigo: "fase_incorrecta" });
+    expect(await fichas(ana.id)).toBe(1000);
+    expect(await pendientesDe(codigo)).toBe(0);
+    expect(await cobroGuardado(codigo)).toBeUndefined();
+    expect((await estadoMesa(codigo)).manos).toEqual([]);
+  });
+
+  it("un cobro a medias de una instancia caída se anula en la siguiente alarma", async () => {
+    const {
+      codigo,
+      js: [ana],
+    } = await nuevaMesa(1);
+    await (await sentarse(codigo, ana.token)).recibir();
+    await dejarCobroAMedias(codigo, ana.id, 50);
+
+    expect(await runDurableObjectAlarm(mesa(codigo))).toBe(true);
+    expect(await fichas(ana.id)).toBe(1000);
+    expect(await pendientesDe(codigo)).toBe(0);
+    expect(await cobroGuardado(codigo)).toBeUndefined();
+  });
+
+  it("si tampoco se puede anular, el cobro se guarda, una alarma lo reintenta en ≤ 60 s y entretanto no se cobra otro", async () => {
+    const {
+      codigo,
+      js: [ana],
+    } = await nuevaMesa(1);
+    const conexion = await sentarse(codigo, ana.token);
+    for (let i = 0; i < 3; i++) await vencer(codigo); // mesa dormida: el juego no tiene alarma
+    await hasta(conexion, (m) => m.vista.fase === "esperando");
+    expect(await alarmaDe(codigo)).toBeNull();
+
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    let anulaciones = 0;
+    const arreglar = await cambiarJugadores(codigo, (stub) => ({
+      apostar: cobraYFalla(stub),
+      anular: () => {
+        anulaciones++;
+        return caido();
+      },
+    }));
+    enviar(conexion, { t: "apostar", cantidad: 50 });
+    expect(await conexion.recibir()).toEqual({ t: "error", codigo: "no_disponible" });
+    expect(anulaciones).toBe(1);
+    expect(await fichas(ana.id)).toBe(950); // cobrado y aún sin anular
+    expect(await cobroGuardado(codigo)).toMatchObject({ jugadorId: ana.id, cantidad: 50, rondaId: `${codigo}:blackjack:1` });
+    const ahora = T + 3 * BJ.APUESTAS_MS;
+    expect(await alarmaDe(codigo)).toBe(ahora + 60_000);
+
+    // Mientras quede uno a medias no se cobra otro.
+    enviar(conexion, { t: "apostar", cantidad: 50 });
+    expect(await conexion.recibir()).toEqual({ t: "error", codigo: "no_disponible" });
+    expect(anulaciones).toBe(2);
+    expect(await fichas(ana.id)).toBe(950);
+
+    await arreglar();
+    expect(await runDurableObjectAlarm(mesa(codigo))).toBe(true);
+    expect(await fichas(ana.id)).toBe(1000);
+    expect(await pendientesDe(codigo)).toBe(0);
+    expect(await cobroGuardado(codigo)).toBeUndefined();
+    expect(await alarmaDe(codigo)).toBeNull();
+    expect((await estadoMesa(codigo)).manos).toEqual([]);
+  });
+
+  it("una acción que no cambia nada (Paso sin cambios) no se cobra", async () => {
+    const {
+      codigo,
+      js: [ana],
+    } = await nuevaMesa(1);
+    const conexion = await sentarse(codigo, ana.token);
+    await conexion.recibir();
+    // Reglas falsas para ana: su apuesta es un no-op (devuelve el mismo estado) aunque cueste 50.
+    const aplicar = blackjack.aplicar;
+    vi.spyOn(blackjack, "aplicar").mockImplementation((e, jugadorId, accion, ahora, rng) =>
+      jugadorId === ana.id && accion.t === "apostar" ? { ok: true, estado: e, eventos: [] } : aplicar(e, jugadorId, accion, ahora, rng),
+    );
+
+    enviar(conexion, { t: "apostar", cantidad: 50 });
+    enviar(conexion, { t: "pedir" });
+    expect(await conexion.recibir()).toEqual({ t: "error", codigo: "fase_incorrecta" }); // nada antes por la apuesta
+    expect(await fichas(ana.id)).toBe(1000);
+    expect(await pendientesDe(codigo)).toBe(0);
+  });
+});
+
+describe("MesaBlackjack: robustez", () => {
+  it("una alarma que falla rechaza (para que el runtime la reintente) y la cola sigue atendiendo", async () => {
+    const {
+      codigo,
+      js: [ana],
+    } = await nuevaMesa(1);
+    const conexion = await sentarse(codigo, ana.token);
+    await conexion.recibir();
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const tick = blackjack.tick;
+    const roto = vi.spyOn(blackjack, "tick");
+    const resultado = await runInDurableObject(mesa(codigo), (m) => {
+      const estado = m.estado;
+      roto.mockImplementation((e, ahora, rng) => {
+        if (e === estado) throw new Error("tick roto");
+        return tick(e, ahora, rng);
+      });
+      return m.onAlarm().then(
+        () => "resuelta",
+        (e: Error) => e.message,
+      );
+    });
+    expect(resultado).toBe("tick roto");
+    expect(log).toHaveBeenCalled();
+
+    roto.mockRestore();
+    enviar(conexion, { t: "apostar", cantidad: 50 });
+    expect(((await conexion.recibir()) as Estado).vista.manos).toHaveLength(1);
+  });
+
+  it("las dos pestañas de un jugador se cierran a la vez: un solo desconectar y su mano se resuelve", async () => {
+    // ana 10♠ 8♠ = 18, beto 10♥ 9♥ = 19; banca 9♣ 7♦ = 16, pide K♠ y se pasa.
+    const {
+      codigo,
+      js: [ana, beto],
+    } = await nuevaMesa(2, "10S 10H 9C 8S 9H 7D KS");
+    const cierres = await vigilarCierres(codigo);
+    const pestana1 = await sentarse(codigo, ana.token);
+    const pestana2 = await sentarse(codigo, ana.token);
+    const conexionB = await sentarse(codigo, beto.token);
+    enviar(pestana1, { t: "apostar", cantidad: 50 });
+    await hasta(conexionB, (m) => m.vista.manos.length === 1);
+
+    const desconectar = vi.spyOn(blackjack, "desconectar");
+    // Mientras Jugadores cobra (lento) la apuesta de beto, se cierran las dos pestañas de ana: ambos cierres esperan en la cola.
+    const arreglar = await cambiarJugadores(codigo, (stub) => ({
+      apostar: async (...a: Parameters<StubJugadores["apostar"]>) => {
+        await new Promise((resolver) => setTimeout(resolver, 50));
+        return stub.apostar(...a);
+      },
+    }));
+    enviar(conexionB, { t: "apostar", cantidad: 50 });
+    pestana1.cerrar();
+    pestana2.cerrar();
+    await cierres(2);
+    await arreglar();
+    expect(desconectar.mock.calls.filter(([, jugadorId]) => jugadorId === ana.id)).toHaveLength(1);
+    const tras = await estadoMesa(codigo);
+    expect(tras.asientos.find((a) => a.jugadorId === ana.id)?.conectado).toBe(false);
+    expect(tras.manos).toHaveLength(2);
+
+    await vencer(codigo); // reparto: la mano de ana, desconectada, se planta sola
+    const repartido = await hasta(conexionB, (m) => m.vista.fase === "decisiones");
+    expect(repartido.vista.manos.find((m) => m.jugadorId === ana.id)).toMatchObject({ cartas: cs("10S 8S"), estado: "plantado" });
+    enviar(conexionB, { t: "plantarse" });
+    await hasta(conexionB, (m) => m.vista.fase === "banca");
+    await vencer(codigo);
+    await hasta(conexionB, (m) => m.vista.fase === "resultado");
+    expect(await fichas(ana.id)).toBe(1050);
+    expect(await pendientesDe(codigo)).toBe(0);
   });
 });

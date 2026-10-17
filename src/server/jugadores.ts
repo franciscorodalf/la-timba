@@ -29,9 +29,12 @@ const ESQUEMA = [
     resultado TEXT,
     momento INTEGER
   )`,
-  // Sin clave: la carrera cobra varias apuestas del mismo jugador en la misma ronda.
-  "CREATE TABLE IF NOT EXISTS apuestas_pendientes (ronda_id TEXT, jugador_id INTEGER, cantidad INTEGER)",
+  // Varias filas por (ronda, jugador): la carrera cobra varias apuestas del mismo jugador en la misma ronda. Cada cobro
+  // lleva su clave de idempotencia (`cobro_id`), con la que se puede repetir o anular.
+  "CREATE TABLE IF NOT EXISTS apuestas_pendientes (ronda_id TEXT, jugador_id INTEGER, cantidad INTEGER, cobro_id TEXT UNIQUE)",
   "CREATE TABLE IF NOT EXISTS rondas_liquidadas (ronda_id TEXT PRIMARY KEY)",
+  // Cobros anulados: un `apostar` que llegue después con esa clave ya no cobra.
+  "CREATE TABLE IF NOT EXISTS cobros_anulados (cobro_id TEXT PRIMARY KEY)",
   "CREATE TABLE IF NOT EXISTS intentos (apodo TEXT PRIMARY KEY COLLATE NOCASE, fallos INTEGER, bloqueado_hasta INTEGER)",
   "CREATE INDEX IF NOT EXISTS resultados_por_jugador ON resultados(jugador_id)",
   "CREATE INDEX IF NOT EXISTS resultados_por_partida ON resultados(codigo_partida)",
@@ -198,16 +201,50 @@ export class Jugadores extends DurableObject<Env> {
     };
   }
 
-  /** Cobra `cantidad` y la deja pendiente hasta `liquidar`. Los límites de cada mesa los aplican las reglas del juego, no aquí. */
-  async apostar(jugadorId: number, cantidad: number, rondaId: string): Promise<"ok" | "sin_fichas" | "cantidad_invalida"> {
+  /**
+   * Cobra `cantidad` y la deja pendiente hasta `liquidar`. Los límites de cada mesa los aplican las reglas del juego, no aquí.
+   * `cobroId` hace el cobro idempotente: repetirlo devuelve "ok" sin cobrar otra vez, y si ya se anuló devuelve "anulado".
+   */
+  async apostar(
+    jugadorId: number,
+    cantidad: number,
+    rondaId: string,
+    cobroId: string,
+  ): Promise<"ok" | "sin_fichas" | "cantidad_invalida" | "anulado"> {
     if (!Number.isSafeInteger(cantidad) || cantidad <= 0) return "cantidad_invalida";
 
     return this.ctx.storage.transactionSync(() => {
+      if (this.sql.exec("SELECT 1 FROM apuestas_pendientes WHERE cobro_id = ?", cobroId).toArray().length > 0) return "ok";
+      if (this.sql.exec("SELECT 1 FROM cobros_anulados WHERE cobro_id = ?", cobroId).toArray().length > 0) return "anulado";
       const fila = this.sql.exec<{ fichas: number }>("SELECT fichas FROM jugadores WHERE id = ?", jugadorId).toArray()[0];
       if (fila === undefined || fila.fichas < cantidad) return "sin_fichas";
       this.sql.exec("UPDATE jugadores SET fichas = fichas - ? WHERE id = ?", cantidad, jugadorId);
-      this.sql.exec("INSERT INTO apuestas_pendientes (ronda_id, jugador_id, cantidad) VALUES (?, ?, ?)", rondaId, jugadorId, cantidad);
+      this.sql.exec(
+        "INSERT INTO apuestas_pendientes (ronda_id, jugador_id, cantidad, cobro_id) VALUES (?, ?, ?, ?)",
+        rondaId,
+        jugadorId,
+        cantidad,
+        cobroId,
+      );
       return "ok";
+    });
+  }
+
+  /**
+   * Deshace un cobro que la mesa no llegó a anotar: si sigue pendiente, devuelve las fichas y borra la fila. Siempre lo
+   * marca como anulado, para que un `apostar` con esa clave que llegue tarde no cobre. Idempotente; tras `liquidar` la
+   * fila ya no existe y no devuelve nada.
+   */
+  async anular(cobroId: string): Promise<void> {
+    this.ctx.storage.transactionSync(() => {
+      const fila = this.sql
+        .exec<{ jugador_id: number; cantidad: number }>("SELECT jugador_id, cantidad FROM apuestas_pendientes WHERE cobro_id = ?", cobroId)
+        .toArray()[0];
+      if (fila !== undefined) {
+        this.sql.exec("UPDATE jugadores SET fichas = fichas + ? WHERE id = ?", fila.cantidad, fila.jugador_id);
+        this.sql.exec("DELETE FROM apuestas_pendientes WHERE cobro_id = ?", cobroId);
+      }
+      this.sql.exec("INSERT INTO cobros_anulados (cobro_id) VALUES (?) ON CONFLICT DO NOTHING", cobroId);
     });
   }
 

@@ -452,7 +452,7 @@ describe("POST /api/rescate", () => {
   /** Apuesta todas las fichas y las pierde: deja al jugador en 0. */
   async function arruinar(id: number): Promise<void> {
     const rondaId = `ronda-${crypto.randomUUID()}`;
-    expect(await jugadores().apostar(id, 1000, rondaId)).toBe("ok");
+    expect(await jugadores().apostar(id, 1000, rondaId, crypto.randomUUID())).toBe("ok");
     await jugadores().liquidar({ rondaId, juego: "blackjack", codigoPartida: "ABCD", filas: [{ jugadorId: id, apuesta: 1000, pago: 0 }] }, Date.now());
   }
 
@@ -474,7 +474,7 @@ describe("POST /api/rescate", () => {
 
   it("409 apuestas_pendientes si tiene 0 fichas pero una apuesta sin liquidar", async () => {
     const { token, jugador } = await registrar(unico());
-    expect(await jugadores().apostar(jugador.id, 1000, `ronda-${crypto.randomUUID()}`)).toBe("ok");
+    expect(await jugadores().apostar(jugador.id, 1000, `ronda-${crypto.randomUUID()}`, crypto.randomUUID())).toBe("ok");
     const r = await llamar("/api/rescate", { metodo: "POST", token });
     expect(r.status).toBe(409);
     expect(r.cuerpo).toEqual({ error: "apuestas_pendientes" });

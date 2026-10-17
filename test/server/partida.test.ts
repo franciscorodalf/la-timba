@@ -62,7 +62,7 @@ async function esperar(condicion: () => boolean | Promise<boolean>, que: string)
 /** Apuesta y liquida una ronda de `neto` fichas (>0) del jugador en la partida, como haría una mesa. */
 async function ganar(jugadorId: number, codigo: string, neto: number, momento = Date.now()): Promise<void> {
   const rondaId = `ronda-${crypto.randomUUID()}`;
-  expect(await jugadores().apostar(jugadorId, 100, rondaId)).toBe("ok");
+  expect(await jugadores().apostar(jugadorId, 100, rondaId, crypto.randomUUID())).toBe("ok");
   await jugadores().liquidar({ rondaId, juego: "blackjack", codigoPartida: codigo, filas: [{ jugadorId, apuesta: 100, pago: 100 + neto }] }, momento);
 }
 

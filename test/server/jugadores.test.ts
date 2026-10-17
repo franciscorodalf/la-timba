@@ -21,6 +21,14 @@ const fichasDe = async (j: Stub, id: number): Promise<number> => (await j.perfil
 
 let contadorRondas = 0;
 const nuevaRonda = () => `ronda-${++contadorRondas}`;
+/** Clave de idempotencia de un cobro: cada `apostar` de la mesa lleva la suya. */
+const cobro = () => `cobro-${crypto.randomUUID()}`;
+
+/** Filas de `apuestas_pendientes` del jugador. */
+const pendientesDe = (j: Stub, jugadorId: number) =>
+  runInDurableObject(j, (_i, state) =>
+    state.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM apuestas_pendientes WHERE jugador_id = ?", jugadorId).one().n,
+  );
 
 /** Apuesta `apuesta` y liquida con `pago` una ronda de un solo jugador. */
 async function jugar(
@@ -31,7 +39,7 @@ async function jugar(
   extra: { juego?: IdJuego; codigoPartida?: string; ahora?: number } = {},
 ): Promise<void> {
   const rondaId = nuevaRonda();
-  expect(await j.apostar(jugadorId, apuesta, rondaId)).toBe("ok");
+  expect(await j.apostar(jugadorId, apuesta, rondaId, cobro())).toBe("ok");
   await j.liquidar(
     { rondaId, juego: extra.juego ?? "blackjack", codigoPartida: extra.codigoPartida ?? "ABCD", filas: [{ jugadorId, apuesta, pago }] },
     extra.ahora ?? T0,
@@ -215,38 +223,92 @@ describe("apostar", () => {
   it("descuenta y deja pendiente; sin fichas no descuenta", async () => {
     const j = nuevo();
     const id = await crear(j);
-    expect(await j.apostar(id, 300, "r1")).toBe("ok");
+    expect(await j.apostar(id, 300, "r1", cobro())).toBe("ok");
     expect(await fichasDe(j, id)).toBe(700);
 
-    expect(await j.apostar(id, 701, "r2")).toBe("sin_fichas");
+    expect(await j.apostar(id, 701, "r2", cobro())).toBe("sin_fichas");
     expect(await fichasDe(j, id)).toBe(700);
-    expect(await j.apostar(id, 700, "r2")).toBe("ok");
+    expect(await j.apostar(id, 700, "r2", cobro())).toBe("ok");
     expect(await fichasDe(j, id)).toBe(0);
   });
 
   it("apostar 1001 teniendo 1000 → sin_fichas y las fichas siguen en 1000", async () => {
     const j = nuevo();
     const id = await crear(j);
-    expect(await j.apostar(id, 1001, "r1")).toBe("sin_fichas");
+    expect(await j.apostar(id, 1001, "r1", cobro())).toBe("sin_fichas");
     expect(await fichasDe(j, id)).toBe(1000);
   });
 
   it("un jugador que no existe no puede apostar", async () => {
     const j = nuevo();
-    expect(await j.apostar(999, 10, "r1")).toBe("sin_fichas");
+    expect(await j.apostar(999, 10, "r1", cobro())).toBe("sin_fichas");
   });
 
   it("cantidad 0, -10, 50.5, NaN o Infinity → cantidad_invalida sin descontar", async () => {
     const j = nuevo();
     const id = await crear(j);
     for (const cantidad of [0, -10, 50.5, NaN, Infinity]) {
-      expect(await j.apostar(id, cantidad, "r1")).toBe("cantidad_invalida");
+      expect(await j.apostar(id, cantidad, "r1", cobro())).toBe("cantidad_invalida");
     }
     expect(await fichasDe(j, id)).toBe(1000);
     // Las apuestas rechazadas no dejan filas pendientes: si las dejaran, el rescate de abajo fallaría.
-    expect(await j.apostar(id, 1000, "r2")).toBe("ok");
+    expect(await j.apostar(id, 1000, "r2", cobro())).toBe("ok");
     await j.liquidar({ rondaId: "r2", juego: "blackjack", codigoPartida: "ABCD", filas: [{ jugadorId: id, apuesta: 1000, pago: 0 }] }, T0);
     expect(await j.rescate(id)).toEqual({ ok: true, fichas: 200 });
+  });
+});
+
+describe("apostar con cobroId y anular", () => {
+  it("repetir un apostar con el mismo cobroId no cobra dos veces", async () => {
+    const j = nuevo();
+    const id = await crear(j);
+    expect(await j.apostar(id, 100, "r1", "c1")).toBe("ok");
+    expect(await j.apostar(id, 100, "r1", "c1")).toBe("ok");
+    expect(await fichasDe(j, id)).toBe(900);
+    expect(await pendientesDe(j, id)).toBe(1);
+    // Otro cobro de la misma ronda (la carrera apuesta a varios caballos) sí se cobra.
+    expect(await j.apostar(id, 50, "r1", "c2")).toBe("ok");
+    expect(await fichasDe(j, id)).toBe(850);
+  });
+
+  it("anular devuelve el cobro una sola vez, borra la fila pendiente y deja rescatar", async () => {
+    const j = nuevo();
+    const id = await crear(j);
+    expect(await j.apostar(id, 1000, "r1", "c1")).toBe("ok");
+    expect(await j.rescate(id)).toEqual({ ok: false, error: "apuestas_pendientes" });
+
+    await j.anular("c1");
+    expect(await fichasDe(j, id)).toBe(1000);
+    expect(await pendientesDe(j, id)).toBe(0);
+    await j.anular("c1");
+    expect(await fichasDe(j, id)).toBe(1000);
+
+    // Sin la fila del cobro anulado, quedarse a 0 por otra ronda permite el rescate.
+    expect(await j.apostar(id, 1000, "r2", "c2")).toBe("ok");
+    await j.liquidar({ rondaId: "r2", juego: "blackjack", codigoPartida: "ABCD", filas: [{ jugadorId: id, apuesta: 1000, pago: 0 }] }, T0);
+    expect(await j.rescate(id)).toEqual({ ok: true, fichas: 200 });
+  });
+
+  it("anular antes de que llegue el apostar: el apostar devuelve anulado y no cobra", async () => {
+    const j = nuevo();
+    const id = await crear(j);
+    await j.anular("c1");
+    expect(await j.apostar(id, 100, "r1", "c1")).toBe("anulado");
+    expect(await fichasDe(j, id)).toBe(1000);
+    expect(await pendientesDe(j, id)).toBe(0);
+  });
+
+  it("anular un cobro ya liquidado no devuelve nada", async () => {
+    const j = nuevo();
+    const id = await crear(j);
+    expect(await j.apostar(id, 100, "r1", "c1")).toBe("ok");
+    await j.liquidar({ rondaId: "r1", juego: "blackjack", codigoPartida: "ABCD", filas: [{ jugadorId: id, apuesta: 100, pago: 0 }] }, T0);
+    expect(await fichasDe(j, id)).toBe(900);
+
+    await j.anular("c1");
+    expect(await fichasDe(j, id)).toBe(900);
+    expect(await j.apostar(id, 100, "r1", "c1")).toBe("anulado");
+    expect(await fichasDe(j, id)).toBe(900);
   });
 });
 
@@ -254,7 +316,7 @@ describe("liquidar", () => {
   it("suma el pago y es idempotente por rondaId", async () => {
     const j = nuevo();
     const id = await crear(j);
-    expect(await j.apostar(id, 50, "r1")).toBe("ok");
+    expect(await j.apostar(id, 50, "r1", cobro())).toBe("ok");
     const liquidacion = { rondaId: "r1", juego: "blackjack" as const, codigoPartida: "ABCD", filas: [{ jugadorId: id, apuesta: 50, pago: 100 }] };
 
     await j.liquidar(liquidacion, T0);
@@ -268,8 +330,8 @@ describe("liquidar", () => {
     const j = nuevo();
     const a = await crear(j, "Ana");
     const b = await crear(j, "Beto");
-    await j.apostar(a, 100, "r1");
-    await j.apostar(b, 200, "r1");
+    await j.apostar(a, 100, "r1", cobro());
+    await j.apostar(b, 200, "r1", cobro());
     await j.liquidar(
       {
         rondaId: "r1",
@@ -335,8 +397,8 @@ describe("rescate", () => {
     expect(await j.rescate(id)).toEqual({ ok: false, error: "tiene_fichas" });
 
     // Se apuesta todo en dos tramos de la misma ronda (como en la carrera).
-    expect(await j.apostar(id, 600, "r1")).toBe("ok");
-    expect(await j.apostar(id, 400, "r1")).toBe("ok");
+    expect(await j.apostar(id, 600, "r1", cobro())).toBe("ok");
+    expect(await j.apostar(id, 400, "r1", cobro())).toBe("ok");
     expect(await fichasDe(j, id)).toBe(0);
     expect(await j.rescate(id)).toEqual({ ok: false, error: "apuestas_pendientes" });
 
@@ -353,8 +415,8 @@ describe("rescate", () => {
   it("liquidar una ronda no borra las apuestas pendientes de otra", async () => {
     const j = nuevo();
     const id = await crear(j);
-    expect(await j.apostar(id, 900, "r1")).toBe("ok");
-    expect(await j.apostar(id, 100, "r2")).toBe("ok");
+    expect(await j.apostar(id, 900, "r1", cobro())).toBe("ok");
+    expect(await j.apostar(id, 100, "r2", cobro())).toBe("ok");
     await j.liquidar({ rondaId: "r1", juego: "blackjack", codigoPartida: "ABCD", filas: [{ jugadorId: id, apuesta: 900, pago: 0 }] }, T0);
     expect(await j.rescate(id)).toEqual({ ok: false, error: "apuestas_pendientes" });
 
@@ -428,7 +490,7 @@ describe("ranking", () => {
     for (let i = 0; i < 55; i++) {
       const id = await crear(j, `J${String(i).padStart(2, "0")}`);
       ids.push(id);
-      await j.apostar(id, i + 1, nuevaRonda());
+      await j.apostar(id, i + 1, nuevaRonda(), cobro());
     }
 
     const ultimo = await j.ranking("fichas", ids[54]);
@@ -559,14 +621,14 @@ describe("rankingPartida", () => {
     const carla = await crear(j, "Carla");
 
     // Partida ABCD: dos rondas. Ana +100 -40 = +60; Beto -50 +10 = -40; Carla solo juega en otra partida.
-    await j.apostar(ana, 100, "r1");
-    await j.apostar(beto, 50, "r1");
+    await j.apostar(ana, 100, "r1", cobro());
+    await j.apostar(beto, 50, "r1", cobro());
     await j.liquidar(
       { rondaId: "r1", juego: "blackjack", codigoPartida: "ABCD", filas: [{ jugadorId: ana, apuesta: 100, pago: 200 }, { jugadorId: beto, apuesta: 50, pago: 0 }] },
       T0,
     );
-    await j.apostar(ana, 40, "r2");
-    await j.apostar(beto, 10, "r2");
+    await j.apostar(ana, 40, "r2", cobro());
+    await j.apostar(beto, 10, "r2", cobro());
     await j.liquidar(
       { rondaId: "r2", juego: "carrera", codigoPartida: "ABCD", filas: [{ jugadorId: ana, apuesta: 40, pago: 0 }, { jugadorId: beto, apuesta: 10, pago: 20 }] },
       T0 + 1000,
