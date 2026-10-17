@@ -17,7 +17,7 @@ const rng = rngFijo(0.5);
 const RELLENO = crearBaraja(2);
 
 function estado(parcial: Partial<EstadoBJ> = {}): EstadoBJ {
-  return { ronda: 1, fase: "esperando", finFase: null, zapato: [], banca: [], asientos: [], manos: [], ...parcial };
+  return { ronda: 1, fase: "esperando", finFase: null, zapato: [], banca: [], asientos: [], manos: [], ventanasVacias: 0, ...parcial };
 }
 const asiento = (jugadorId: number, apodo: string, conectado = true) => ({ jugadorId, apodo, conectado });
 const mano = (jugadorId: number, apodo: string, parcial: Partial<ManoBJ> = {}): ManoBJ => ({
@@ -74,7 +74,7 @@ describe("crear, sentar y apuestas", () => {
 
   it("crear deja la mesa en espera con un zapato de 6 barajas barajado con el rng dado", () => {
     const e = blackjack.crear(T0, rngFijo(0.3));
-    expect(e).toMatchObject({ ronda: 1, fase: "esperando", finFase: null, banca: [], asientos: [], manos: [] });
+    expect(e).toMatchObject({ ronda: 1, fase: "esperando", finFase: null, banca: [], asientos: [], manos: [], ventanasVacias: 0 });
     expect(e.zapato).toHaveLength(312);
     expect(e.zapato).not.toEqual(crearBaraja(6));
     expect(blackjack.crear(T0, rngFijo(0.3)).zapato).toEqual(e.zapato);
@@ -318,6 +318,7 @@ describe("reparto", () => {
     expect(p.estado.fase).toBe("apuestas");
     expect(p.estado.finFase).toBe(T0 + BJ.APUESTAS_MS + 7 + BJ.APUESTAS_MS);
     expect(p.estado.ronda).toBe(1);
+    expect(p.estado.ventanasVacias).toBe(1);
     expect(p.eventos).toEqual([]);
     expect(p.liquidacion).toBeUndefined();
   });
@@ -336,6 +337,103 @@ describe("reparto", () => {
     const p = exito(blackjack.tick(e, T0 + BJ.APUESTAS_MS, rng));
     expect(p.estado.asientos).toEqual([asiento(2, "beto")]);
     expect(p.estado.fase).toBe("apuestas");
+  });
+});
+
+describe("mesa ociosa", () => {
+  const ociosa = () => exito(blackjack.sentar(blackjack.crear(T0, rng), 1, "ana", T0)).estado;
+
+  it("tres ventanas de apuestas vacías seguidas duermen la mesa: esperando, sin alarma, con los asientos", () => {
+    let e = ociosa();
+    let ahora = T0;
+    for (const esperadas of [1, 2]) {
+      ahora = e.finFase!;
+      e = exito(blackjack.tick(e, ahora, rng)).estado;
+      expect(e.fase).toBe("apuestas");
+      expect(e.ventanasVacias).toBe(esperadas);
+      expect(e.finFase).toBe(ahora + BJ.APUESTAS_MS);
+    }
+    const p = exito(blackjack.tick(e, e.finFase!, rng));
+    expect(p.estado.fase).toBe("esperando");
+    expect(p.estado.finFase).toBeNull();
+    expect(blackjack.proximaAlarma(p.estado)).toBeNull();
+    expect(p.estado.asientos).toEqual([asiento(1, "ana")]);
+    expect(p.estado.ronda).toBe(1);
+    expect(p.eventos).toEqual([]);
+    expect(p.liquidacion).toBeUndefined();
+    // y por mucho que pase el tiempo no vuelve a hacer nada
+    expect(exito(blackjack.tick(p.estado, T0 + 10 ** 9, rng)).estado).toEqual(p.estado);
+  });
+
+  it("apostar un jugador sentado en una mesa dormida reabre las apuestas con esa apuesta", () => {
+    const dormida = estado({ asientos: [asiento(1, "ana")], ventanasVacias: 3 });
+    const accion: AccionBJ = { t: "apostar", cantidad: 75 };
+    expect(blackjack.costo(dormida, 1, accion)).toBe(75);
+    const p = exito(blackjack.aplicar(dormida, 1, accion, T0 + 5_000, rng));
+    expect(p.estado.fase).toBe("apuestas");
+    expect(p.estado.finFase).toBe(T0 + 5_000 + BJ.APUESTAS_MS);
+    expect(p.estado.ventanasVacias).toBe(0);
+    expect(p.estado.manos).toEqual([mano(1, "ana", { apuesta: 75 })]);
+    expect(p.estado.ronda).toBe(1);
+    expect(p.eventos).toEqual([]);
+    expect(blackjack.proximaAlarma(p.estado)).toBe(T0 + 5_000 + BJ.APUESTAS_MS);
+  });
+
+  it("en una mesa dormida solo apostar es válido, y con las mismas reglas de siempre", () => {
+    const dormida = estado({ asientos: [asiento(1, "ana")], ventanasVacias: 3 });
+    for (const accion of [{ t: "pedir" }, { t: "plantarse" }, { t: "doblar" }] as AccionBJ[]) {
+      expect(error(blackjack.aplicar(dormida, 1, accion, T0, rng))).toBe("fase_incorrecta");
+    }
+    expect(error(blackjack.aplicar(dormida, 1, { t: "apostar", cantidad: 501 }, T0, rng))).toBe("apuesta_invalida");
+    expect(error(blackjack.aplicar(dormida, 2, { t: "apostar", cantidad: 50 }, T0, rng))).toBe("no_sentado");
+  });
+
+  it("sentarse en una mesa dormida (también quien ya estaba sentado) abre una ventana nueva y reinicia el contador", () => {
+    const dormida = estado({ asientos: [asiento(1, "ana")], ventanasVacias: 3 });
+    const nuevo = exito(blackjack.sentar(dormida, 2, "beto", T0 + 1_000)).estado;
+    expect(nuevo).toMatchObject({ fase: "apuestas", finFase: T0 + 1_000 + BJ.APUESTAS_MS, ventanasVacias: 0 });
+    expect(nuevo.asientos.map((a) => a.jugadorId)).toEqual([1, 2]);
+
+    const mismo = exito(blackjack.sentar(dormida, 1, "ana", T0 + 2_000)).estado;
+    expect(mismo).toMatchObject({ fase: "apuestas", finFase: T0 + 2_000 + BJ.APUESTAS_MS, ventanasVacias: 0 });
+    expect(mismo.asientos).toEqual([asiento(1, "ana")]);
+  });
+
+  it("una apuesta en una ventana reinicia el contador: hacen falta otras tres ventanas vacías para dormir", () => {
+    let e = ociosa();
+    e = exito(blackjack.tick(e, e.finFase!, rng)).estado; // vacía 1
+    e = exito(blackjack.tick(e, e.finFase!, rng)).estado; // vacía 2
+    expect(e.ventanasVacias).toBe(2);
+    e = exito(blackjack.aplicar(e, 1, { t: "apostar", cantidad: 50 }, e.finFase! - 1_000, rng)).estado;
+    e = exito(blackjack.tick(e, e.finFase!, rng)).estado; // reparte
+    expect(e.fase).toBe("decisiones");
+    expect(e.ventanasVacias).toBe(0);
+    e = exito(blackjack.aplicar(e, 1, { t: "plantarse" }, e.finFase! - 1_000, rng)).estado;
+    e = exito(blackjack.tick(e, e.finFase!, rng)).estado; // banca
+    e = exito(blackjack.tick(e, e.finFase!, rng)).estado; // resultado → ronda 2
+    expect(e).toMatchObject({ ronda: 2, fase: "apuestas", ventanasVacias: 0 });
+    for (const esperadas of [1, 2]) {
+      e = exito(blackjack.tick(e, e.finFase!, rng)).estado;
+      expect(e).toMatchObject({ fase: "apuestas", ventanasVacias: esperadas });
+    }
+    e = exito(blackjack.tick(e, e.finFase!, rng)).estado;
+    expect(e).toMatchObject({ fase: "esperando", finFase: null });
+  });
+
+  it("una ventana vacía con la mesa ya sin nadie conectado no cuenta: esperando con el contador a 0", () => {
+    const e = estado({ fase: "apuestas", finFase: T0, asientos: [asiento(1, "ana", false)], ventanasVacias: 2 });
+    const p = exito(blackjack.tick(e, T0, rng));
+    expect(p.estado).toMatchObject({ fase: "esperando", finFase: null, asientos: [], ventanasVacias: 0 });
+  });
+
+  it("desconectarse de una mesa dormida libera el asiento; salir también", () => {
+    const dormida = estado({ asientos: [asiento(1, "ana"), asiento(2, "beto")], ventanasVacias: 3 });
+    const sin1 = exito(blackjack.desconectar(dormida, 1, T0, rng));
+    expect(sin1.estado.asientos).toEqual([asiento(2, "beto")]);
+    expect(sin1.estado).toMatchObject({ fase: "esperando", finFase: null });
+    const sin2 = exito(blackjack.aplicar(sin1.estado, 2, { t: "salir" }, T0, rng));
+    expect(sin2.estado).toMatchObject({ fase: "esperando", finFase: null, asientos: [], manos: [] });
+    expect(sin2.liquidacion).toBeUndefined();
   });
 });
 
@@ -888,12 +986,25 @@ describe("vista", () => {
     expect(v.totalBanca).toBeNull();
   });
 
-  it("en banca y resultado las cartas de la banca se ven enteras", () => {
-    for (const fase of ["banca", "resultado"] as const) {
-      const v = blackjack.vista(enDecisiones({ fase, banca: cs("KD 6D 5S") }), 1) as VistaBJ;
-      expect(v.banca).toEqual(cs("KD 6D 5S"));
-      expect(v.totalBanca).toBe(21);
-    }
+  it("en banca (antes del tick que gira la carta) la carta tapada sigue oculta", () => {
+    const v = blackjack.vista(enDecisiones({ fase: "banca", finFase: T0, banca: cs("KD 6D") }), 1) as VistaBJ;
+    expect(v.banca).toEqual([c("KD"), null]);
+    expect(v.totalBanca).toBe(10);
+    expect(JSON.stringify(v)).not.toContain(JSON.stringify(c("6D")));
+  });
+
+  it("desde resultado las cartas de la banca se ven enteras", () => {
+    const v = blackjack.vista(enDecisiones({ fase: "resultado", banca: cs("KD 6D 5S") }), 1) as VistaBJ;
+    expect(v.banca).toEqual(cs("KD 6D 5S"));
+    expect(v.totalBanca).toBe(21);
+  });
+
+  it("la carta tapada se ve exactamente cuando el tick de banca la gira", () => {
+    const antes = enDecisiones({ fase: "banca", finFase: T0, banca: cs("KD 6D"), manos: [mano(1, "ana", { cartas: cs("10S 9H"), estado: "plantado" })] });
+    expect((blackjack.vista(antes, 1) as VistaBJ).banca[1]).toBeNull();
+    const p = exito(blackjack.tick(antes, T0, rng));
+    expect(p.eventos[0]).toEqual({ tipo: "carta_girada", carta: c("6D") });
+    expect((blackjack.vista(p.estado, 1) as VistaBJ).banca.slice(0, 2)).toEqual(cs("KD 6D"));
   });
 
   it("incluye las manos de todos con su total y sin el campo abandonada", () => {

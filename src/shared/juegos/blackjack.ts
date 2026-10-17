@@ -107,6 +107,8 @@ export interface EstadoBJ {
   banca: Carta[];
   asientos: { jugadorId: JugadorId; apodo: string; conectado: boolean }[];
   manos: ManoBJ[];
+  /** Ventanas de apuestas seguidas que se cerraron sin ninguna apuesta; al llegar a 3 la mesa pasa a `esperando`. */
+  ventanasVacias: number;
 }
 
 export interface VistaBJ {
@@ -121,6 +123,9 @@ export interface VistaBJ {
 }
 
 type Liquidacion = { ronda: number; filas: FilaLiquidacion[] };
+
+/** Ventanas de apuestas vacías seguidas tras las que la mesa deja de programar alarmas (los asientos se conservan). */
+const MAX_VENTANAS_VACIAS = 3;
 
 function exito(estado: EstadoBJ, eventos: Evento[] = [], liquidacion?: Liquidacion): Paso<EstadoBJ> {
   return liquidacion ? { ok: true, estado, eventos, liquidacion } : { ok: true, estado, eventos };
@@ -215,6 +220,7 @@ function nuevaRonda(e: EstadoBJ, ahora: number, rng: Rng, eventos: Evento[]): vo
   e.ronda += 1;
   e.manos = [];
   e.banca = [];
+  e.ventanasVacias = 0;
   e.asientos = e.asientos.filter((a) => a.conectado);
   if (e.zapato.length < BJ.MIN_ZAPATO) {
     e.zapato = barajar(crearBaraja(BJ.BARAJAS), rng);
@@ -229,30 +235,34 @@ function nuevaRonda(e: EstadoBJ, ahora: number, rng: Rng, eventos: Evento[]): vo
   }
 }
 
+/** Abre una ventana de apuestas nueva desde `esperando`. */
+function abrirApuestas(e: EstadoBJ, ahora: number): void {
+  e.fase = "apuestas";
+  e.finFase = ahora + BJ.APUESTAS_MS;
+  e.ventanasVacias = 0;
+}
+
 function sentar(e: EstadoBJ, jugadorId: JugadorId, apodo: string, ahora: number): Paso<EstadoBJ> {
   const existente = asientoDe(e, jugadorId);
-  if (existente?.conectado) return exito(e);
+  // Quien ya está sentado y conectado no cambia nada, salvo en una mesa dormida: sentarse la despierta.
+  if (existente?.conectado && e.fase !== "esperando") return exito(e);
+  if (!existente && e.asientos.length >= BJ.MAX_JUGADORES) return fallo("mesa_llena");
   const s = structuredClone(e);
-  if (existente) {
-    asientoDe(s, jugadorId)!.conectado = true;
-    return exito(s);
-  }
-  if (e.asientos.length >= BJ.MAX_JUGADORES) return fallo("mesa_llena");
-  s.asientos.push({ jugadorId, apodo, conectado: true });
-  if (s.fase === "esperando") {
-    s.fase = "apuestas";
-    s.finFase = ahora + BJ.APUESTAS_MS;
-  }
+  if (existente) asientoDe(s, jugadorId)!.conectado = true;
+  else s.asientos.push({ jugadorId, apodo, conectado: true });
+  if (s.fase === "esperando") abrirApuestas(s, ahora);
   return exito(s);
 }
 
-function apostar(e: EstadoBJ, jugadorId: JugadorId, cantidad: number): Paso<EstadoBJ> {
-  if (e.fase !== "apuestas") return fallo("fase_incorrecta");
+/** En `esperando` (mesa dormida) apostar es válido: abre una ventana nueva con esa apuesta. */
+function apostar(e: EstadoBJ, jugadorId: JugadorId, cantidad: number, ahora: number): Paso<EstadoBJ> {
+  if (e.fase !== "apuestas" && e.fase !== "esperando") return fallo("fase_incorrecta");
   if (!apuestaValida(cantidad)) return fallo("apuesta_invalida");
   if (manoDe(e, jugadorId)) return fallo("accion_invalida");
   const s = structuredClone(e);
   const apodo = asientoDe(s, jugadorId)!.apodo;
   s.manos.push({ jugadorId, apodo, apuesta: cantidad, cartas: [], estado: "jugando", doblada: false, abandonada: false });
+  if (s.fase === "esperando") abrirApuestas(s, ahora);
   return exito(s);
 }
 
@@ -320,12 +330,19 @@ function tick(e: EstadoBJ, ahora: number, rng: Rng): Paso<EstadoBJ> {
       return exito(e);
     case "apuestas":
       if (s.manos.length > 0) {
+        s.ventanasVacias = 0;
         repartir(s, ahora, rng, eventos);
       } else {
-        // Nadie apostó: otra ventana de apuestas, salvo que ya no quede nadie conectado (sin alarma eterna).
+        // Nadie apostó. Se retiran los desconectados y, si no queda nadie o ya van varias ventanas vacías seguidas,
+        // la mesa se duerme (sin alarma) hasta que alguien se siente o apueste; si no, otra ventana.
         s.asientos = s.asientos.filter((a) => a.conectado);
-        s.fase = s.asientos.length > 0 ? "apuestas" : "esperando";
-        s.finFase = s.asientos.length > 0 ? ahora + BJ.APUESTAS_MS : null;
+        s.ventanasVacias = s.asientos.length > 0 ? s.ventanasVacias + 1 : 0;
+        if (s.asientos.length > 0 && s.ventanasVacias < MAX_VENTANAS_VACIAS) {
+          s.finFase = ahora + BJ.APUESTAS_MS;
+        } else {
+          s.fase = "esperando";
+          s.finFase = null;
+        }
       }
       return exito(s, eventos);
     case "decisiones":
@@ -347,6 +364,11 @@ function desconectar(e: EstadoBJ, jugadorId: JugadorId, ahora: number): Paso<Est
   if (!asientoDe(e, jugadorId)) return exito(e);
   const s = structuredClone(e);
   asientoDe(s, jugadorId)!.conectado = false;
+  if (s.fase === "esperando") {
+    // Mesa dormida: no hay ronda que respetar, no se dejan asientos fantasma.
+    s.asientos = s.asientos.filter((a) => a.jugadorId !== jugadorId);
+    return exito(s);
+  }
   const m = manoDe(s, jugadorId);
   if (s.fase === "decisiones" && m?.estado === "jugando") m.estado = "plantado";
   cerrarDecisiones(s, ahora);
@@ -354,7 +376,8 @@ function desconectar(e: EstadoBJ, jugadorId: JugadorId, ahora: number): Paso<Est
 }
 
 function vista(e: EstadoBJ, jugadorId: JugadorId | null): VistaBJ {
-  const tapada = e.fase === "apuestas" || e.fase === "decisiones";
+  // La carta tapada no sale del servidor hasta que se gira (evento `carta_girada`, en el tick de `banca`).
+  const tapada = e.fase === "apuestas" || e.fase === "decisiones" || e.fase === "banca";
   const visibles = tapada ? e.banca.slice(0, 1) : e.banca;
   return {
     ronda: e.ronda,
@@ -385,6 +408,7 @@ export const blackjack: Juego<EstadoBJ, AccionBJ> = {
       banca: [],
       asientos: [],
       manos: [],
+      ventanasVacias: 0,
     };
   },
 
@@ -401,7 +425,7 @@ export const blackjack: Juego<EstadoBJ, AccionBJ> = {
     if (!asientoDe(e, jugadorId)) return fallo("no_sentado");
     switch (accion.t) {
       case "apostar":
-        return apostar(e, jugadorId, accion.cantidad);
+        return apostar(e, jugadorId, accion.cantidad, ahora);
       case "pedir":
       case "plantarse":
       case "doblar":
