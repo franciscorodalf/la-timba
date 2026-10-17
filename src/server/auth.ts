@@ -1,6 +1,6 @@
 // PIN (PBKDF2-SHA256) y tokens firmados (HMAC-SHA256). Solo Web Crypto: corre en el runtime de Workers.
 
-const ITERACIONES = 100_000; // máximo que permite Workers
+const ITERACIONES = 10_000; // con 100.000 se superan los 10 ms de CPU por invocación del plan gratuito (error 1102)
 const BYTES_SAL = 16;
 const BITS_HASH = 256;
 const VIGENCIA_TOKEN_MS = 30 * 24 * 60 * 60 * 1000;

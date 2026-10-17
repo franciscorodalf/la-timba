@@ -44,6 +44,15 @@ describe("hashPin", () => {
     expect(b.sal).toBe(sal);
   });
 
+  it("fija los parámetros de PBKDF2 (SHA-256, 10000 iteraciones, 256 bits) con un vector conocido", async () => {
+    // Calculado con Node: crypto.pbkdf2Sync("1234", Buffer.from(sal, "hex"), 10000, 32, "sha256")
+    const sal = "000102030405060708090a0b0c0d0e0f";
+    expect(await hashPin("1234", sal)).toEqual({
+      hash: "91ea059bae0333a2969fc8ccd7c77851dda43f5adb96baeea246a624cdf489ec",
+      sal,
+    });
+  });
+
   it("PINs distintos con la misma sal dan hashes distintos", async () => {
     const sal = "00112233445566778899aabbccddeeff";
     expect((await hashPin("1234", sal)).hash).not.toBe((await hashPin("1235", sal)).hash);
