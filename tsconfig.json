@@ -11,5 +11,5 @@
     "skipLibCheck": true,
     "types": ["@cloudflare/vitest-plugin/types"]
   },
-  "include": ["src", "test", "worker-configuration.d.ts", "vite.config.ts", "vitest.config.ts"]
+  "include": ["src", "test", "e2e", "worker-configuration.d.ts", "vite.config.ts", "vitest.config.ts", "playwright.config.ts"]
 }
