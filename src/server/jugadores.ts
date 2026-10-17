@@ -1,4 +1,275 @@
 import { DurableObject } from "cloudflare:workers";
+import type { FilaRanking, FilaRankingPartida, JugadorPublico, OrdenRanking, Perfil } from "../shared/api";
+import type { FilaLiquidacion, IdJuego } from "../shared/juegos/tipos";
+import { apodoValido, hashPin, pinValido, verificarPin } from "./auth";
 import type { Env } from "./index";
 
-export class Jugadores extends DurableObject<Env> {}
+const FICHAS_INICIALES = 1000;
+const FICHAS_RESCATE = 200;
+const MAX_FALLOS = 5;
+const BLOQUEO_MS = 15 * 60 * 1000;
+const TAMANO_TOP = 50;
+const PARTIDAS_MINIMAS_VICTORIAS = 10;
+
+const ESQUEMA = [
+  `CREATE TABLE IF NOT EXISTS jugadores (
+    id INTEGER PRIMARY KEY,
+    apodo TEXT UNIQUE COLLATE NOCASE,
+    pin_hash TEXT, pin_sal TEXT,
+    fichas INTEGER DEFAULT ${FICHAS_INICIALES},
+    quiebras INTEGER DEFAULT 0,
+    racha_actual INTEGER DEFAULT 0,
+    mejor_racha INTEGER DEFAULT 0,
+    creado_en INTEGER
+  )`,
+  `CREATE TABLE IF NOT EXISTS resultados (
+    id INTEGER PRIMARY KEY,
+    jugador_id INTEGER, juego TEXT, codigo_partida TEXT, ronda_id TEXT,
+    apuesta INTEGER, neto INTEGER,
+    resultado TEXT,
+    momento INTEGER
+  )`,
+  // Sin clave: la carrera cobra varias apuestas del mismo jugador en la misma ronda.
+  "CREATE TABLE IF NOT EXISTS apuestas_pendientes (ronda_id TEXT, jugador_id INTEGER, cantidad INTEGER)",
+  "CREATE TABLE IF NOT EXISTS rondas_liquidadas (ronda_id TEXT PRIMARY KEY)",
+  "CREATE TABLE IF NOT EXISTS intentos (apodo TEXT PRIMARY KEY COLLATE NOCASE, fallos INTEGER, bloqueado_hasta INTEGER)",
+  "CREATE INDEX IF NOT EXISTS resultados_por_jugador ON resultados(jugador_id)",
+  "CREATE INDEX IF NOT EXISTS resultados_por_partida ON resultados(codigo_partida)",
+];
+
+/** Una consulta por orden que devuelve (id, apodo, valor) solo de los jugadores que clasifican en él. */
+const ORIGEN_RANKING: Record<OrdenRanking, string> = {
+  fichas: "SELECT id, apodo, fichas AS valor FROM jugadores",
+  ganancias:
+    "SELECT j.id, j.apodo, COALESCE(SUM(r.neto), 0) AS valor FROM jugadores j LEFT JOIN resultados r ON r.jugador_id = j.id GROUP BY j.id",
+  victorias: `SELECT j.id, j.apodo, CAST(ROUND(100.0 * SUM(r.resultado = 'gana') / COUNT(*)) AS INTEGER) AS valor
+    FROM jugadores j JOIN resultados r ON r.jugador_id = j.id GROUP BY j.id HAVING COUNT(*) >= ${PARTIDAS_MINIMAS_VICTORIAS}`,
+  premio: "SELECT j.id, j.apodo, MAX(r.neto) AS valor FROM jugadores j JOIN resultados r ON r.jugador_id = j.id GROUP BY j.id",
+  racha: "SELECT id, apodo, mejor_racha AS valor FROM jugadores",
+  quiebras: "SELECT id, apodo, quiebras AS valor FROM jugadores",
+};
+
+type FilaJugador = { id: number; apodo: string; fichas: number };
+
+function leerIntentos(sql: SqlStorage, apodo: string): { fallos: number; bloqueadoHasta: number } {
+  const fila = sql.exec<{ fallos: number; bloqueado_hasta: number }>("SELECT fallos, bloqueado_hasta FROM intentos WHERE apodo = ?", apodo).toArray()[0];
+  return { fallos: fila?.fallos ?? 0, bloqueadoHasta: fila?.bloqueado_hasta ?? 0 };
+}
+
+function guardarIntentos(sql: SqlStorage, apodo: string, fallos: number, bloqueadoHasta: number): void {
+  sql.exec(
+    `INSERT INTO intentos (apodo, fallos, bloqueado_hasta) VALUES (?, ?, ?)
+     ON CONFLICT(apodo) DO UPDATE SET fallos = excluded.fallos, bloqueado_hasta = excluded.bloqueado_hasta`,
+    apodo,
+    fallos,
+    bloqueadoHasta,
+  );
+}
+
+/**
+ * Anota un PIN incorrecto. Es síncrona y relee el estado, porque entre el chequeo previo y aquí hubo un `await`
+ * (PBKDF2): si otro intento llegó a bloquear la cuenta, no se pisa el bloqueo. Al llegar al 5º fallo se bloquea
+ * y el contador vuelve a 0, de modo que al vencer el bloqueo no hay que limpiar nada.
+ */
+function registrarFallo(sql: SqlStorage, apodo: string, ahora: number) {
+  const previo = leerIntentos(sql, apodo);
+  if (ahora < previo.bloqueadoHasta) return { ok: false, error: "bloqueado", hasta: previo.bloqueadoHasta } as const;
+
+  const fallos = previo.fallos + 1;
+  if (fallos >= MAX_FALLOS) {
+    const hasta = ahora + BLOQUEO_MS;
+    guardarIntentos(sql, apodo, 0, hasta);
+    return { ok: false, error: "bloqueado", hasta } as const;
+  }
+  guardarIntentos(sql, apodo, fallos, previo.bloqueadoHasta);
+  return { ok: false, error: "pin", intentosRestantes: MAX_FALLOS - fallos } as const;
+}
+
+/** Jugadores, fichas, estadísticas y rankings. Una única instancia global (`idFromName("global")`). */
+export class Jugadores extends DurableObject<Env> {
+  private readonly sql: SqlStorage;
+
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    this.sql = ctx.storage.sql;
+    void ctx.blockConcurrencyWhile(async () => {
+      for (const sentencia of ESQUEMA) this.sql.exec(sentencia);
+    });
+  }
+
+  async registrar(
+    apodo: string,
+    pin: string,
+    ahora: number,
+  ): Promise<{ ok: true; jugador: JugadorPublico } | { ok: false; error: "apodo_invalido" | "pin_invalido" | "apodo_ocupado" }> {
+    if (!apodoValido(apodo)) return { ok: false, error: "apodo_invalido" };
+    if (!pinValido(pin)) return { ok: false, error: "pin_invalido" };
+
+    const { hash, sal } = await hashPin(pin);
+    // Tras el `await` no hay más esperas: el INSERT decide de forma atómica quién se queda con el apodo (único sin mayúsculas).
+    const fila = this.sql
+      .exec<FilaJugador>(
+        "INSERT INTO jugadores (apodo, pin_hash, pin_sal, creado_en) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING RETURNING id, apodo, fichas",
+        apodo,
+        hash,
+        sal,
+        ahora,
+      )
+      .toArray()[0];
+    return fila === undefined ? { ok: false, error: "apodo_ocupado" } : { ok: true, jugador: fila };
+  }
+
+  async entrar(
+    apodo: string,
+    pin: string,
+    ahora: number,
+  ): Promise<
+    | { ok: true; jugador: JugadorPublico }
+    | { ok: false; error: "no_existe" }
+    | { ok: false; error: "pin"; intentosRestantes: number }
+    | { ok: false; error: "bloqueado"; hasta: number }
+  > {
+    const fila = this.sql
+      .exec<FilaJugador & { pin_hash: string; pin_sal: string }>("SELECT id, apodo, fichas, pin_hash, pin_sal FROM jugadores WHERE apodo = ?", apodo)
+      .toArray()[0];
+    if (fila === undefined) return { ok: false, error: "no_existe" };
+
+    // El bloqueo se comprueba antes de derivar el PIN: PBKDF2 es CPU pura y no debe poder forzarse durante el bloqueo.
+    const { bloqueadoHasta } = leerIntentos(this.sql, fila.apodo);
+    if (ahora < bloqueadoHasta) return { ok: false, error: "bloqueado", hasta: bloqueadoHasta };
+
+    if (await verificarPin(pin, fila.pin_hash, fila.pin_sal)) {
+      this.sql.exec("UPDATE intentos SET fallos = 0 WHERE apodo = ?", fila.apodo);
+      return { ok: true, jugador: { id: fila.id, apodo: fila.apodo, fichas: fila.fichas } };
+    }
+    return registrarFallo(this.sql, fila.apodo, ahora);
+  }
+
+  async perfil(jugadorId: number): Promise<Perfil | null> {
+    const jugador = this.sql
+      .exec<FilaJugador & { quiebras: number; racha_actual: number; mejor_racha: number }>(
+        "SELECT id, apodo, fichas, quiebras, racha_actual, mejor_racha FROM jugadores WHERE id = ?",
+        jugadorId,
+      )
+      .toArray()[0];
+    if (jugador === undefined) return null;
+
+    const totales = this.sql
+      .exec<{ partidas: number; ganancias: number; premio: number }>(
+        "SELECT COUNT(*) AS partidas, COALESCE(SUM(neto), 0) AS ganancias, COALESCE(MAX(neto), 0) AS premio FROM resultados WHERE jugador_id = ?",
+        jugadorId,
+      )
+      .one();
+
+    const porJuego: Perfil["porJuego"] = { blackjack: { partidas: 0, victorias: 0 }, carrera: { partidas: 0, victorias: 0 } };
+    const filas = this.sql.exec<{ juego: IdJuego; partidas: number; victorias: number }>(
+      "SELECT juego, COUNT(*) AS partidas, SUM(resultado = 'gana') AS victorias FROM resultados WHERE jugador_id = ? GROUP BY juego",
+      jugadorId,
+    );
+    for (const { juego, partidas, victorias } of filas) porJuego[juego] = { partidas, victorias };
+
+    return {
+      id: jugador.id,
+      apodo: jugador.apodo,
+      fichas: jugador.fichas,
+      quiebras: jugador.quiebras,
+      rachaActual: jugador.racha_actual,
+      mejorRacha: jugador.mejor_racha,
+      partidas: totales.partidas,
+      gananciasTotales: totales.ganancias,
+      mayorPremio: totales.premio,
+      porJuego,
+    };
+  }
+
+  /** Cobra `cantidad` y la deja pendiente hasta `liquidar`. Los límites de cada mesa los aplican las reglas del juego, no aquí. */
+  async apostar(jugadorId: number, cantidad: number, rondaId: string): Promise<"ok" | "sin_fichas" | "cantidad_invalida"> {
+    if (!Number.isSafeInteger(cantidad) || cantidad <= 0) return "cantidad_invalida";
+
+    return this.ctx.storage.transactionSync(() => {
+      const fila = this.sql.exec<{ fichas: number }>("SELECT fichas FROM jugadores WHERE id = ?", jugadorId).toArray()[0];
+      if (fila === undefined || fila.fichas < cantidad) return "sin_fichas";
+      this.sql.exec("UPDATE jugadores SET fichas = fichas - ? WHERE id = ?", cantidad, jugadorId);
+      this.sql.exec("INSERT INTO apuestas_pendientes (ronda_id, jugador_id, cantidad) VALUES (?, ?, ?)", rondaId, jugadorId, cantidad);
+      return "ok";
+    });
+  }
+
+  /** Cierra una ronda: paga, anota resultados y rachas, y borra todas las apuestas pendientes de `rondaId`. Idempotente por `rondaId`. */
+  async liquidar(l: { rondaId: string; juego: IdJuego; codigoPartida: string; filas: FilaLiquidacion[] }, ahora: number): Promise<void> {
+    this.ctx.storage.transactionSync(() => {
+      const nueva = this.sql.exec("INSERT INTO rondas_liquidadas (ronda_id) VALUES (?) ON CONFLICT DO NOTHING RETURNING ronda_id", l.rondaId).toArray();
+      if (nueva.length === 0) return;
+
+      for (const { jugadorId, apuesta, pago } of l.filas) {
+        const neto = pago - apuesta;
+        const resultado = neto > 0 ? "gana" : neto < 0 ? "pierde" : "empata";
+        this.sql.exec("UPDATE jugadores SET fichas = fichas + ? WHERE id = ?", pago, jugadorId);
+        this.sql.exec(
+          "INSERT INTO resultados (jugador_id, juego, codigo_partida, ronda_id, apuesta, neto, resultado, momento) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+          jugadorId,
+          l.juego,
+          l.codigoPartida,
+          l.rondaId,
+          apuesta,
+          neto,
+          resultado,
+          ahora,
+        );
+        // En un UPDATE de SQLite todas las expresiones ven los valores anteriores de la fila.
+        if (resultado === "gana") {
+          this.sql.exec("UPDATE jugadores SET racha_actual = racha_actual + 1, mejor_racha = MAX(mejor_racha, racha_actual + 1) WHERE id = ?", jugadorId);
+        } else if (resultado === "pierde") {
+          this.sql.exec("UPDATE jugadores SET racha_actual = 0 WHERE id = ?", jugadorId);
+        }
+      }
+      this.sql.exec("DELETE FROM apuestas_pendientes WHERE ronda_id = ?", l.rondaId);
+    });
+  }
+
+  async rescate(jugadorId: number): Promise<{ ok: true; fichas: number } | { ok: false; error: "tiene_fichas" | "apuestas_pendientes" }> {
+    return this.ctx.storage.transactionSync(() => {
+      const fila = this.sql.exec<{ fichas: number }>("SELECT fichas FROM jugadores WHERE id = ?", jugadorId).toArray()[0];
+      // Un jugador que no existe tampoco es rescatable: no se toca nada.
+      if (fila === undefined || fila.fichas > 0) return { ok: false, error: "tiene_fichas" } as const;
+
+      const pendientes = this.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM apuestas_pendientes WHERE jugador_id = ?", jugadorId).one().n;
+      if (pendientes > 0) return { ok: false, error: "apuestas_pendientes" } as const;
+
+      this.sql.exec("UPDATE jugadores SET fichas = ?, quiebras = quiebras + 1 WHERE id = ?", FICHAS_RESCATE, jugadorId);
+      return { ok: true, fichas: FICHAS_RESCATE } as const;
+    });
+  }
+
+  /** Top 50 del orden pedido (valor DESC, apodo ASC) y la fila del jugador (si clasifica), esté o no en el top. */
+  async ranking(orden: OrdenRanking, jugadorId: number | null): Promise<{ top: FilaRanking[]; yo: FilaRanking | null }> {
+    const filas = this.sql
+      .exec<{ id: number; posicion: number; apodo: string; valor: number }>(
+        `WITH base AS (${ORIGEN_RANKING[orden]}),
+         ordenado AS (
+           SELECT id, apodo, valor, ROW_NUMBER() OVER (ORDER BY valor DESC, apodo COLLATE NOCASE ASC) AS posicion FROM base
+         )
+         SELECT id, posicion, apodo, valor FROM ordenado WHERE posicion <= ? OR id = ? ORDER BY posicion`,
+        TAMANO_TOP,
+        jugadorId,
+      )
+      .toArray();
+
+    const aFila = ({ posicion, apodo, valor }: FilaRanking): FilaRanking => ({ posicion, apodo, valor });
+    const mia = jugadorId === null ? undefined : filas.find((f) => f.id === jugadorId);
+    return { top: filas.filter((f) => f.posicion <= TAMANO_TOP).map(aFila), yo: mia === undefined ? null : aFila(mia) };
+  }
+
+  async rankingPartida(codigo: string): Promise<FilaRankingPartida[]> {
+    return this.sql
+      .exec<{ apodo: string; neto: number }>(
+        `SELECT j.apodo AS apodo, SUM(r.neto) AS neto
+         FROM resultados r JOIN jugadores j ON j.id = r.jugador_id
+         WHERE r.codigo_partida = ?
+         GROUP BY r.jugador_id
+         ORDER BY neto DESC, j.apodo COLLATE NOCASE ASC`,
+        codigo,
+      )
+      .toArray();
+  }
+}
