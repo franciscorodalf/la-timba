@@ -1,4 +1,4 @@
-import { getServerByName } from "partyserver";
+import { getServerByName, routePartykitRequest } from "partyserver";
 import { type JugadorPublico, ORDENES_RANKING, type OrdenRanking, type RespuestaRanking, type RespuestaSesion } from "../shared/api";
 import { rngCripto, type Rng } from "../shared/cartas";
 import { apodoValido, firmarToken, pinValido, verificarToken } from "./auth";
@@ -22,6 +22,8 @@ const ALFABETO_CODIGO = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 const LONGITUD_CODIGO = 4;
 const MAX_INTENTOS_CODIGO = 5;
 const CODIGO = /^[ABCDEFGHJKMNPQRSTUVWXYZ2-9]{4}$/;
+/** Un apodo o un PIN legítimos miden 16 y 4: pasado este límite no son credenciales, y no se mandan a Jugadores ni a PBKDF2. */
+const LONGITUD_MAXIMA_CREDENCIAL = 64;
 
 // ---------- Respuestas ----------
 
@@ -85,15 +87,19 @@ function normalizarCodigo(crudo: string): string | null {
   return CODIGO.test(codigo) ? codigo : null;
 }
 
-/** Abre una partida con un código libre; `null` si los `MAX_INTENTOS_CODIGO` sorteos chocan con salas abiertas. */
+/** ¿Hay una partida abierta con este código? Sondeo de solo lectura: un stub crudo, porque `getServerByName` escribe en el almacenamiento en cada llamada. */
+const partidaAbierta = (env: Env, codigo: string): Promise<boolean> => env.Partida.get(env.Partida.idFromName(codigo)).existe();
+
+/**
+ * Abre una partida con un código libre; `null` si los `MAX_INTENTOS_CODIGO` sorteos chocan con salas abiertas.
+ * `iniciar` comprueba y abre en un solo paso, así que dos peticiones simultáneas no pueden quedarse con el mismo código.
+ */
 async function abrirPartida(env: Env, creadorId: number, ahora: number): Promise<string | null> {
   const rng = rngCripto();
   for (let intento = 0; intento < MAX_INTENTOS_CODIGO; intento++) {
     const codigo = generarCodigo(rng);
     const sala = await getServerByName(env.Partida, codigo);
-    if (await sala.existe()) continue;
-    await sala.iniciar(creadorId, ahora);
-    return codigo;
+    if (await sala.iniciar(creadorId, ahora)) return codigo;
   }
   return null;
 }
@@ -119,6 +125,7 @@ const entrar: Manejador = async (c) => {
   if (cuerpo === null) return peticionInvalida();
   const { apodo, pin } = cuerpo;
   if (typeof apodo !== "string" || typeof pin !== "string") return peticionInvalida();
+  if (apodo.length > LONGITUD_MAXIMA_CREDENCIAL || pin.length > LONGITUD_MAXIMA_CREDENCIAL) return peticionInvalida();
 
   const r = await jugadores(c.env).entrar(apodo, pin, Date.now());
   if (r.ok) return json(await sesion(c.env, r.jugador));
@@ -146,8 +153,7 @@ const crearPartida = conSesion(async (c, { id }) => {
 async function consultarPartida(c: Contexto, codigoCrudo: string): Promise<Response> {
   const codigo = normalizarCodigo(codigoCrudo);
   if (codigo === null) return json({ existe: false });
-  const sala = await getServerByName(c.env.Partida, codigo);
-  return json({ existe: await sala.existe() });
+  return json({ existe: await partidaAbierta(c.env, codigo) });
 }
 
 const esOrden = (texto: string): texto is OrdenRanking => (ORDENES_RANKING as readonly string[]).includes(texto);
@@ -196,10 +202,52 @@ async function manejarApi(request: Request, env: Env): Promise<Response> {
   }
 }
 
+// ---------- WebSockets (/parties/*) ----------
+
+/** Las únicas rutas de /parties: la sala y las dos mesas de una partida, con su código (aún sin pasar a mayúsculas). */
+const RUTA_PARTY = /^\/parties\/(partida|mesa-blackjack|mesa-carrera)\/([A-Za-z2-9]{4})$/;
+
+/**
+ * Deja pasar la conexión a la sala o la mesa si trae un token válido y la partida existe. La identidad del token viaja
+ * a la sala en `x-jugador-id` y `x-apodo`: solo el Worker las pone (`set` descarta las que mande el cliente).
+ */
+async function autorizarConexion(request: Request, codigo: string, env: Env): Promise<Request | Response> {
+  const token = new URL(request.url).searchParams.get("token");
+  const jugador = token === null ? null : await verificarToken(token, env.TOKEN_SECRET, Date.now());
+  if (jugador === null) return noAutenticado();
+  if (!(await partidaAbierta(env, codigo))) return error(404, "partida_inexistente");
+
+  const cabeceras = new Headers(request.headers);
+  cabeceras.set("x-jugador-id", String(jugador.id));
+  cabeceras.set("x-apodo", jugador.apodo);
+  return new Request(request, { headers: cabeceras });
+}
+
+/** Atiende `/parties/*`: solo WebSockets autenticados. Cualquier excepción no controlada se registra y responde 503. */
+async function manejarParties(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const ruta = RUTA_PARTY.exec(url.pathname);
+  if (ruta === null) return error(404, "no_encontrado");
+
+  // Los códigos son en mayúsculas y el nombre de un Durable Object distingue mayúsculas: se normaliza antes de enrutar.
+  url.pathname = `/parties/${ruta[1]}/${ruta[2].toUpperCase()}`;
+  try {
+    const respuesta = await routePartykitRequest(new Request(url, request), env, {
+      onBeforeRequest: () => error(404, "no_encontrado"),
+      onBeforeConnect: (peticion, sala) => autorizarConexion(peticion, sala.name, env),
+    });
+    return respuesta ?? error(404, "no_encontrado");
+  } catch (e) {
+    console.error(e);
+    return descansando();
+  }
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const { pathname } = new URL(request.url);
     if (pathname.startsWith("/api/")) return manejarApi(request, env);
+    if (pathname.startsWith("/parties/")) return manejarParties(request, env);
     return new Response("No encontrado", { status: 404 });
   },
 };

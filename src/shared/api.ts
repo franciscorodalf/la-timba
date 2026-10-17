@@ -1,4 +1,4 @@
-import type { IdJuego } from "./juegos/tipos";
+import type { IdJuego, ResumenMesa } from "./juegos/tipos";
 
 export interface JugadorPublico {
   id: number;
@@ -40,4 +40,14 @@ export interface RespuestaSesion {
 export interface RespuestaRanking {
   top: FilaRanking[];
   yo: FilaRanking | null;
+}
+
+/** Mensaje servidor → cliente de la sala (`/parties/partida/<CODIGO>`): se envía al conectar, al desconectarse alguien y al cambiar una mesa. */
+export interface MensajeSala {
+  t: "sala";
+  codigo: string;
+  /** Apodos de los jugadores conectados, sin repetir, por orden de llegada. */
+  conectados: string[];
+  mesas: Record<IdJuego, ResumenMesa>;
+  rankingNoche: FilaRankingPartida[];
 }

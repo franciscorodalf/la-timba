@@ -1,6 +1,5 @@
 import { env, exports } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
-import { getServerByName } from "partyserver";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ORDENES_RANKING } from "../../src/shared/api";
 import { firmarToken, verificarToken } from "../../src/server/auth";
@@ -36,11 +35,11 @@ async function llamar(
 }
 
 const jugadores = () => env.Jugadores.get(env.Jugadores.idFromName("global"));
-const partida = (codigo: string) => getServerByName(env.Partida, codigo);
+const partida = (codigo: string) => env.Partida.get(env.Partida.idFromName(codigo));
 
 /** Abre una partida con un código concreto saltándose la API (para controlar el código). */
 async function abrirPartida(codigo: string, creadorId = 1): Promise<void> {
-  await (await partida(codigo)).iniciar(creadorId, Date.now());
+  await partida(codigo).iniciar(creadorId, Date.now());
 }
 
 /** Hace que `rngCripto` genere, en orden, los códigos dados (4 sorteos por código); después repite el último. */
@@ -154,6 +153,34 @@ describe("POST /api/entrar", () => {
       expect(r.cuerpo).toEqual({ error: "peticion_invalida" });
     }
   });
+
+  it("400 peticion_invalida con un apodo o un PIN de más de 64 caracteres, sin llegar a Jugadores; con 64 sigue su curso", async () => {
+    const trampa = {
+      idFromName: () => {
+        throw new Error("no debería tocar el Durable Object");
+      },
+    };
+    for (const cuerpo of [
+      { apodo: "a".repeat(65), pin: "1234" },
+      { apodo: "abc", pin: "1".repeat(65) },
+      { apodo: "a".repeat(10_000), pin: "1".repeat(10_000) },
+    ]) {
+      const res = await worker.fetch(
+        new Request("http://x/api/entrar", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(cuerpo) }),
+        entorno({ Jugadores: trampa }),
+      );
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: "peticion_invalida" });
+    }
+
+    const apodoLargo = await llamar("/api/entrar", { metodo: "POST", cuerpo: { apodo: "a".repeat(64), pin: "1234" } });
+    expect(apodoLargo.status).toBe(404);
+    expect(apodoLargo.cuerpo).toEqual({ error: "no_existe" });
+    const { jugador } = await registrar(unico());
+    const pinLargo = await llamar("/api/entrar", { metodo: "POST", cuerpo: { apodo: jugador.apodo, pin: "1".repeat(64) } });
+    expect(pinLargo.status).toBe(401);
+    expect(pinLargo.cuerpo).toEqual({ error: "pin", intentosRestantes: 4 });
+  });
 });
 
 describe("GET /api/yo", () => {
@@ -214,10 +241,13 @@ describe("POST /api/partidas", () => {
     expect(status).toBe(201);
     expect(cuerpo).toEqual({ codigo: expect.stringMatching(/^[ABCDEFGHJKMNPQRSTUVWXYZ2-9]{4}$/) });
 
-    const estado = await runInDurableObject(await partida(cuerpo.codigo), (_i, state) => state.storage.get("partida"));
+    const estado = await runInDurableObject(partida(cuerpo.codigo), (_i, state) => state.storage.get("partida"));
     expect(estado).toEqual({ creadaEn: expect.any(Number), creadorId: jugador.id, cerrada: false });
     expect((estado as { creadaEn: number }).creadaEn).toBeGreaterThanOrEqual(antes);
     expect((await llamar(`/api/partidas/${cuerpo.codigo}`)).cuerpo).toEqual({ existe: true });
+    // Si nadie llega a conectarse, la sala se cierra a los 30 min de crearse.
+    const alarma = await runInDurableObject(partida(cuerpo.codigo), (_i, state) => state.storage.getAlarm());
+    expect(alarma).toBe((estado as { creadaEn: number }).creadaEn + 30 * 60_000);
   });
 
   it("los códigos salen del alfabeto y no se repiten entre partidas", async () => {
@@ -257,9 +287,32 @@ describe("POST /api/partidas", () => {
     expect(r.cuerpo).toEqual({ error: "descansando" });
   });
 
+  it("decide con `iniciar` en un solo paso: 5 intentos como máximo y sin consultar `existe`", async () => {
+    const { token } = await registrar(unico());
+    const llamadas = { iniciar: 0, existe: 0 };
+    const ocupada = {
+      idFromName: (nombre: string) => nombre,
+      get: () => ({
+        setName: async () => {},
+        iniciar: async () => {
+          llamadas.iniciar++;
+          return false;
+        },
+        existe: async () => {
+          llamadas.existe++;
+          return false;
+        },
+      }),
+    };
+    const res = await worker.fetch(new Request("http://x/api/partidas", { method: "POST", headers: { authorization: `Bearer ${token}` } }), entorno({ Partida: ocupada }));
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: "descansando" });
+    expect(llamadas).toEqual({ iniciar: 5, existe: 0 });
+  });
+
   it("reutiliza el código de una partida cerrada y la deja abierta de nuevo", async () => {
     await abrirPartida("HHHH", 1);
-    await runInDurableObject(await partida("HHHH"), (_i, state) => state.storage.put("partida", { creadaEn: 1, creadorId: 1, cerrada: true }));
+    await runInDurableObject(partida("HHHH"), (_i, state) => state.storage.put("partida", { creadaEn: 1, creadorId: 1, cerrada: true }));
     expect((await llamar("/api/partidas/HHHH")).cuerpo).toEqual({ existe: false });
 
     forzarCodigos("HHHH");
@@ -268,7 +321,7 @@ describe("POST /api/partidas", () => {
     expect(r.status).toBe(201);
     expect(r.cuerpo).toEqual({ codigo: "HHHH" });
     expect((await llamar("/api/partidas/HHHH")).cuerpo).toEqual({ existe: true });
-    const estado = await runInDurableObject(await partida("HHHH"), (_i, state) => state.storage.get("partida"));
+    const estado = await runInDurableObject(partida("HHHH"), (_i, state) => state.storage.get("partida"));
     expect(estado).toMatchObject({ creadorId: jugador.id, cerrada: false });
   });
 });
@@ -316,6 +369,25 @@ describe("GET /api/partidas/:codigo", () => {
       expect(res.status, codigo).toBe(200);
       expect(await res.json(), codigo).toEqual({ existe: false });
     }
+  });
+
+  it("sondea con un stub crudo: no llama a setName (que escribiría en el almacenamiento de cada código consultado)", async () => {
+    const llamadas: string[] = [];
+    const sondeable = {
+      idFromName: (nombre: string) => nombre,
+      get: () => ({
+        setName: async () => {
+          llamadas.push("setName");
+        },
+        existe: async () => {
+          llamadas.push("existe");
+          return true;
+        },
+      }),
+    };
+    const res = await worker.fetch(new Request("http://x/api/partidas/ABCD"), entorno({ Partida: sondeable }));
+    expect(await res.json()).toEqual({ existe: true });
+    expect(llamadas).toEqual(["existe"]);
   });
 
   it("no necesita sesión", async () => {
