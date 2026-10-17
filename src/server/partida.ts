@@ -152,7 +152,7 @@ export class Partida extends Server<Env> {
       this.leerMesas(),
       this.ctx.storage.get<FilaRankingPartida[]>(CLAVE_RANKING).then((ranking) => ranking ?? []),
     ]);
-    const mensaje: MensajeSala = { t: "sala", codigo: this.name, conectados: this.conectados(), mesas, rankingNoche };
+    const mensaje: MensajeSala = { t: "sala", codigo: this.name, ahora: this.ahora(), conectados: this.conectados(), mesas, rankingNoche };
     this.broadcast(JSON.stringify(mensaje));
   }
 }

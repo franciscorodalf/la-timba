@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { miles } from "../formato";
+import { miles, valorAnimado } from "../formato";
 
 interface Props {
   valor: number;
@@ -10,8 +10,9 @@ interface Props {
 const movimientoReducido = (): boolean => typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 /**
- * Un número con punto de millares que, al cambiar, cuenta hasta el valor nuevo (frena al final). Al aparecer enseña su
- * valor sin animar, y con `prefers-reduced-motion` salta directo. Si cambia a mitad de cuenta, sigue desde donde iba.
+ * Un número con punto de millares que, al cambiar, cuenta hasta el valor nuevo (frena al final, sin salirse nunca del
+ * camino). Al aparecer enseña su valor sin animar, y con `prefers-reduced-motion` salta directo. Si cambia a mitad de
+ * cuenta, sigue desde donde iba.
  */
 export function Contador({ valor, ms = 700 }: Props) {
   const [enseñado, setEnseñado] = useState(valor);
@@ -28,10 +29,9 @@ export function Contador({ valor, ms = 700 }: Props) {
     const inicio = performance.now();
     let cuadro = 0;
     const paso = (ahora: number) => {
-      const avance = Math.min(1, (ahora - inicio) / ms);
-      actual.current = avance === 1 ? valor : desde + (valor - desde) * (1 - (1 - avance) ** 3);
+      actual.current = valorAnimado(desde, valor, ahora - inicio, ms);
       setEnseñado(actual.current);
-      if (avance < 1) cuadro = requestAnimationFrame(paso);
+      if (actual.current !== valor) cuadro = requestAnimationFrame(paso);
     };
     cuadro = requestAnimationFrame(paso);
     return () => cancelAnimationFrame(cuadro);

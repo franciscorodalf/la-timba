@@ -308,10 +308,28 @@ describe("Partida: sala", () => {
     expect(await conexion.recibir("sala")).toEqual({
       t: "sala",
       codigo,
+      ahora: expect.any(Number),
       conectados: [jugador.apodo],
       mesas: { blackjack: MESA_VACIA, carrera: MESA_VACIA },
       rankingNoche: [],
     });
+  });
+
+  it("cada 'sala' lleva la hora del reloj de la sala, para que los clientes calculen las cuentas atrás con el reloj del servidor", async () => {
+    const { token, codigo } = await nuevaPartida();
+    const t0 = 5_500_000_000_000;
+    await runInDurableObject(sala(codigo), (partida) => {
+      partida.ahora = () => t0;
+    });
+
+    const conexion = await abrir(codigo, token);
+    expect((await conexion.recibir("sala")).ahora).toBe(t0);
+
+    await runInDurableObject(sala(codigo), (partida) => {
+      partida.ahora = () => t0 + 7_000;
+    });
+    await sala(codigo).actualizarMesa("blackjack", { jugadores: [], fase: "esperando", finFase: null }, false);
+    expect((await conexion.recibir("sala")).ahora).toBe(t0 + 7_000);
   });
 
   it("dos jugadores: el segundo aparece en conectados del primero, por orden de llegada", async () => {
@@ -415,6 +433,7 @@ describe("Partida: sala", () => {
     expect(await conexionA.recibir()).toEqual({
       t: "sala",
       codigo,
+      ahora: expect.any(Number),
       conectados: [a.jugador.apodo],
       mesas: { blackjack: MESA_VACIA, carrera: MESA_VACIA },
       rankingNoche: [],

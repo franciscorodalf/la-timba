@@ -1,7 +1,8 @@
-import { type ReactNode, useEffect, useState } from "react";
+import type { ReactNode } from "react";
 import { Link } from "wouter";
 import type { IdJuego, ResumenMesa } from "../../shared/juegos/tipos";
 import { cuentaAtras } from "../formato";
+import { useAhoraServidor } from "../red/reloj";
 import { Avatar } from "./Avatar";
 
 interface Props {
@@ -14,32 +15,27 @@ const NOMBRES: Record<IdJuego, string> = { blackjack: "Blackjack", carrera: "Car
 /** Cuántos avatares caben en la tarjeta antes de resumir el resto en «+N». */
 const AVATARES_VISIBLES = 5;
 
-/** Lo que dice la tarjeta en cada fase, con la cuenta atrás ya escrita. Una fase que no está aquí se muestra como «En juego». */
-const FASES: Record<IdJuego, Record<string, (cuenta: ReactNode) => ReactNode>> = {
+interface TextoFase {
+  /** La fase tiene una cuenta atrás que enseñar. Las que no (`banca`, `carrera`) duran un instante: su `finFase` es el siguiente paso. */
+  cuenta: boolean;
+  texto: (cuenta: ReactNode) => ReactNode;
+}
+
+/** Lo que dice la tarjeta en cada fase. Una fase que no está aquí se muestra como «En juego». */
+const FASES: Record<IdJuego, Record<string, TextoFase>> = {
   blackjack: {
-    apuestas: (c) => <>Reparte en {c}</>,
-    decisiones: (c) => <>Jugando · {c}</>,
-    banca: () => "Juega la banca",
-    resultado: (c) => <>Nueva ronda en {c}</>,
+    apuestas: { cuenta: true, texto: (c) => <>Reparte en {c}</> },
+    decisiones: { cuenta: true, texto: (c) => <>Jugando · {c}</> },
+    banca: { cuenta: false, texto: () => "Juega la banca" },
+    resultado: { cuenta: true, texto: (c) => <>Nueva ronda en {c}</> },
   },
   carrera: {
-    apuestas: (c) => <>Sale en {c}</>,
-    carrera: () => "¡Corren los caballos!",
-    resultado: (c) => <>Nueva carrera en {c}</>,
+    apuestas: { cuenta: true, texto: (c) => <>Sale en {c}</> },
+    carrera: { cuenta: false, texto: () => "¡Corren los caballos!" },
+    resultado: { cuenta: true, texto: (c) => <>Nueva carrera en {c}</> },
   },
 };
-
-/** El reloj de la tarjeta: solo late (cuatro veces por segundo, para no atrasarse un segundo entero) mientras haya una cuenta atrás. */
-function useAhora(activo: boolean): number {
-  const [ahora, setAhora] = useState(Date.now);
-  useEffect(() => {
-    if (!activo) return;
-    setAhora(Date.now());
-    const reloj = setInterval(() => setAhora(Date.now()), 250);
-    return () => clearInterval(reloj);
-  }, [activo]);
-  return ahora;
-}
+const FASE_DESCONOCIDA: TextoFase = { cuenta: false, texto: () => "En juego" };
 
 /** Pica para el blackjack y herradura para la carrera. */
 function Icono({ juego }: { juego: IdJuego }) {
@@ -53,7 +49,7 @@ function Icono({ juego }: { juego: IdJuego }) {
       ) : (
         <>
           <path fill="none" stroke="currentColor" strokeWidth="3.6" strokeLinecap="round" d="M6.5 4.5v7a5.5 5.5 0 0 0 11 0v-7" />
-          <g className="mesa__clavos">
+          <g className="sala-mesa__clavos">
             <circle cx="6.5" cy="7" r="0.9" />
             <circle cx="6.5" cy="10.5" r="0.9" />
             <circle cx="17.5" cy="7" r="0.9" />
@@ -69,32 +65,31 @@ function Icono({ juego }: { juego: IdJuego }) {
 export function TarjetaMesa({ juego, resumen }: Props) {
   const nombre = NOMBRES[juego];
   const { jugadores, fase, finFase } = resumen;
-  const ahora = useAhora(finFase !== null);
+  const textoFase = FASES[juego][fase] ?? FASE_DESCONOCIDA;
+  const conCuenta = finFase !== null && textoFase.cuenta;
+  const ahora = useAhoraServidor(conCuenta);
 
   let estado: ReactNode;
   if (fase === "esperando") estado = jugadores.length === 0 ? "Mesa libre" : "Esperando apuestas";
-  else {
-    const texto = FASES[juego][fase] ?? (() => "En juego");
-    estado = texto(finFase === null ? null : <b className="mesa__cuenta">{cuentaAtras(finFase - ahora)}</b>);
-  }
+  else estado = textoFase.texto(conCuenta ? <b className="sala-mesa__cuenta">{cuentaAtras(finFase - ahora)}</b> : null);
 
   return (
-    <article className="mesa">
-      <div className="mesa__icono">
+    <article className="sala-mesa">
+      <div className="sala-mesa__icono">
         <Icono juego={juego} />
       </div>
-      <div className="mesa__cuerpo">
-        <h3 className="mesa__nombre">{nombre}</h3>
-        <p className="mesa__estado">
+      <div className="sala-mesa__cuerpo">
+        <h3 className="sala-mesa__nombre">{nombre}</h3>
+        <p className="sala-mesa__estado">
           {fase !== "esperando" && (
-            <span className="mesa__vivo" aria-hidden="true">
+            <span className="sala-mesa__vivo" aria-hidden="true">
               ●
             </span>
           )}
           <span>{estado}</span>
         </p>
         {jugadores.length > 0 && (
-          <ul className="avatares" aria-label={`Sentados en ${nombre}`}>
+          <ul className="sala-avatares" aria-label={`Sentados en ${nombre}`}>
             {jugadores.slice(0, AVATARES_VISIBLES).map((apodo) => (
               <li key={apodo}>
                 <Avatar apodo={apodo} />
@@ -102,7 +97,7 @@ export function TarjetaMesa({ juego, resumen }: Props) {
               </li>
             ))}
             {jugadores.length > AVATARES_VISIBLES && (
-              <li className="avatares__mas">
+              <li className="sala-avatares__mas">
                 <span aria-hidden="true">+{jugadores.length - AVATARES_VISIBLES}</span>
                 <span className="solo-lectores">y {jugadores.length - AVATARES_VISIBLES} más</span>
               </li>
@@ -110,7 +105,7 @@ export function TarjetaMesa({ juego, resumen }: Props) {
           </ul>
         )}
       </div>
-      <Link href={`/${juego}`} className="mesa__ir" aria-label={`Entrar en ${nombre}`}>
+      <Link href={`/${juego}`} className="sala-mesa__ir" aria-label={`Entrar en ${nombre}`}>
         Entrar
       </Link>
     </article>

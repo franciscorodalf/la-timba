@@ -1,0 +1,76 @@
+/* Inicio: crear partida o unirse con un código. */
+
+.inicio__barra {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.inicio__barra .boton {
+  min-height: 44px;
+  padding: 0 18px;
+}
+
+.inicio-jugador {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 4px 16px 4px 4px;
+  border-radius: 999px;
+  border: 1px solid rgba(243, 231, 196, 0.18);
+  background: rgba(0, 0, 0, 0.25);
+  font-size: 0.9375rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inicio-jugador .avatar-jugador {
+  width: 32px;
+  height: 32px;
+  font-size: 0.875rem;
+}
+
+.inicio-separador {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-block: -12px;
+  color: var(--crema-tenue);
+  font-size: 0.8125rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.inicio-separador::before,
+.inicio-separador::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+}
+
+.inicio-separador::before {
+  background: linear-gradient(90deg, transparent, rgba(212, 175, 55, 0.5));
+}
+
+.inicio-separador::after {
+  background: linear-gradient(270deg, transparent, rgba(212, 175, 55, 0.5));
+}
+
+/* El código de partida: cuatro letras grandes y espaciadas, como las cifras del PIN. */
+.campo__control input.inicio__codigo {
+  text-align: center;
+  font-family: var(--fuente-titulo);
+  font-weight: 600;
+  font-size: 1.5rem;
+  letter-spacing: 0.5em;
+  text-indent: 0.5em;
+  text-transform: uppercase;
+}
+
+.campo__control input.inicio__codigo::placeholder {
+  color: rgba(243, 231, 196, 0.25);
+}

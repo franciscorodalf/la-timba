@@ -67,7 +67,7 @@ export function Inicio() {
   return (
     <main className="pantalla pantalla--entrada">
       <div className="inicio__barra aparece">
-        <span className="jugador">
+        <span className="inicio-jugador">
           <Avatar apodo={jugador?.apodo ?? ""} />
           {jugador?.apodo}
         </span>
@@ -98,7 +98,7 @@ export function Inicio() {
         </Boton>
       </section>
 
-      <p className="separador aparece" style={retardo(200)} aria-hidden="true">
+      <p className="inicio-separador aparece" style={retardo(200)} aria-hidden="true">
         o
       </p>
 
@@ -109,7 +109,7 @@ export function Inicio() {
           etiqueta="Código"
           ayuda={incompleto && codigo.length < LONGITUD_CODIGO ? "El código tiene 4 caracteres" : "Te lo da quien creó la partida"}
           invalido={incompleto && codigo.length < LONGITUD_CODIGO}
-          className="campo__codigo"
+          className="inicio__codigo"
           placeholder="ABCD"
           value={codigo}
           onChange={(e) => {

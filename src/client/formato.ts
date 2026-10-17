@@ -12,3 +12,12 @@ export function cuentaAtras(ms: number): string {
   const segundos = Math.max(0, Math.ceil(ms / 1000));
   return `${Math.floor(segundos / 60)}:${String(segundos % 60).padStart(2, "0")}`;
 }
+
+/**
+ * El valor de una cuenta animada de `desde` a `hasta` cuando han pasado `transcurrido` de `ms` milisegundos: frena al final
+ * y nunca se sale del camino (un fotograma con marca de tiempo anterior al inicio no hace bajar de `desde`).
+ */
+export function valorAnimado(desde: number, hasta: number, transcurrido: number, ms: number): number {
+  const avance = ms <= 0 ? 1 : Math.min(1, Math.max(0, transcurrido / ms));
+  return avance === 1 ? hasta : desde + (hasta - desde) * (1 - (1 - avance) ** 3);
+}

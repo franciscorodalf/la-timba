@@ -390,7 +390,7 @@ export abstract class Mesa<E extends { ronda: number }, A extends { t: string }>
   }
 
   private mensajeEstado(jugadorId: JugadorId, eventos: Evento[]): MensajeMesa<unknown> {
-    return { t: "estado", version: this.version, vista: this.juego.vista(this.estado, jugadorId), eventos };
+    return { t: "estado", version: this.version, ahora: this.ahora(), vista: this.juego.vista(this.estado, jugadorId), eventos };
   }
 
   private enviar(conn: Connection, mensaje: MensajeMesa<unknown>): void {

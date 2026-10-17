@@ -1,0 +1,54 @@
+/* Marca: logo, palos y lema. Lo usan la entrada, el inicio y las pantallas de aviso. */
+
+.marca {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.marca__palos {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  max-width: 280px;
+  color: var(--oro);
+  font-size: 0.9rem;
+  line-height: 1;
+}
+
+.marca__palos::before,
+.marca__palos::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+}
+
+.marca__palos::before {
+  background: linear-gradient(90deg, transparent, rgba(212, 175, 55, 0.7));
+}
+
+.marca__palos::after {
+  background: linear-gradient(270deg, transparent, rgba(212, 175, 55, 0.7));
+}
+
+.marca__logo {
+  font-weight: 800;
+  font-size: clamp(2.9rem, 13vw, 4.25rem);
+  line-height: 1.05;
+  letter-spacing: 0.01em;
+  color: var(--oro);
+  background: linear-gradient(180deg, var(--oro-claro) 10%, var(--oro) 52%, var(--oro-oscuro) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 2px 0 var(--madera-1)) drop-shadow(0 0 22px rgba(212, 175, 55, 0.35));
+}
+
+.marca__lema {
+  max-width: 30ch;
+  color: var(--crema);
+  opacity: 0.88;
+  text-wrap: balance;
+}

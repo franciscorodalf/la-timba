@@ -159,8 +159,10 @@ describe("MesaBlackjack: rondas y fichas", () => {
     } = await nuevaMesa(1, "10S 9C 8H 7D KS");
     const conexion = await sentarse(codigo, ana.token);
     const inicial: Estado = await conexion.recibir();
+    // `ahora` es la hora del reloj de la mesa (aquí fijo en T): con ella los clientes calculan las cuentas atrás.
     expect(inicial).toMatchObject({
       t: "estado",
+      ahora: T,
       eventos: [],
       vista: { ronda: 1, fase: "apuestas", finFase: T + BJ.APUESTAS_MS, manos: [], sentados: [ana.apodo], yo: ana.id },
     });
@@ -511,6 +513,7 @@ describe("MesaBlackjack: rondas y fichas", () => {
     enviar(conexion, { t: "apostar", cantidad: 50 });
     const despierta: Estado = await conexion.recibir();
     const ahora = T + 3 * BJ.APUESTAS_MS;
+    expect(despierta.ahora).toBe(ahora); // el reloj de la mesa ya avanzó: cada estado lleva su hora, no la de la conexión
     expect(despierta.vista).toMatchObject({ fase: "apuestas", finFase: ahora + BJ.APUESTAS_MS, manos: [{ jugadorId: ana.id, apuesta: 50 }] });
     expect(await fichas(ana.id)).toBe(950);
     expect(await alarmaDe(codigo)).toBe(ahora + BJ.APUESTAS_MS);

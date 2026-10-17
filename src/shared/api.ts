@@ -46,6 +46,8 @@ export interface RespuestaRanking {
 export interface MensajeSala {
   t: "sala";
   codigo: string;
+  /** La hora del servidor (ms desde 1970) al enviarlo. Los instantes que trae (`finFase`) son suyos: el cliente calcula lo que falta con esta hora, no con la de su reloj. */
+  ahora: number;
   /** Apodos de los jugadores conectados, sin repetir, por orden de llegada. */
   conectados: string[];
   mesas: Record<IdJuego, ResumenMesa>;
@@ -54,6 +56,9 @@ export interface MensajeSala {
 
 /**
  * Mensaje servidor → cliente de una mesa (`/parties/mesa-<juego>/<CODIGO>`). `estado` lleva la vista de quien lo recibe y
- * los `eventos` ocurridos desde el estado anterior (vacíos al conectar); `version` crece con cada cambio de la mesa.
+ * los `eventos` ocurridos desde el estado anterior (vacíos al conectar); `version` crece con cada cambio de la mesa y
+ * `ahora` es la hora del servidor al enviarlo (como en `MensajeSala`: los `finFase` de la vista son instantes suyos).
  */
-export type MensajeMesa<V> = { t: "estado"; version: number; vista: V; eventos: Evento[] } | { t: "error"; codigo: CodigoError };
+export type MensajeMesa<V> =
+  | { t: "estado"; version: number; ahora: number; vista: V; eventos: Evento[] }
+  | { t: "error"; codigo: CodigoError };

@@ -1,0 +1,46 @@
+/* Fichas: la ficha de casino, los números que cuentan y el saludo «Hola, tienes N fichas». */
+
+.saludo {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 1.0625rem;
+  color: var(--crema-tenue);
+}
+
+.saludo b {
+  font-family: var(--fuente-titulo);
+  font-weight: 600;
+  font-size: 1.35em;
+  color: var(--oro);
+}
+
+.ficha {
+  flex: none;
+  filter: drop-shadow(0 2px 0 rgba(60, 6, 16, 0.55));
+}
+
+.ficha__cuerpo {
+  fill: var(--rojo);
+}
+
+.ficha__muescas {
+  fill: none;
+  stroke: var(--crema);
+  stroke-width: 3.4;
+  stroke-dasharray: 4.9 5;
+}
+
+.ficha__anillo {
+  fill: none;
+  stroke: var(--crema);
+  stroke-width: 1.1;
+}
+
+.ficha__centro {
+  fill: var(--reverso);
+}
+
+.contador {
+  font-variant-numeric: tabular-nums lining-nums;
+}

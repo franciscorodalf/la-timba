@@ -4,6 +4,8 @@ import type { MensajeSala } from "../../shared/api";
 import { Cargando } from "../componentes/Cargando";
 import { PartidaInexistente, PartidaSinRespuesta } from "../pantallas/PartidaNoDisponible";
 import { api, mensajeError } from "./api";
+import { registrarHoraServidor } from "./reloj";
+import { useSesion } from "./sesion";
 import { leerToken } from "./token";
 
 export interface EstadoPartida {
@@ -32,7 +34,7 @@ export function leerMensajeSala(datos: unknown): MensajeSala | null {
     return null;
   }
   const esObjeto = (valor: unknown): valor is Record<string, any> => typeof valor === "object" && valor !== null;
-  if (!esObjeto(mensaje) || mensaje.t !== "sala" || typeof mensaje.codigo !== "string") return null;
+  if (!esObjeto(mensaje) || mensaje.t !== "sala" || typeof mensaje.codigo !== "string" || typeof mensaje.ahora !== "number") return null;
   if (!Array.isArray(mensaje.conectados) || !Array.isArray(mensaje.rankingNoche)) return null;
   if (!esObjeto(mensaje.mesas) || !esObjeto(mensaje.mesas.blackjack) || !esObjeto(mensaje.mesas.carrera)) return null;
   return mensaje as unknown as MensajeSala;
@@ -63,7 +65,9 @@ function ConexionSala({ codigo, alCerrarse, children }: { codigo: string; alCerr
     },
     onMessage: (evento) => {
       const mensaje = leerMensajeSala(evento.data);
-      if (mensaje !== null) setSala(mensaje);
+      if (mensaje === null) return;
+      registrarHoraServidor(mensaje.ahora);
+      setSala(mensaje);
     },
   });
 
@@ -80,6 +84,7 @@ type Existencia = { estado: "comprobando" } | { estado: "existe" } | { estado: "
  * comprobar, muestra su propia pantalla en lugar de `children`.
  */
 export function PartidaProvider({ codigo, children }: { codigo: string; children: ReactNode }) {
+  const { refrescar } = useSesion();
   const [existencia, setExistencia] = useState<Existencia>({ estado: "comprobando" });
   const [intento, setIntento] = useState(0);
 
@@ -95,21 +100,25 @@ export function PartidaProvider({ codigo, children }: { codigo: string; children
     };
   }, [codigo, intento]);
 
-  // Se perdió la conexión: si fue porque la partida se cerró mientras tanto (30 min sin nadie), el servidor la rechazará
-  // siempre, así que se deja de reintentar. Si no se puede saber (sin red), el socket sigue reintentando por su cuenta.
+  // Se perdió la conexión y hay que saber si merece la pena reintentarla:
+  // - Si la partida se cerró mientras tanto (30 min sin nadie), el servidor la rechazará siempre: se deja de reintentar.
+  // - Si el token caducó o se rotó, también la rechazará siempre, y la consulta de existencia no lo delata porque no lleva
+  //   token: `refrescar` sí (su 401 cierra la sesión y se vuelve a la entrada).
+  // Si no se puede saber (sin red), el socket sigue reintentando por su cuenta y se vuelve a comprobar en la siguiente caída.
   const comprobando = useRef(false);
   const alCerrarse = useCallback(async () => {
     if (comprobando.current) return;
     comprobando.current = true;
     try {
-      const { existe } = await api.existePartida(codigo);
+      const [existe] = await Promise.all([
+        api.existePartida(codigo).then(({ existe }) => existe, () => true),
+        refrescar(),
+      ]);
       if (!existe) setExistencia({ estado: "no_existe" });
-    } catch {
-      // Se vuelve a comprobar en la siguiente caída.
     } finally {
       comprobando.current = false;
     }
-  }, [codigo]);
+  }, [codigo, refrescar]);
 
   switch (existencia.estado) {
     case "comprobando":

@@ -4,6 +4,7 @@ import { leerMensajeSala } from "../../src/client/red/usePartida";
 const sala = {
   t: "sala",
   codigo: "KXP4",
+  ahora: 1_700_000_000_000,
   conectados: ["Ana"],
   mesas: {
     blackjack: { jugadores: [], fase: "esperando", finFase: null },
@@ -27,6 +28,8 @@ describe("leerMensajeSala", () => {
   it("descarta los mensajes que no son de sala o a los que les falta algo que la pantalla da por hecho", () => {
     expect(leerMensajeSala(JSON.stringify({ ...sala, t: "estado" }))).toBeNull();
     expect(leerMensajeSala(JSON.stringify({ ...sala, conectados: "Ana" }))).toBeNull();
+    expect(leerMensajeSala(JSON.stringify({ ...sala, ahora: undefined }))).toBeNull();
+    expect(leerMensajeSala(JSON.stringify({ ...sala, ahora: "mañana" }))).toBeNull();
     expect(leerMensajeSala(JSON.stringify({ ...sala, rankingNoche: undefined }))).toBeNull();
     expect(leerMensajeSala(JSON.stringify({ ...sala, mesas: { blackjack: sala.mesas.blackjack } }))).toBeNull();
     expect(leerMensajeSala(JSON.stringify({ ...sala, mesas: null }))).toBeNull();

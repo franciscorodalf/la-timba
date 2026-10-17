@@ -3,6 +3,7 @@ import type { FilaRankingPartida } from "../../shared/api";
 import { Avatar } from "../componentes/Avatar";
 import { Invitar } from "../componentes/Invitar";
 import { Navegacion } from "../componentes/Navegacion";
+import { Reconectando } from "../componentes/Reconectando";
 import { Saludo } from "../componentes/Saludo";
 import { TarjetaMesa } from "../componentes/TarjetaMesa";
 import { retardo } from "../animacion";
@@ -28,12 +29,12 @@ function EnLaSala({ conectados }: { conectados: string[] }) {
   const { jugador } = useSesion();
   return (
     <section aria-labelledby="sala-conectados">
-      <h2 className="etiqueta" id="sala-conectados">
-        En la sala <span className="etiqueta__n">{conectados.length}</span>
+      <h2 className="sala-etiqueta" id="sala-conectados">
+        En la sala <span className="sala-etiqueta__n">{conectados.length}</span>
       </h2>
-      <ul className="conectados" aria-label="Jugadores en la sala">
+      <ul className="sala-conectados" aria-label="Jugadores en la sala">
         {conectados.map((apodo) => (
-          <li className="pastilla" key={apodo}>
+          <li className="sala-pastilla" key={apodo}>
             <Avatar apodo={apodo} />
             <span>{apodo}</span>
             {apodo.toLowerCase() === jugador?.apodo.toLowerCase() && <small>tú</small>}
@@ -49,10 +50,10 @@ function PuestoNoche({ posicion, fila }: { posicion: number; fila: FilaRankingPa
   const yo = fila.apodo.toLowerCase() === jugador?.apodo.toLowerCase();
   const signo = fila.neto > 0 ? "+" : fila.neto < 0 ? "−" : "";
   return (
-    <li className="ranking__fila">
-      <span className={`ranking__pos ranking__pos--${posicion}`}>{posicion}</span>
-      <span className="ranking__nombre">{yo ? "Tú" : fila.apodo}</span>
-      <span className={`ranking__valor ${fila.neto > 0 ? "sube" : fila.neto < 0 ? "baja" : ""}`}>
+    <li className="sala-ranking__fila">
+      <span className={`sala-ranking__pos sala-ranking__pos--${posicion}`}>{posicion}</span>
+      <span className="sala-ranking__nombre">{yo ? "Tú" : fila.apodo}</span>
+      <span className={`sala-ranking__valor ${fila.neto > 0 ? "sala-sube" : fila.neto < 0 ? "sala-baja" : ""}`}>
         {signo}
         {miles(Math.abs(fila.neto))}
       </span>
@@ -62,32 +63,27 @@ function PuestoNoche({ posicion, fila }: { posicion: number; fila: FilaRankingPa
 
 function Esqueleto() {
   return (
-    <div className="esqueletos" aria-hidden="true">
-      <div className="esqueleto esqueleto--pastillas" />
-      <div className="esqueleto esqueleto--mesa" />
-      <div className="esqueleto esqueleto--mesa" />
-      <div className="esqueleto esqueleto--ranking" />
+    <div className="sala-esqueletos" aria-hidden="true">
+      <div className="sala-esqueleto sala-esqueleto--pastillas" />
+      <div className="sala-esqueleto sala-esqueleto--mesa" />
+      <div className="sala-esqueleto sala-esqueleto--mesa" />
+      <div className="sala-esqueleto sala-esqueleto--ranking" />
     </div>
   );
 }
 
 /** La sala de la partida: quién hay, las mesas con su estado, los tres mejores de la noche y la barra de navegación. */
 export function Sala({ codigo }: { codigo: string }) {
-  const { sala, conectado } = usePartida();
+  const { sala } = usePartida();
   const [invitando, setInvitando] = useState(false);
 
   return (
     <main className="sala">
-      {!conectado && (
-        <p className="reconectando" role="status">
-          <span className="reconectando__giro" aria-hidden="true" />
-          Reconectando…
-        </p>
-      )}
+      <Reconectando />
       <div className="sala__columna">
         <header className="sala__cabecera aparece">
-          <h1 className="marca__logo marca__logo--chico">La Timba</h1>
-          <button type="button" className="codigo" aria-label={`Invitar amigos. Código ${codigo}`} aria-haspopup="dialog" onClick={() => setInvitando(true)}>
+          <h1 className="marca__logo sala__logo">La Timba</h1>
+          <button type="button" className="sala-codigo" aria-label={`Invitar amigos. Código ${codigo}`} aria-haspopup="dialog" onClick={() => setInvitando(true)}>
             <IconoQr />
             <span>{codigo}</span>
           </button>
@@ -106,34 +102,34 @@ export function Sala({ codigo }: { codigo: string }) {
             </div>
 
             <section className="aparece" style={retardo(200)} aria-labelledby="sala-mesas">
-              <h2 className="etiqueta" id="sala-mesas">
+              <h2 className="sala-etiqueta" id="sala-mesas">
                 Mesas
               </h2>
-              <div className="mesas">
+              <div className="sala-mesas">
                 <TarjetaMesa juego="blackjack" resumen={sala.mesas.blackjack} />
                 <TarjetaMesa juego="carrera" resumen={sala.mesas.carrera} />
-                <article className="mesa mesa--proxima">
-                  <div className="mesa__icono" aria-hidden="true">
+                <article className="sala-mesa sala-mesa--proxima">
+                  <div className="sala-mesa__icono" aria-hidden="true">
                     <svg viewBox="0 0 24 24" width="26" height="26" fill="currentColor" focusable="false">
                       <path d="M12 2.5 20 12l-8 9.5L4 12z" />
                     </svg>
                   </div>
-                  <div className="mesa__cuerpo">
-                    <h3 className="mesa__nombre">Póker</h3>
-                    <p className="mesa__estado">Próximamente</p>
+                  <div className="sala-mesa__cuerpo">
+                    <h3 className="sala-mesa__nombre">Póker</h3>
+                    <p className="sala-mesa__estado">Próximamente</p>
                   </div>
                 </article>
               </div>
             </section>
 
             <section className="aparece" style={retardo(260)} aria-labelledby="sala-noche">
-              <h2 className="etiqueta" id="sala-noche">
+              <h2 className="sala-etiqueta" id="sala-noche">
                 Esta noche
               </h2>
               {sala.rankingNoche.length === 0 ? (
-                <p className="vacio">Aún no ha jugado nadie. Las ganancias de esta partida aparecen aquí.</p>
+                <p className="sala-vacio">Aún no ha jugado nadie. Las ganancias de esta partida aparecen aquí.</p>
               ) : (
-                <ol className="ranking" aria-label="Ranking de esta noche">
+                <ol className="sala-ranking" aria-label="Ranking de esta noche">
                   {sala.rankingNoche.slice(0, PUESTOS).map((fila, i) => (
                     <PuestoNoche key={fila.apodo} posicion={i + 1} fila={fila} />
                   ))}

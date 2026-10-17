@@ -10,7 +10,7 @@ function colorDe(apodo: string): string {
 /** Círculo de color con la inicial del apodo. Decorativo: el apodo se escribe siempre al lado. */
 export function Avatar({ apodo }: { apodo: string }) {
   return (
-    <span className="avatar" style={{ background: colorDe(apodo) }} aria-hidden="true">
+    <span className="avatar-jugador" style={{ background: colorDe(apodo) }} aria-hidden="true">
       {(Array.from(apodo)[0] ?? "?").toUpperCase()}
     </span>
   );

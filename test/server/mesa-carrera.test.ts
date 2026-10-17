@@ -60,8 +60,10 @@ describe("MesaCarrera: carrera y fichas", () => {
     } = await nuevaMesa(1);
     const conexion = await sentarse(codigo, ana.token);
     const inicial: Estado = await conexion.recibir();
+    // `ahora` es la hora del reloj de la mesa (aquí fijo en T): con ella los clientes calculan las cuentas atrás.
     expect(inicial).toMatchObject({
       t: "estado",
+      ahora: T,
       eventos: [],
       vista: { ronda: 1, fase: "apuestas", finFase: T + CARRERA.APUESTAS_MS, misApuestas: [], sentados: [ana.apodo], ganador: null },
     });

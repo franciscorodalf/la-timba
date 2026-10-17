@@ -1,10 +1,42 @@
 import { expect, type Page, test, type WebSocketRoute } from "@playwright/test";
+import type { MensajeSala } from "../src/shared/api";
 import { abrirPartida, apodoUnico, conSesion, registrar } from "./ayudas";
 
 const CODIGO_EN_LA_URL = /\/p\/([A-Z2-9]{4})$/;
 
 const codigoDe = (pagina: Page): string => new URL(pagina.url()).pathname.split("/")[2];
 const jugadoresEnLaSala = (pagina: Page) => pagina.getByRole("list", { name: "Jugadores en la sala" });
+
+const MESA_LIBRE = { jugadores: [], fase: "esperando", finFase: null };
+
+/** Un mensaje de sala como el que manda el servidor, con las dos mesas libres salvo lo que se cambie. */
+const mensajeSala = (codigo: string, resto: Partial<MensajeSala> = {}): MensajeSala => ({
+  t: "sala",
+  codigo,
+  ahora: Date.now(),
+  conectados: [],
+  mesas: { blackjack: MESA_LIBRE, carrera: MESA_LIBRE },
+  rankingNoche: [],
+  ...resto,
+});
+
+/** Sustituye la sala del servidor por una simulada, sin llegar a conectar con él. */
+async function simularSala(pagina: Page) {
+  let socket: WebSocketRoute | null = null;
+  let inicial: MensajeSala | null = null;
+  await pagina.routeWebSocket(/\/parties\/partida\//, (ws) => {
+    socket = ws;
+    if (inicial !== null) ws.send(JSON.stringify(inicial));
+  });
+  return {
+    /** El mensaje con el que contesta la sala al conectar. Se fija antes de abrir la página. */
+    alConectar: (mensaje: MensajeSala) => {
+      inicial = mensaje;
+    },
+    /** Un mensaje más, ya conectado. */
+    enviar: (mensaje: MensajeSala) => (socket as WebSocketRoute | null)?.send(JSON.stringify(mensaje)),
+  };
+}
 
 test("A crea la partida, B entra con el código en minúsculas y ambos se ven en la sala", async ({ page, browser, request }) => {
   const apodoA = apodoUnico();
@@ -220,6 +252,7 @@ test.describe("mesas", () => {
         JSON.stringify({
           t: "sala",
           codigo,
+          ahora: Date.now(),
           conectados: ["Leo", "Ana"],
           mesas: {
             blackjack: { jugadores: ["Ana", "Leo", "Mía"], fase: "decisiones", finFase: Date.now() + 9_000 },
@@ -261,6 +294,113 @@ test.describe("mesas", () => {
   });
 });
 
+test.describe("cuentas atrás", () => {
+  /** Anota cada cuenta atrás de la carrera que aparece en pantalla, en orden, y cuántos temporizadores de 250 ms hay vivos. */
+  async function vigilarCuentas(pagina: Page) {
+    await pagina.addInitScript(() => {
+      const w = window as unknown as { cuentas: string[]; latidos: () => number };
+      w.cuentas = [];
+      let previa: string | null = null;
+      new MutationObserver(() => {
+        const actual = /Sale en (\d+:\d\d)/.exec(document.body.textContent ?? "")?.[1] ?? null;
+        if (actual === previa) return;
+        previa = actual;
+        if (actual !== null) w.cuentas.push(actual);
+      }).observe(document, { subtree: true, childList: true, characterData: true });
+
+      const vivos = new Map<number, number | undefined>();
+      const poner = window.setInterval.bind(window);
+      const quitar = window.clearInterval.bind(window);
+      window.setInterval = ((funcion: TimerHandler, ms?: number, ...resto: unknown[]) => {
+        const id = poner(funcion, ms, ...resto);
+        vivos.set(id, ms);
+        return id;
+      }) as typeof window.setInterval;
+      window.clearInterval = ((id?: number) => {
+        if (id !== undefined) vivos.delete(id);
+        quitar(id);
+      }) as typeof window.clearInterval;
+      w.latidos = () => [...vivos.values()].filter((ms) => ms === 250).length;
+    });
+    return {
+      cuentas: () => pagina.evaluate(() => (window as unknown as { cuentas: string[] }).cuentas),
+      latidos: () => pagina.evaluate(() => (window as unknown as { latidos: () => number }).latidos()),
+    };
+  }
+
+  test("se calculan con el reloj del servidor aunque el del dispositivo vaya un minuto atrasado", async ({ page, request }) => {
+    const sesion = await registrar(request, apodoUnico(), "1234");
+    const codigo = await abrirPartida(request, sesion);
+    await conSesion(page, sesion);
+    const sala = await simularSala(page);
+    // El servidor va 60 s por delante del reloj del navegador, y dice que las apuestas cierran dentro de 12 s (de su reloj).
+    const servidor = Date.now() + 60_000;
+    sala.alConectar(mensajeSala(codigo, { ahora: servidor, mesas: { blackjack: MESA_LIBRE, carrera: { jugadores: ["Sol"], fase: "apuestas", finFase: servidor + 12_000 } } }));
+
+    await page.goto(`/p/${codigo}`);
+
+    // Con el reloj del navegador saldría «1:12».
+    await expect(page.getByText(/^Sale en 0:1[0-2]$/)).toBeVisible();
+    await expect(page.getByText("Sale en 1:1")).toHaveCount(0);
+  });
+
+  test("al pasar de «Mesa libre» a las apuestas, ninguna cuenta atrás se ve con la hora de antes", async ({ page, request }) => {
+    const sesion = await registrar(request, apodoUnico(), "1234");
+    const codigo = await abrirPartida(request, sesion);
+    await conSesion(page, sesion);
+    const vigilancia = await vigilarCuentas(page);
+    const sala = await simularSala(page);
+    sala.alConectar(mensajeSala(codigo));
+    await page.goto(`/p/${codigo}`);
+    await expect(page.getByText("Mesa libre")).toHaveCount(2);
+
+    // Ocho veces: la mesa se queda libre y vuelve a abrir apuestas, y cada vez el reloj del servidor se aparta un minuto
+    // más o menos del anterior. Si la tarjeta pintara con la hora de su último latido, saldría una cuenta de más de 15 s.
+    for (let vuelta = 0; vuelta < 8; vuelta++) {
+      const ahora = Date.now() + (vuelta % 2) * 60_000;
+      sala.enviar(mensajeSala(codigo, { ahora }));
+      await expect(page.getByText("Mesa libre")).toHaveCount(2);
+      sala.enviar(mensajeSala(codigo, { ahora, mesas: { blackjack: MESA_LIBRE, carrera: { jugadores: ["Sol"], fase: "apuestas", finFase: ahora + 15_000 } } }));
+      await expect(page.getByText(/^Sale en 0:\d\d$/)).toBeVisible();
+    }
+
+    const cuentas = await vigilancia.cuentas();
+    expect(cuentas.length).toBeGreaterThanOrEqual(8);
+    for (const cuenta of cuentas) expect(cuenta).toMatch(/^0:(0\d|1[0-5])$/);
+  });
+
+  test("el temporizador solo corre mientras la fase enseña una cuenta atrás", async ({ page, request }) => {
+    const sesion = await registrar(request, apodoUnico(), "1234");
+    const codigo = await abrirPartida(request, sesion);
+    await conSesion(page, sesion);
+    const vigilancia = await vigilarCuentas(page);
+    const sala = await simularSala(page);
+    // La banca juega y los caballos corren: su `finFase` es el siguiente paso (menos de un segundo), no una cuenta atrás.
+    const ahora = Date.now();
+    sala.alConectar(
+      mensajeSala(codigo, {
+        ahora,
+        mesas: {
+          blackjack: { jugadores: ["Ana"], fase: "banca", finFase: ahora + 1_000 },
+          carrera: { jugadores: ["Sol"], fase: "carrera", finFase: ahora + 800 },
+        },
+      }),
+    );
+    await page.goto(`/p/${codigo}`);
+    await expect(page.getByText("Juega la banca")).toBeVisible();
+    await expect(page.getByText("¡Corren los caballos!")).toBeVisible();
+    expect(await vigilancia.latidos()).toBe(0);
+
+    sala.enviar(mensajeSala(codigo, { mesas: { blackjack: MESA_LIBRE, carrera: { jugadores: ["Sol"], fase: "apuestas", finFase: Date.now() + 20_000 } } }));
+    await expect(page.getByText(/^Sale en 0:\d\d$/)).toBeVisible();
+    expect(await vigilancia.latidos()).toBe(1);
+
+    sala.enviar(mensajeSala(codigo, { mesas: { blackjack: MESA_LIBRE, carrera: { jugadores: ["Sol"], fase: "carrera", finFase: Date.now() + 800 } } }));
+    await expect(page.getByText("¡Corren los caballos!")).toBeVisible();
+    expect(await vigilancia.latidos()).toBe(0);
+  });
+});
+
 test.describe("conexión de la sala", () => {
   /** Deja pasar las conexiones de la sala, anotándolas para poder cortarlas. */
   async function espiarSala(pagina: Page) {
@@ -281,14 +421,17 @@ test.describe("conexión de la sala", () => {
     const sesion = await registrar(request, apodoUnico(), "1234");
     const codigo = await abrirPartida(request, sesion);
     await conSesion(page, sesion);
-    const { abiertas } = await espiarSala(page);
+    const { abiertas, estado } = await espiarSala(page);
     await page.goto(`/p/${codigo}`);
     await expect(jugadoresEnLaSala(page).getByRole("listitem")).toHaveCount(1);
-    await expect(page.getByText("Reconectando…")).toBeHidden();
+    await expect(page.getByText("Reconectando…")).toHaveCount(0);
 
+    // La sala no deja volver a conectar: el aviso sale pasado un segundo sin conexión y se queda mientras dure.
+    estado.bloqueada = true;
     await abiertas[abiertas.length - 1].close({ code: 1001 });
-
     await expect(page.getByText("Reconectando…")).toBeVisible();
+
+    estado.bloqueada = false;
     await expect(page.getByText("Reconectando…")).toBeHidden({ timeout: 20_000 });
     await expect(jugadoresEnLaSala(page).getByRole("listitem")).toHaveCount(1);
   });
@@ -306,6 +449,41 @@ test.describe("conexión de la sala", () => {
     await abiertas[abiertas.length - 1].close({ code: 1001 });
 
     await expect(page.getByText("Esa partida no existe")).toBeVisible();
+  });
+
+  test("en una carga normal «Reconectando…» ni se pinta, y si la conexión tarda aparece pasado un rato", async ({ page, request }) => {
+    const sesion = await registrar(request, apodoUnico(), "1234");
+    const codigo = await abrirPartida(request, sesion);
+    await conSesion(page, sesion);
+    await page.addInitScript(() => {
+      const w = window as unknown as { reconectando: boolean };
+      w.reconectando = false;
+      new MutationObserver(() => {
+        if (document.body.textContent?.includes("Reconectando")) w.reconectando = true;
+      }).observe(document, { subtree: true, childList: true, characterData: true });
+    });
+    const sala = await simularSala(page);
+    sala.alConectar(mensajeSala(codigo, { conectados: ["Ana"] }));
+
+    await page.goto(`/p/${codigo}`);
+    await expect(jugadoresEnLaSala(page).getByRole("listitem")).toHaveCount(1);
+    expect(await page.evaluate(() => (window as unknown as { reconectando: boolean }).reconectando)).toBe(false);
+  });
+
+  test("si el token ya no vale, al caerse la conexión se cierra la sesión en vez de reintentar para siempre", async ({ page, request }) => {
+    const sesion = await registrar(request, apodoUnico(), "1234");
+    const codigo = await abrirPartida(request, sesion);
+    await conSesion(page, sesion);
+    const { abiertas } = await espiarSala(page);
+    await page.goto(`/p/${codigo}`);
+    await expect(jugadoresEnLaSala(page).getByRole("listitem")).toHaveCount(1);
+
+    // La consulta de si existe la partida no lleva token y seguiría diciendo que sí: lo que lo delata es el perfil.
+    await page.route("**/api/yo", (ruta) => ruta.fulfill({ status: 401, json: { error: "no_autenticado" } }));
+    await abiertas[abiertas.length - 1].close({ code: 1001 });
+
+    await expect(page.getByLabel("Apodo")).toBeVisible();
+    expect(await page.evaluate(() => localStorage.getItem("timba.token"))).toBeNull();
   });
 });
 

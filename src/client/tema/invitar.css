@@ -1,0 +1,125 @@
+/* Invitar: diálogo con el código, el QR y el enlace. */
+
+.invitar {
+  width: min(92vw, 380px);
+  max-height: 94dvh;
+  padding: 0;
+  overflow: auto;
+  border: 1px solid rgba(212, 175, 55, 0.5);
+  border-radius: 22px;
+  color: var(--crema);
+  background:
+    linear-gradient(160deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.015)),
+    #0b3a24;
+  box-shadow:
+    0 30px 80px rgba(0, 0, 0, 0.6),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.invitar[open] {
+  animation: aparecer 0.35s var(--curva) both;
+}
+
+.invitar::backdrop {
+  background: rgba(2, 14, 8, 0.74);
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
+}
+
+.invitar[open]::backdrop {
+  animation: fundir 0.3s ease both;
+}
+
+@keyframes fundir {
+  from {
+    opacity: 0;
+  }
+}
+
+.invitar__cuerpo {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 28px 22px 14px;
+  text-align: center;
+}
+
+.invitar__cuerpo .panel__texto {
+  max-width: 28ch;
+  text-wrap: balance;
+}
+
+.invitar__codigo {
+  margin: 2px 0 0;
+  padding-left: 0.2em; /* compensa el espacio que deja la última letra */
+  font-family: var(--fuente-titulo);
+  font-weight: 800;
+  font-size: 3.25rem;
+  line-height: 1;
+  letter-spacing: 0.2em;
+  color: var(--oro);
+  text-shadow:
+    0 2px 0 var(--madera-1),
+    0 0 24px rgba(212, 175, 55, 0.35);
+}
+
+/* El QR va en oscuro sobre crema: la mayoría de lectores no entienden los códigos invertidos. */
+.invitar__qr {
+  line-height: 0;
+  padding: 6px;
+  border-radius: 16px;
+  background: var(--crema);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.4);
+}
+
+.invitar__qr svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: 10px;
+}
+
+.invitar__enlace {
+  max-width: 100%;
+  font-size: 0.8125rem;
+  color: var(--crema-tenue);
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+.invitar__estado {
+  min-height: 1.4em;
+  margin-top: -6px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--acierto);
+}
+
+.invitar__cerrar {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: var(--crema-tenue);
+  cursor: pointer;
+}
+
+.invitar__cerrar:hover {
+  color: var(--oro);
+  background: rgba(243, 231, 196, 0.08);
+}
+
+/* Movimiento reducido: el diálogo aparece más deprisa y solo con fundido. */
+@media (prefers-reduced-motion: reduce) {
+  .invitar[open] {
+    animation-duration: 0.25s;
+  }
+}
