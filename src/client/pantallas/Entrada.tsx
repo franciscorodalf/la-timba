@@ -1,6 +1,7 @@
-import { type CSSProperties, type FormEvent, type RefObject, useEffect, useRef, useState } from "react";
+import { type FormEvent, type RefObject, useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import type { RespuestaSesion } from "../../shared/api";
+import { retardo } from "../animacion";
 import { Aviso } from "../componentes/Aviso";
 import { Boton } from "../componentes/Boton";
 import { Campo } from "../componentes/Campo";
@@ -21,8 +22,6 @@ function iconoOjo(tachado: boolean) {
     </svg>
   );
 }
-
-const retardo = (ms: number) => ({ "--retardo": `${ms}ms` }) as CSSProperties;
 
 function textoIntentos(restantes: unknown): string {
   if (typeof restantes !== "number") return "PIN incorrecto";

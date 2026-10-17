@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { apodoUnico } from "./ayudas";
+import { apodoUnico, registrar } from "./ayudas";
 
 test("crea un perfil nuevo con confirmación y la sesión sobrevive a recargar", async ({ page }) => {
   const apodo = apodoUnico();
@@ -36,8 +36,7 @@ test("«No» en la confirmación vuelve al formulario sin crear el perfil", asyn
 
 test("un PIN incorrecto dice cuántos intentos quedan", async ({ page, request }) => {
   const apodo = apodoUnico();
-  const registro = await request.post("/api/registro", { data: { apodo, pin: "1234" } });
-  expect(registro.status()).toBe(201);
+  await registrar(request, apodo, "1234");
 
   await page.goto("/");
   await page.getByLabel("Apodo").fill(apodo);
@@ -51,7 +50,7 @@ test("un PIN incorrecto dice cuántos intentos quedan", async ({ page, request }
 
 test("entra con un perfil existente y puede salir", async ({ page, request }) => {
   const apodo = apodoUnico();
-  await request.post("/api/registro", { data: { apodo, pin: "4321" } });
+  await registrar(request, apodo, "4321");
 
   await page.goto("/");
   await page.getByLabel("Apodo").fill(apodo.toUpperCase());
@@ -87,7 +86,7 @@ test("valida apodo y PIN en el cliente antes de llamar al servidor", async ({ pa
 
 test("un enlace de partida sin sesión lleva a la entrada y vuelve después", async ({ page, request }) => {
   const apodo = apodoUnico();
-  await request.post("/api/registro", { data: { apodo, pin: "1234" } });
+  await registrar(request, apodo, "1234");
 
   await page.goto("/p/ABCD");
   await expect(page.getByLabel("Apodo")).toBeVisible();
@@ -136,7 +135,7 @@ test("si el servidor falla dice que La Timba está descansando", async ({ page }
 test.describe("sesión compartida entre pestañas", () => {
   test("cerrar e iniciar sesión en una pestaña se refleja en las demás", async ({ page, context, request }) => {
     const apodo = apodoUnico();
-    await request.post("/api/registro", { data: { apodo, pin: "1234" } });
+    await registrar(request, apodo, "1234");
 
     await page.goto("/");
     await page.getByLabel("Apodo").fill(apodo);
@@ -180,8 +179,7 @@ test.describe("sesión compartida entre pestañas", () => {
 test.describe("sesión guardada con el servidor inaccesible", () => {
   test("avisa de que La Timba descansa, conserva el token y deja reintentar", async ({ page, request }) => {
     const apodo = apodoUnico();
-    const registro = await request.post("/api/registro", { data: { apodo, pin: "1234" } });
-    const { token } = await registro.json();
+    const { token } = await registrar(request, apodo, "1234");
     await page.addInitScript((t) => localStorage.setItem("timba.token", t), token);
     let caido = true;
     await page.route("**/api/yo", (ruta) => (caido ? ruta.fulfill({ status: 503, json: { error: "descansando" } }) : ruta.continue()));
@@ -198,8 +196,7 @@ test.describe("sesión guardada con el servidor inaccesible", () => {
 
   test("sin red avisa de la falta de conexión y deja reintentar", async ({ page, request }) => {
     const apodo = apodoUnico();
-    const registro = await request.post("/api/registro", { data: { apodo, pin: "1234" } });
-    const { token } = await registro.json();
+    const { token } = await registrar(request, apodo, "1234");
     await page.addInitScript((t) => localStorage.setItem("timba.token", t), token);
     await page.route("**/api/yo", (ruta) => ruta.abort());
 

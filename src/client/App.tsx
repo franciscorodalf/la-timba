@@ -1,9 +1,12 @@
 import { useState } from "react";
-import { Redirect, Route, Switch } from "wouter";
+import { Link, Redirect, Route, Switch } from "wouter";
 import { Aviso } from "./componentes/Aviso";
 import { Boton } from "./componentes/Boton";
-import { miles } from "./formato";
+import { Cargando } from "./componentes/Cargando";
 import { Entrada } from "./pantallas/Entrada";
+import { Inicio } from "./pantallas/Inicio";
+import { Sala } from "./pantallas/Sala";
+import { PartidaProvider } from "./red/usePartida";
 import { SesionProvider, useSesion } from "./red/sesion";
 
 export function App() {
@@ -23,14 +26,8 @@ function Pantallas() {
   return (
     <Switch>
       <Route path="/" component={Inicio} />
-      <Route path="/p/:codigo">
-        <Pendiente nombre="Sala" />
-      </Route>
-      <Route path="/p/:codigo/blackjack">
-        <Pendiente nombre="Blackjack" />
-      </Route>
-      <Route path="/p/:codigo/carrera">
-        <Pendiente nombre="Carrera" />
+      <Route path="/p/:codigo" nest>
+        {({ codigo }) => <LayoutPartida codigo={codigo.toUpperCase()} />}
       </Route>
       <Route path="/ranking">
         <Pendiente nombre="Ranking" />
@@ -45,11 +42,28 @@ function Pantallas() {
   );
 }
 
-function Cargando() {
+/**
+ * Todo lo que cuelga de `/p/:codigo`: la sala y las mesas comparten el mismo socket de sala, que no se cierra al ir de una a
+ * otra. Las rutas de dentro son relativas a `/p/:codigo`. El código se escribe en mayúsculas aunque el enlace venga en minúsculas.
+ */
+function LayoutPartida({ codigo }: { codigo: string }) {
   return (
-    <main className="pantalla" aria-busy="true">
-      <div className="giro" role="status" aria-label="Cargando" />
-    </main>
+    <PartidaProvider key={codigo} codigo={codigo}>
+      <Switch>
+        <Route path="/">
+          <Sala codigo={codigo} />
+        </Route>
+        <Route path="/blackjack">
+          <Pendiente nombre="Blackjack" />
+        </Route>
+        <Route path="/carrera">
+          <Pendiente nombre="Carrera" />
+        </Route>
+        <Route>
+          <Redirect to="/" replace />
+        </Route>
+      </Switch>
+    </PartidaProvider>
   );
 }
 
@@ -74,30 +88,15 @@ function NoDisponible() {
   );
 }
 
-// Pantalla provisional: la sustituye el Inicio de verdad (Task 13).
-function Inicio() {
-  const { jugador, salir } = useSesion();
-  return (
-    <main className="pantalla">
-      <header className="cabecera">
-        <h1 className="cabecera__logo">La Timba</h1>
-        <Boton variante="secundario" onClick={salir}>
-          Salir
-        </Boton>
-      </header>
-      <p className="saludo">
-        Hola, tienes <b>{miles(jugador?.fichas ?? 0)}</b> fichas
-      </p>
-    </main>
-  );
-}
-
 // Pantallas que aún no existen: sus rutas ya están, cada tarea reemplaza la suya.
 function Pendiente({ nombre }: { nombre: string }) {
   return (
     <main className="pantalla">
       <h1 className="cabecera__logo">{nombre}</h1>
       <p className="saludo">Esta pantalla llega pronto.</p>
+      <Link href="/" className="boton boton--secundario">
+        Volver
+      </Link>
     </main>
   );
 }
