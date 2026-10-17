@@ -20,7 +20,9 @@ export type CodigoError =
   | "no_sentado"
   | "sin_fichas"
   | "demasiados_mensajes"
-  | "mensaje_invalido";
+  | "mensaje_invalido"
+  /** El servidor de fichas (Jugadores) no respondió: la acción se descarta. */
+  | "no_disponible";
 export type Paso<E> =
   | { ok: true; estado: E; eventos: Evento[]; liquidacion?: { ronda: number; filas: FilaLiquidacion[] } }
   | { ok: false; error: CodigoError };

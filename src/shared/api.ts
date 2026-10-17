@@ -1,4 +1,4 @@
-import type { IdJuego, ResumenMesa } from "./juegos/tipos";
+import type { CodigoError, Evento, IdJuego, ResumenMesa } from "./juegos/tipos";
 
 export interface JugadorPublico {
   id: number;
@@ -51,3 +51,9 @@ export interface MensajeSala {
   mesas: Record<IdJuego, ResumenMesa>;
   rankingNoche: FilaRankingPartida[];
 }
+
+/**
+ * Mensaje servidor → cliente de una mesa (`/parties/mesa-<juego>/<CODIGO>`). `estado` lleva la vista de quien lo recibe y
+ * los `eventos` ocurridos desde el estado anterior (vacíos al conectar); `version` crece con cada cambio de la mesa.
+ */
+export type MensajeMesa<V> = { t: "estado"; version: number; vista: V; eventos: Evento[] } | { t: "error"; codigo: CodigoError };
