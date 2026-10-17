@@ -949,6 +949,61 @@ describe("MesaBlackjack: cobro en dos fases", () => {
     expect((await estadoMesa(codigo)).manos).toEqual([]);
   });
 
+  it("la liquidación de la ronda espera a anular un cobro a medias: beto recupera lo cobrado y la ronda se paga", async () => {
+    // ana 10♠ 8♥ = 18; banca 9♣ 7♦ = 16, pide K♠ y se pasa. beto no llega a tener mano.
+    const {
+      codigo,
+      js: [ana, beto],
+    } = await nuevaMesa(2, "10S 9C 8H 7D KS");
+    const conexionA = await sentarse(codigo, ana.token);
+    const conexionB = await sentarse(codigo, beto.token);
+    enviar(conexionA, { t: "apostar", cantidad: 50 });
+    await hasta(conexionB, (m) => m.vista.manos.length === 1);
+
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    let anularCaido = true;
+    let liquidaciones = 0;
+    const arreglar = await cambiarJugadores(codigo, (stub) => ({
+      // A beto se le cobra pero la respuesta se pierde; anular no responde hasta que se arregle. liquidar funciona.
+      apostar: async (...a: Parameters<StubJugadores["apostar"]>) => {
+        const r = await stub.apostar(...a);
+        if (a[0] === beto.id) throw new Error("se perdió la respuesta");
+        return r;
+      },
+      anular: (...a: Parameters<StubJugadores["anular"]>) => (anularCaido ? caido() : stub.anular(...a)),
+      liquidar: (...a: Parameters<StubJugadores["liquidar"]>) => {
+        liquidaciones++;
+        return stub.liquidar(...a);
+      },
+    }));
+    enviar(conexionB, { t: "apostar", cantidad: 50 });
+    expect(await conexionB.recibir()).toEqual({ t: "error", codigo: "no_disponible" });
+    expect(await fichas(beto.id)).toBe(950);
+    expect(await cobroGuardado(codigo)).toMatchObject({ jugadorId: beto.id, cantidad: 50 });
+
+    await vencer(codigo); // reparto (solo ana)
+    enviar(conexionA, { t: "plantarse" });
+    await hasta(conexionA, (m) => m.vista.fase === "banca");
+    await vencer(codigo); // la banca juega y cierra la ronda: la liquidación espera
+    await hasta(conexionA, (m) => m.vista.fase === "resultado");
+    expect(liquidaciones).toBe(0);
+    expect(await pendientesDe(codigo)).toBe(2); // la apuesta de ana y el cobro a medias de beto
+    expect(await pendientesGuardados(codigo)).toHaveLength(1);
+    expect(await fichas(ana.id)).toBe(950);
+    expect(await fichas(beto.id)).toBe(950);
+
+    anularCaido = false;
+    await vencer(codigo); // primero se anula el cobro de beto; después se liquida
+    await hasta(conexionA, (m) => m.vista.ronda === 2);
+    expect(liquidaciones).toBe(1);
+    expect(await fichas(beto.id)).toBe(1000);
+    expect(await fichas(ana.id)).toBe(1050);
+    expect(await pendientesDe(codigo)).toBe(0);
+    expect(await pendientesGuardados(codigo)).toEqual([]);
+    expect(await cobroGuardado(codigo)).toBeUndefined();
+    await arreglar();
+  });
+
   it("una acción que no cambia nada (Paso sin cambios) no se cobra", async () => {
     const {
       codigo,

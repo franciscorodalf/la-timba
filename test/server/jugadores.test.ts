@@ -298,6 +298,18 @@ describe("apostar con cobroId y anular", () => {
     expect(await pendientesDe(j, id)).toBe(0);
   });
 
+  it("repetir un cobro ya liquidado devuelve anulado y no cobra otra vez", async () => {
+    const j = nuevo();
+    const id = await crear(j);
+    expect(await j.apostar(id, 100, "r1", "c1")).toBe("ok");
+    await j.liquidar({ rondaId: "r1", juego: "blackjack", codigoPartida: "ABCD", filas: [{ jugadorId: id, apuesta: 100, pago: 0 }] }, T0);
+    expect(await fichasDe(j, id)).toBe(900);
+
+    expect(await j.apostar(id, 100, "r1", "c1")).toBe("anulado");
+    expect(await fichasDe(j, id)).toBe(900);
+    expect(await pendientesDe(j, id)).toBe(0);
+  });
+
   it("anular un cobro ya liquidado no devuelve nada", async () => {
     const j = nuevo();
     const id = await crear(j);

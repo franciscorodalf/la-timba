@@ -248,7 +248,10 @@ export class Jugadores extends DurableObject<Env> {
     });
   }
 
-  /** Cierra una ronda: paga, anota resultados y rachas, y borra todas las apuestas pendientes de `rondaId`. Idempotente por `rondaId`. */
+  /**
+   * Cierra una ronda: paga, anota resultados y rachas, y borra todas las apuestas pendientes de `rondaId` (sus `cobro_id`
+   * pasan a anulados). Idempotente por `rondaId`.
+   */
   async liquidar(l: { rondaId: string; juego: IdJuego; codigoPartida: string; filas: FilaLiquidacion[] }, ahora: number): Promise<void> {
     this.ctx.storage.transactionSync(() => {
       const nueva = this.sql.exec("INSERT INTO rondas_liquidadas (ronda_id) VALUES (?) ON CONFLICT DO NOTHING RETURNING ronda_id", l.rondaId).toArray();
@@ -276,6 +279,11 @@ export class Jugadores extends DurableObject<Env> {
           this.sql.exec("UPDATE jugadores SET racha_actual = 0 WHERE id = ?", jugadorId);
         }
       }
+      // Los cobros de la ronda quedan cerrados: repetir uno ya no cobra (devuelve "anulado").
+      this.sql.exec(
+        "INSERT OR IGNORE INTO cobros_anulados (cobro_id) SELECT cobro_id FROM apuestas_pendientes WHERE ronda_id = ? AND cobro_id IS NOT NULL",
+        l.rondaId,
+      );
       this.sql.exec("DELETE FROM apuestas_pendientes WHERE ronda_id = ?", l.rondaId);
     });
   }

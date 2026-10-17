@@ -309,6 +309,9 @@ export abstract class Mesa<E extends { ronda: number }, A extends { t: string }>
    */
   private async liquidarPendientes(): Promise<boolean> {
     if (this.pendientes.length === 0) return false;
+    // Liquidar borra todas las apuestas pendientes de la ronda: un cobro a medias se anula antes, o sus fichas se
+    // perderían. (El cobro de una jugada recién guardada ya no cuenta: `confirmar` lo cierra antes de llegar aquí.)
+    if (this.cobro !== null && !(await this.anularCobro())) return false;
     const restantes: Liquidacion[] = [];
     for (const liquidacion of this.pendientes) {
       if (!(await this.liquidar(liquidacion))) restantes.push(liquidacion);
