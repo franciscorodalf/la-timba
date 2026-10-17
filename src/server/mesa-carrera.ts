@@ -1,4 +1,7 @@
-import { Server } from "partyserver";
-import type { Env } from "./index";
+import { carrera, type AccionCarrera, type EstadoCarrera } from "../shared/juegos/carrera";
+import { Mesa } from "./mesa-base";
 
-export class MesaCarrera extends Server<Env> {}
+/** La mesa de la carrera de caballos de una partida (nombre = código de la partida). */
+export class MesaCarrera extends Mesa<EstadoCarrera, AccionCarrera> {
+  protected juego = carrera;
+}

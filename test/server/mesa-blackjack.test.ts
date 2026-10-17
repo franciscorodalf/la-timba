@@ -1,107 +1,56 @@
 import { env } from "cloudflare:workers";
 import { evictDurableObject, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { MensajeMesa, MensajeSala } from "../../src/shared/api";
-import { crearBaraja, type Carta } from "../../src/shared/cartas";
-import { BJ, blackjack, type AccionBJ, type EstadoBJ, type VistaBJ } from "../../src/shared/juegos/blackjack";
-import { c, conectar, crearPartida, cs, registrar, rngFijo } from "../ayudas";
+import type { MensajeSala } from "../../src/shared/api";
+import { crearBaraja } from "../../src/shared/cartas";
+import { BJ, blackjack, type VistaBJ } from "../../src/shared/juegos/blackjack";
+import {
+  abrir,
+  ayudasMesa,
+  c,
+  cerrarAbiertas,
+  contiene,
+  cs,
+  enviar,
+  fichas,
+  hasta as hastaMensaje,
+  jugadores,
+  pendientesDe,
+  rngFijo,
+  T,
+  type Conexion,
+  type EstadoMesa,
+} from "../ayudas";
 
-/** Muy en el futuro: las alarmas que programe la mesa nunca saltan solas durante una prueba; se ejecutan con `vencer`. */
-const T = 4_000_000_000_000;
+type Estado = EstadoMesa<VistaBJ>;
 
-type Conexion = Awaited<ReturnType<typeof conectar>>;
-type Estado = Extract<MensajeMesa<VistaBJ>, { t: "estado" }>;
-
-/** Apodo válido (≤ 16 caracteres) y distinto en cada llamada: el DO `Jugadores` global se comparte entre pruebas. */
-const unico = () => "t" + crypto.randomUUID().replaceAll("-", "").slice(0, 12);
-
-const mesa = (codigo: string) => env.MesaBlackjack.get(env.MesaBlackjack.idFromName(codigo));
-const jugadores = () => env.Jugadores.get(env.Jugadores.idFromName("global"));
-const fichas = async (jugadorId: number) => (await jugadores().perfil(jugadorId))!.fichas;
-const estadoMesa = (codigo: string) => runInDurableObject(mesa(codigo), (m) => m.estado);
-const alarmaDe = (codigo: string) => runInDurableObject(mesa(codigo), (_m, state) => state.storage.getAlarm());
+const { mesa, estadoMesa, alarmaDe, reloj, vencer, nuevaMesa: nuevaMesaCon, sentarse } = ayudasMesa(env.MesaBlackjack, "mesa-blackjack");
 const pendientesGuardados = (codigo: string) => runInDurableObject(mesa(codigo), (_m, state) => state.storage.get<unknown[]>("pendientes"));
 /** El cobro a medias que guarda la mesa mientras espera a Jugadores (`undefined` o `null` si no hay ninguno). */
 const cobroGuardado = (codigo: string) => runInDurableObject(mesa(codigo), (_m, state) => state.storage.get("cobro"));
-
-/** Apuestas cobradas en las rondas de esta mesa que aún no se han liquidado. */
-const pendientesDe = (codigo: string) =>
-  runInDurableObject(jugadores(), (_j, state) =>
-    state.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM apuestas_pendientes WHERE ronda_id LIKE ?", `${codigo}:%`).one().n,
-  );
 
 const ponerFichas = (jugadorId: number, cantidad: number) =>
   runInDurableObject(jugadores(), (_j, state) => {
     state.storage.sql.exec("UPDATE jugadores SET fichas = ? WHERE id = ?", cantidad, jugadorId);
   });
 
-/** Fija el reloj de la mesa. Vive en memoria: tras `evictDurableObject` hay que volver a fijarlo. */
-const reloj = (codigo: string, ahora: number) =>
-  runInDurableObject(mesa(codigo), (m) => {
-    m.ahora = () => ahora;
-  });
+/** Recibe mensajes `t` hasta el primero que cumpla `cumple` (por defecto, estados de blackjack); los que llegan se añaden a `vistos`. */
+const hasta = <M = Estado>(conexion: Conexion, cumple: (m: M) => boolean, t = "estado", vistos: M[] = []) =>
+  hastaMensaje<M>(conexion, cumple, t, vistos);
 
-/**
- * Prepara una mesa que aún no ha arrancado: reloj en `T` y, si se dan cartas, un estado inicial cuyo zapato empieza por
- * ellas (`zapato[0]` es la siguiente) seguidas de relleno. Se guarda en "estado", de donde lo carga la mesa al arrancar.
- */
-async function preparar(codigo: string, cartas?: string): Promise<void> {
-  await runInDurableObject(mesa(codigo), async (m, state) => {
-    m.ahora = () => T;
-    if (cartas === undefined) return;
-    const estado: EstadoBJ = { ...blackjack.crear(T, rngFijo(0.5)), zapato: [...cs(cartas), ...crearBaraja(2)] };
-    m.estado = estado;
-    await state.storage.put("estado", estado);
-  });
-}
-
-/** Lleva el reloj de la mesa al fin de su fase actual y ejecuta la alarma. */
-async function vencer(codigo: string): Promise<void> {
-  await runInDurableObject(mesa(codigo), (m) => {
-    const fin = m.estado.finFase;
-    if (fin === null) throw new Error("la mesa no tiene ninguna fase que venza");
-    m.ahora = () => fin;
-  });
-  expect(await runDurableObjectAlarm(mesa(codigo))).toBe(true);
-}
-
-const abiertas: Conexion[] = [];
-async function abrir(ruta: string, token: string): Promise<Conexion> {
-  const conexion = await conectar(ruta, token);
-  abiertas.push(conexion);
-  return conexion;
-}
-const sentarse = (codigo: string, token: string) => abrir(`/parties/mesa-blackjack/${codigo}`, token);
-const enviar = (conexion: Conexion, accion: AccionBJ | Record<string, unknown>) => conexion.ws.send(JSON.stringify(accion));
 const cerrada = (conexion: Conexion) => new Promise<CloseEvent>((resolver) => conexion.ws.addEventListener("close", resolver));
 
 afterEach(() => {
   vi.restoreAllMocks();
-  for (const conexion of abiertas.splice(0)) {
-    try {
-      conexion.cerrar();
-    } catch {
-      // ya cerrada
-    }
-  }
+  cerrarAbiertas();
 });
 
-/** Registra `n` jugadores, abre una partida del primero y prepara su mesa (ver `preparar`). */
-async function nuevaMesa(n: number, cartas?: string) {
-  const js = await Promise.all(Array.from({ length: n }, () => registrar(unico())));
-  const codigo = await crearPartida(js[0].token);
-  await preparar(codigo, cartas);
-  return { codigo, js: js.map(({ token, jugador }) => ({ token, ...jugador })) };
-}
-
-/** Recibe mensajes `t` hasta el primero que cumpla `cumple`; los que van llegando se añaden a `vistos`. */
-async function hasta<M = Estado>(conexion: Conexion, cumple: (m: M) => boolean, t = "estado", vistos: M[] = []): Promise<M> {
-  for (;;) {
-    const mensaje: M = await conexion.recibir(t);
-    vistos.push(mensaje);
-    if (cumple(mensaje)) return mensaje;
-  }
-}
+/**
+ * Registra `n` jugadores, abre una partida del primero y prepara su mesa; si se dan cartas, con un estado inicial cuyo
+ * zapato empieza por ellas (`zapato[0]` es la siguiente) seguidas de relleno.
+ */
+const nuevaMesa = (n: number, cartas?: string) =>
+  nuevaMesaCon(n, cartas === undefined ? undefined : { ...blackjack.crear(T, rngFijo(0.5)), zapato: [...cs(cartas), ...crearBaraja(2)] });
 
 /** Espera (hasta 2 s) a que se cumpla una condición que depende de algo asíncrono en el servidor. */
 async function esperar(condicion: () => boolean | Promise<boolean>, que: string): Promise<void> {
@@ -199,15 +148,6 @@ async function dejarCobroAMedias(codigo: string, jugadorId: number, cantidad: nu
   await runInDurableObject(mesa(codigo), (_m, state) => state.storage.put("cobro", cobro));
   await evictDurableObject(mesa(codigo));
   await reloj(codigo, T);
-}
-
-/** ¿Aparece la carta en algún punto del mensaje? */
-function contiene(valor: unknown, carta: Carta): boolean {
-  if (Array.isArray(valor)) return valor.some((v) => contiene(v, carta));
-  if (valor === null || typeof valor !== "object") return false;
-  const objeto = valor as Record<string, unknown>;
-  if (objeto.palo === carta.palo && objeto.valor === carta.valor) return true;
-  return Object.values(objeto).some((v) => contiene(v, carta));
 }
 
 describe("MesaBlackjack: rondas y fichas", () => {
