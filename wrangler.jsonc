@@ -1,0 +1,25 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "la-timba",
+  "main": "src/server/index.ts",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/parties/*"]
+  },
+  "durable_objects": {
+    "bindings": [
+      { "name": "Jugadores", "class_name": "Jugadores" },
+      { "name": "Partida", "class_name": "Partida" },
+      { "name": "MesaBlackjack", "class_name": "MesaBlackjack" },
+      { "name": "MesaCarrera", "class_name": "MesaCarrera" }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["Jugadores", "Partida", "MesaBlackjack", "MesaCarrera"]
+    }
+  ]
+}
