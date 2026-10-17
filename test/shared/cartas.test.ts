@@ -21,6 +21,13 @@ describe("crearBaraja", () => {
   it("tiene un orden fijo", () => {
     expect(crearBaraja(2)).toEqual(crearBaraja(2));
   });
+
+  it("ordena por palo (H, D, C, S) y dentro de cada palo de A a K", () => {
+    const baraja = crearBaraja();
+    expect(baraja[0]).toEqual(c("AH"));
+    expect(baraja[13]).toEqual(c("AD"));
+    expect(baraja[51]).toEqual(c("KS"));
+  });
 });
 
 describe("barajar", () => {
