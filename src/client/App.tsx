@@ -1,4 +1,6 @@
+import { useState } from "react";
 import { Redirect, Route, Switch } from "wouter";
+import { Aviso } from "./componentes/Aviso";
 import { Boton } from "./componentes/Boton";
 import { miles } from "./formato";
 import { Entrada } from "./pantallas/Entrada";
@@ -13,10 +15,11 @@ export function App() {
 }
 
 function Pantallas() {
-  const { jugador, cargando } = useSesion();
+  const { jugador, cargando, fallo } = useSesion();
   if (cargando) return <Cargando />;
   // Sin sesión, cualquier dirección (p. ej. /p/KXP4) enseña la entrada; al entrar, esa misma dirección pasa a mostrar su pantalla.
-  if (jugador === null) return <Entrada />;
+  // Si hay un token guardado pero el servidor no contesta, no se pide entrar de nuevo: se avisa y se deja reintentar.
+  if (jugador === null) return fallo === null ? <Entrada /> : <NoDisponible />;
   return (
     <Switch>
       <Route path="/" component={Inicio} />
@@ -46,6 +49,27 @@ function Cargando() {
   return (
     <main className="pantalla" aria-busy="true">
       <div className="giro" role="status" aria-label="Cargando" />
+    </main>
+  );
+}
+
+function NoDisponible() {
+  const { fallo, refrescar } = useSesion();
+  const [reintentando, setReintentando] = useState(false);
+  async function reintentar() {
+    setReintentando(true);
+    await refrescar();
+    setReintentando(false);
+  }
+  return (
+    <main className="pantalla pantalla--entrada">
+      <h1 className="marca__logo aparece">La Timba</h1>
+      <section className="panel aparece">
+        <Aviso>{fallo}</Aviso>
+        <Boton ancho cargando={reintentando} onClick={reintentar}>
+          Reintentar
+        </Boton>
+      </section>
     </main>
   );
 }

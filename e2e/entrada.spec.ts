@@ -132,3 +132,79 @@ test("si el servidor falla dice que La Timba está descansando", async ({ page }
 
   await expect(page.getByText("La Timba está descansando, vuelve mañana")).toBeVisible();
 });
+
+test.describe("sesión compartida entre pestañas", () => {
+  test("cerrar e iniciar sesión en una pestaña se refleja en las demás", async ({ page, context, request }) => {
+    const apodo = apodoUnico();
+    await request.post("/api/registro", { data: { apodo, pin: "1234" } });
+
+    await page.goto("/");
+    await page.getByLabel("Apodo").fill(apodo);
+    await page.getByLabel("PIN").fill("1234");
+    await page.getByRole("button", { name: "Entrar" }).click();
+    await expect(page.getByText("Hola, tienes 1.000 fichas")).toBeVisible();
+
+    const otra = await context.newPage();
+    await otra.goto("/");
+    await expect(otra.getByText("Hola, tienes 1.000 fichas")).toBeVisible();
+
+    await page.getByRole("button", { name: "Salir" }).click();
+    await expect(page.getByLabel("Apodo")).toBeVisible();
+    await expect(otra.getByLabel("Apodo")).toBeVisible();
+
+    await otra.getByLabel("Apodo").fill(apodo);
+    await otra.getByLabel("PIN").fill("1234");
+    await otra.getByRole("button", { name: "Entrar" }).click();
+    await expect(otra.getByText("Hola, tienes 1.000 fichas")).toBeVisible();
+    await expect(page.getByText("Hola, tienes 1.000 fichas")).toBeVisible();
+  });
+
+  test("un token que otra pestaña deja y el servidor rechaza cierra la sesión", async ({ page, context }) => {
+    const apodo = apodoUnico();
+    await page.goto("/");
+    await page.getByLabel("Apodo").fill(apodo);
+    await page.getByLabel("PIN").fill("1234");
+    await page.getByRole("button", { name: "Entrar" }).click();
+    await page.getByRole("button", { name: "Sí" }).click();
+    await expect(page.getByText("Hola, tienes 1.000 fichas")).toBeVisible();
+
+    const otra = await context.newPage();
+    await otra.goto("/");
+    await otra.evaluate(() => localStorage.setItem("timba.token", "token-invalido"));
+
+    await expect(page.getByLabel("Apodo")).toBeVisible();
+    expect(await page.evaluate(() => localStorage.getItem("timba.token"))).toBeNull();
+  });
+});
+
+test.describe("sesión guardada con el servidor inaccesible", () => {
+  test("avisa de que La Timba descansa, conserva el token y deja reintentar", async ({ page, request }) => {
+    const apodo = apodoUnico();
+    const registro = await request.post("/api/registro", { data: { apodo, pin: "1234" } });
+    const { token } = await registro.json();
+    await page.addInitScript((t) => localStorage.setItem("timba.token", t), token);
+    let caido = true;
+    await page.route("**/api/yo", (ruta) => (caido ? ruta.fulfill({ status: 503, json: { error: "descansando" } }) : ruta.continue()));
+
+    await page.goto("/");
+    await expect(page.getByText("La Timba está descansando, vuelve mañana")).toBeVisible();
+    await expect(page.getByLabel("Apodo")).toHaveCount(0);
+    expect(await page.evaluate(() => localStorage.getItem("timba.token"))).toBe(token);
+
+    caido = false;
+    await page.getByRole("button", { name: "Reintentar" }).click();
+    await expect(page.getByText("Hola, tienes 1.000 fichas")).toBeVisible();
+  });
+
+  test("sin red avisa de la falta de conexión y deja reintentar", async ({ page, request }) => {
+    const apodo = apodoUnico();
+    const registro = await request.post("/api/registro", { data: { apodo, pin: "1234" } });
+    const { token } = await registro.json();
+    await page.addInitScript((t) => localStorage.setItem("timba.token", t), token);
+    await page.route("**/api/yo", (ruta) => ruta.abort());
+
+    await page.goto("/");
+    await expect(page.getByText("No hay conexión con La Timba")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Reintentar" })).toBeVisible();
+  });
+});

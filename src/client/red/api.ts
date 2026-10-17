@@ -25,6 +25,19 @@ export function mensajeError(e: unknown): string {
   return "Algo ha salido mal. Inténtalo de nuevo";
 }
 
+let alSesionInvalidaActual: ((tokenUsado: string) => void) | null = null;
+
+/**
+ * El proveedor de sesión se registra aquí para enterarse de que el servidor ya no acepta el token (401 `no_autenticado`:
+ * caducado, secreto rotado, jugador borrado). Recibe el token con el que se hizo la llamada. Devuelve la función para darse de baja.
+ */
+export function alSesionInvalida(avisar: (tokenUsado: string) => void): () => void {
+  alSesionInvalidaActual = avisar;
+  return () => {
+    if (alSesionInvalidaActual === avisar) alSesionInvalidaActual = null;
+  };
+}
+
 async function peticion<T>(metodo: "GET" | "POST", ruta: string, cuerpo?: unknown): Promise<T> {
   const cabeceras: Record<string, string> = {};
   const token = leerToken();
@@ -39,7 +52,10 @@ async function peticion<T>(metodo: "GET" | "POST", ruta: string, cuerpo?: unknow
   }
 
   const datos: any = await respuesta.json().catch(() => null);
-  if (!respuesta.ok) throw new ErrorApi(respuesta.status, typeof datos?.error === "string" ? datos.error : "desconocido", datos);
+  if (!respuesta.ok) {
+    if (token !== null && respuesta.status === 401 && datos?.error === "no_autenticado") alSesionInvalidaActual?.(token);
+    throw new ErrorApi(respuesta.status, typeof datos?.error === "string" ? datos.error : "desconocido", datos);
+  }
   return datos as T;
 }
 
