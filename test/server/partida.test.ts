@@ -17,6 +17,8 @@ const codigoAleatorio = () => Array.from({ length: 4 }, () => ALFABETO[Math.floo
 
 const sala = (codigo: string) => env.Partida.get(env.Partida.idFromName(codigo));
 const jugadores = () => env.Jugadores.get(env.Jugadores.idFromName("global"));
+const estadoDe = (codigo: string) => runInDurableObject(sala(codigo), (_i, state) => state.storage.get("partida"));
+const alarmaDe = (codigo: string) => runInDurableObject(sala(codigo), (_i, state) => state.storage.getAlarm());
 const entorno = (cambios: Partial<Record<keyof Env, unknown>>): Env => ({ ...env, ...cambios }) as unknown as Env;
 
 /** Un jugador registrado con una partida recién creada por él. */
@@ -27,8 +29,13 @@ async function nuevaPartida() {
 
 const abiertas: Array<{ cerrar(): void }> = [];
 /** Conecta a la partida (o a otra sala con `sala`) y la cierra sola al acabar la prueba. */
-async function abrir(codigo: string, token: string, { cabeceras, sala = "partida" }: { cabeceras?: Record<string, string>; sala?: string } = {}) {
-  const conexion = await conectar(`/parties/${sala}/${codigo}`, token, cabeceras);
+async function abrir(
+  codigo: string,
+  token: string,
+  { cabeceras, sala = "partida" }: { cabeceras?: Record<string, string>; sala?: string } = {},
+  consulta = "",
+) {
+  const conexion = await conectar(`/parties/${sala}/${codigo}${consulta}`, token, cabeceras);
   abiertas.push(conexion);
   return conexion;
 }
@@ -53,10 +60,39 @@ async function esperar(condicion: () => boolean | Promise<boolean>, que: string)
 }
 
 /** Apuesta y liquida una ronda de `neto` fichas (>0) del jugador en la partida, como haría una mesa. */
-async function ganar(jugadorId: number, codigo: string, neto: number): Promise<void> {
+async function ganar(jugadorId: number, codigo: string, neto: number, momento = Date.now()): Promise<void> {
   const rondaId = `ronda-${crypto.randomUUID()}`;
   expect(await jugadores().apostar(jugadorId, 100, rondaId)).toBe("ok");
-  await jugadores().liquidar({ rondaId, juego: "blackjack", codigoPartida: codigo, filas: [{ jugadorId, apuesta: 100, pago: 100 + neto }] }, Date.now());
+  await jugadores().liquidar({ rondaId, juego: "blackjack", codigoPartida: codigo, filas: [{ jugadorId, apuesta: 100, pago: 100 + neto }] }, momento);
+}
+
+/**
+ * Hace que `Jugadores.rankingPartida` falle para la sala `codigo` (le cambia el binding a esa instancia) y silencia el
+ * error registrado. Devuelve el espía de `console.error` y `arreglar()`, que restaura el binding real.
+ */
+async function romperRanking(codigo: string) {
+  const roto = {
+    idFromName: () => "global",
+    get: () => ({
+      rankingPartida: async () => {
+        throw new Error("Jugadores caído");
+      },
+    }),
+  };
+  // `env` es protegido: se accede a él por encima del tipo.
+  const bindings = (partida: object) => (partida as { env: Record<string, unknown> }).env;
+  const reales = await runInDurableObject(sala(codigo), (partida) => {
+    const original = bindings(partida).Jugadores;
+    bindings(partida).Jugadores = roto;
+    return original;
+  });
+  return {
+    log: vi.spyOn(console, "error").mockImplementation(() => {}),
+    arreglar: () =>
+      runInDurableObject(sala(codigo), (partida) => {
+        bindings(partida).Jugadores = reales;
+      }),
+  };
 }
 
 describe("enrutado de /parties/*", () => {
@@ -207,6 +243,64 @@ describe("enrutado de /parties/*", () => {
   });
 });
 
+describe("enrutado: frontera de confianza", () => {
+  it("una cabecera x-partykit-props mal formada del cliente no rompe la conexión: llega una 'sala' normal", async () => {
+    const { token, codigo } = await nuevaPartida();
+    const conexion = await abrir(codigo, token, { cabeceras: { "x-partykit-props": "{" } });
+    const mensaje = await conexion.recibir();
+    expect(mensaje.error).toBeUndefined(); // sin traza de error del servidor
+    expect(mensaje.t).toBe("sala");
+  });
+
+  it("?_pk= del cliente no se convierte en el id de la conexión", async () => {
+    const { token, codigo } = await nuevaPartida();
+    const primera = await abrir(codigo, token, {}, "?_pk=ELEGIDO");
+    await primera.recibir("sala");
+    const segunda = await abrir(codigo, token, {}, "?_pk=ELEGIDO");
+    await segunda.recibir("sala");
+
+    const ids = await runInDurableObject(sala(codigo), (partida) => [...partida.getConnections()].map((c) => c.id));
+    expect(ids).toHaveLength(2);
+    expect(ids).not.toContain("ELEGIDO");
+    expect(new Set(ids).size).toBe(2);
+  });
+
+  it("lo que llega a la sala: código en mayúsculas, identidad del token, sin x-partykit-* ni _pk del cliente", async () => {
+    const { token, jugador, codigo } = await nuevaPartida();
+    let recibida: Request | undefined;
+    const falsa = {
+      idFromName: (nombre: string) => nombre,
+      get: () => ({
+        existe: async () => true,
+        fetch: async (peticion: Request) => {
+          recibida = peticion;
+          return new Response("ok");
+        },
+      }),
+    };
+    const peticion = new Request(`http://x/parties/partida/${codigo.toLowerCase()}?_pk=ELEGIDO&token=${encodeURIComponent(token)}`, {
+      headers: {
+        Upgrade: "websocket",
+        "x-jugador-id": "999999",
+        "x-apodo": "intruso",
+        "x-partykit-props": "{",
+        "x-partykit-room": "OTRA",
+        "x-partykit-jurisdiction": "eu",
+      },
+    });
+    await worker.fetch(peticion, entorno({ Partida: falsa }));
+
+    expect(recibida).toBeDefined();
+    const url = new URL(recibida!.url);
+    expect(url.pathname).toBe(`/parties/partida/${codigo}`);
+    expect(url.searchParams.has("_pk")).toBe(false);
+    expect(recibida!.headers.get("x-jugador-id")).toBe(String(jugador.id));
+    expect(recibida!.headers.get("x-apodo")).toBe(jugador.apodo);
+    expect(recibida!.headers.get("upgrade")).toBe("websocket");
+    for (const nombre of ["x-partykit-props", "x-partykit-room", "x-partykit-jurisdiction"]) expect(recibida!.headers.has(nombre), nombre).toBe(false);
+  });
+});
+
 describe("Partida: sala", () => {
   it("al conectar recibe 'sala' con su apodo en conectados, las mesas vacías y el ranking vacío", async () => {
     const { token, jugador, codigo } = await nuevaPartida();
@@ -310,6 +404,74 @@ describe("Partida: sala", () => {
     ]);
   });
 
+  it("si Jugadores falla al cargar el ranking, la conexión recibe una 'sala' normal sin ranking y la siguiente lo recupera", async () => {
+    const a = await registrar(unico());
+    const b = await registrar(unico());
+    const codigo = await crearPartida(a.token);
+    await ganar(a.jugador.id, codigo, 70);
+
+    const { log, arreglar } = await romperRanking(codigo);
+    const conexionA = await abrir(codigo, a.token);
+    expect(await conexionA.recibir()).toEqual({
+      t: "sala",
+      codigo,
+      conectados: [a.jugador.apodo],
+      mesas: { blackjack: MESA_VACIA, carrera: MESA_VACIA },
+      rankingNoche: [],
+    });
+    expect(log).toHaveBeenCalled();
+    expect(conexionA.ws.readyState).toBe(WebSocket.OPEN);
+
+    await arreglar();
+    const conexionB = await abrir(codigo, b.token);
+    expect((await conexionB.recibir("sala")).rankingNoche).toEqual([{ apodo: a.jugador.apodo, neto: 70 }]);
+  });
+
+  it("si Jugadores falla al refrescar, actualizarMesa no lanza, difunde igualmente y conserva el ranking anterior", async () => {
+    const { token, jugador, codigo } = await nuevaPartida();
+    await ganar(jugador.id, codigo, 70);
+    const conexion = await abrir(codigo, token);
+    expect((await conexion.recibir("sala")).rankingNoche).toEqual([{ apodo: jugador.apodo, neto: 70 }]);
+    await ganar(jugador.id, codigo, 30);
+
+    const { log, arreglar } = await romperRanking(codigo);
+    const resumen: ResumenMesa = { jugadores: [jugador.apodo], fase: "apuestas", finFase: 7 };
+    await expect(sala(codigo).actualizarMesa("blackjack", resumen, true)).resolves.toBeUndefined();
+    expect(await conexion.recibir("sala")).toMatchObject({ mesas: { blackjack: resumen }, rankingNoche: [{ apodo: jugador.apodo, neto: 70 }] });
+    expect(log).toHaveBeenCalled();
+
+    await arreglar();
+    await sala(codigo).actualizarMesa("blackjack", resumen, true);
+    expect((await conexion.recibir("sala")).rankingNoche).toEqual([{ apodo: jugador.apodo, neto: 100 }]);
+  });
+
+  it("rankingNoche solo cuenta lo jugado desde que se (re)abrió la partida", async () => {
+    const { token, jugador } = await registrar(unico());
+    const codigo = codigoAleatorio();
+    const T = Date.now();
+    expect(await sala(codigo).iniciar(jugador.id, T)).toBe(true);
+    await ganar(jugador.id, codigo, 500, T + 10);
+    await runInDurableObject(sala(codigo), (partida) => {
+      partida.ahora = () => T + 1; // distinto del T con que se abrió, para distinguir la alarma de la desconexión
+    });
+    const primera = await abrir(codigo, token);
+    expect((await primera.recibir("sala")).rankingNoche).toEqual([{ apodo: jugador.apodo, neto: 500 }]);
+    primera.cerrar();
+    await esperar(async () => (await alarmaDe(codigo)) === T + 1 + MIN_30, "alarma tras la desconexión");
+    await runDurableObjectAlarm(sala(codigo));
+    expect(await sala(codigo).existe()).toBe(false);
+
+    // Mismo código, partida nueva: lo de antes no cuenta, lo de ahora sí (también en el instante exacto de la apertura).
+    const reabierta = T + 60_000;
+    expect(await sala(codigo).iniciar(jugador.id, reabierta)).toBe(true);
+    const segunda = await abrir(codigo, token);
+    expect((await segunda.recibir("sala")).rankingNoche).toEqual([]);
+
+    await ganar(jugador.id, codigo, 25, reabierta);
+    await sala(codigo).actualizarMesa("blackjack", MESA_VACIA, true);
+    expect((await segunda.recibir("sala")).rankingNoche).toEqual([{ apodo: jugador.apodo, neto: 25 }]);
+  });
+
   it("ignora lo que envía el cliente: ni responde ni se cae", async () => {
     const { token, codigo } = await nuevaPartida();
     const conexion = await abrir(codigo, token);
@@ -354,9 +516,6 @@ describe("Partida: sala", () => {
 });
 
 describe("Partida: ciclo de vida", () => {
-  const estadoDe = (codigo: string) => runInDurableObject(sala(codigo), (_i, state) => state.storage.get("partida"));
-  const alarmaDe = (codigo: string) => runInDurableObject(sala(codigo), (_i, state) => state.storage.getAlarm());
-
   it("iniciar abre la sala con alarma a 30 min; si ya está abierta devuelve false y no cambia nada", async () => {
     const codigo = codigoAleatorio();
     const t0 = Date.now() + 24 * 60 * MIN_30; // en el futuro: una alarma en el pasado saltaría al instante
@@ -392,14 +551,20 @@ describe("Partida: ciclo de vida", () => {
     expect((await intentarConectar(`/parties/partida/${codigo}`, token)).status).toBe(404);
   });
 
-  it("si vence la alarma con alguien conectado no se cierra", async () => {
+  it("si vence la alarma con alguien conectado no se cierra y se vuelve a programar a 30 min", async () => {
     const { token, codigo } = await nuevaPartida();
+    const t0 = 7_000_000_000_000;
+    await runInDurableObject(sala(codigo), (partida) => {
+      partida.ahora = () => t0;
+    });
     const conexion = await abrir(codigo, token);
     await conexion.recibir("sala");
 
     expect(await runDurableObjectAlarm(sala(codigo))).toBe(true);
     expect(await sala(codigo).existe()).toBe(true);
     expect(conexion.ws.readyState).toBe(WebSocket.OPEN);
+    // Si se perdiera un evento de cierre, la sala se cerraría sola cuando por fin quedara vacía.
+    expect(await alarmaDe(codigo)).toBe(t0 + MIN_30);
   });
 
   it("volver a conectar antes de que venza aplaza el cierre: cuenta desde la última desconexión", async () => {

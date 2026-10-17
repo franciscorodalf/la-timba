@@ -573,12 +573,32 @@ describe("rankingPartida", () => {
     );
     await jugar(j, carla, 500, 1500, { codigoPartida: "WXYZ" });
 
-    expect(await j.rankingPartida("ABCD")).toEqual([
+    expect(await j.rankingPartida("ABCD", 0)).toEqual([
       { apodo: "Ana", neto: 60 },
       { apodo: "Beto", neto: -40 },
     ]);
-    expect(await j.rankingPartida("WXYZ")).toEqual([{ apodo: "Carla", neto: 1000 }]);
-    expect(await j.rankingPartida("NADA")).toEqual([]);
+    expect(await j.rankingPartida("WXYZ", 0)).toEqual([{ apodo: "Carla", neto: 1000 }]);
+    expect(await j.rankingPartida("NADA", 0)).toEqual([]);
+  });
+
+  it("solo cuenta los resultados desde `desde` (inclusive), para que un código reutilizado empiece de cero", async () => {
+    const j = nuevo();
+    const ana = await crear(j, "Ana");
+    const beto = await crear(j, "Beto");
+    await jugar(j, ana, 100, 300, { ahora: T0 }); // +200, de la partida anterior con el mismo código
+    await jugar(j, beto, 100, 150, { ahora: T0 + 999 }); // +50, también anterior
+    await jugar(j, ana, 100, 140, { ahora: T0 + 1000 }); // +40, en el instante exacto de la reapertura
+    await jugar(j, beto, 100, 0, { ahora: T0 + 5000 }); // -100
+
+    expect(await j.rankingPartida("ABCD", T0 + 1000)).toEqual([
+      { apodo: "Ana", neto: 40 },
+      { apodo: "Beto", neto: -100 },
+    ]);
+    expect(await j.rankingPartida("ABCD", T0 + 5001)).toEqual([]);
+    expect(await j.rankingPartida("ABCD", 0)).toEqual([
+      { apodo: "Ana", neto: 240 },
+      { apodo: "Beto", neto: -50 },
+    ]);
   });
 
   it("empata por neto → desempata por apodo", async () => {
@@ -587,7 +607,7 @@ describe("rankingPartida", () => {
     const ana = await crear(j, "ana");
     await jugar(j, beto, 10, 20, { codigoPartida: "ABCD" });
     await jugar(j, ana, 10, 20, { codigoPartida: "ABCD" });
-    expect(await j.rankingPartida("ABCD")).toEqual([
+    expect(await j.rankingPartida("ABCD", 0)).toEqual([
       { apodo: "ana", neto: 10 },
       { apodo: "Beto", neto: 10 },
     ]);

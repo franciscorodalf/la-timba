@@ -2,7 +2,7 @@ import { getServerByName, routePartykitRequest } from "partyserver";
 import { type JugadorPublico, ORDENES_RANKING, type OrdenRanking, type RespuestaRanking, type RespuestaSesion } from "../shared/api";
 import { rngCripto, type Rng } from "../shared/cartas";
 import { apodoValido, firmarToken, pinValido, verificarToken } from "./auth";
-import { Jugadores } from "./jugadores";
+import { Jugadores, jugadoresGlobal } from "./jugadores";
 import { MesaBlackjack } from "./mesa-blackjack";
 import { MesaCarrera } from "./mesa-carrera";
 import { Partida } from "./partida";
@@ -67,8 +67,6 @@ const conSesion =
     return jugador === null ? noAutenticado() : manejador(c, jugador);
   };
 
-const jugadores = (env: Env) => env.Jugadores.get(env.Jugadores.idFromName("global"));
-
 async function sesion(env: Env, jugador: JugadorPublico): Promise<RespuestaSesion> {
   return { token: await firmarToken({ id: jugador.id, apodo: jugador.apodo }, env.TOKEN_SECRET, Date.now()), jugador };
 }
@@ -115,7 +113,7 @@ const registro: Manejador = async (c) => {
   if (!apodoValido(apodo)) return error(400, "apodo_invalido");
   if (!pinValido(pin)) return error(400, "pin_invalido");
 
-  const r = await jugadores(c.env).registrar(apodo, pin, Date.now());
+  const r = await jugadoresGlobal(c.env).registrar(apodo, pin, Date.now());
   if (!r.ok) return error(r.error === "apodo_ocupado" ? 409 : 400, r.error);
   return json(await sesion(c.env, r.jugador), 201);
 };
@@ -127,7 +125,7 @@ const entrar: Manejador = async (c) => {
   if (typeof apodo !== "string" || typeof pin !== "string") return peticionInvalida();
   if (apodo.length > LONGITUD_MAXIMA_CREDENCIAL || pin.length > LONGITUD_MAXIMA_CREDENCIAL) return peticionInvalida();
 
-  const r = await jugadores(c.env).entrar(apodo, pin, Date.now());
+  const r = await jugadoresGlobal(c.env).entrar(apodo, pin, Date.now());
   if (r.ok) return json(await sesion(c.env, r.jugador));
   switch (r.error) {
     case "no_existe":
@@ -141,7 +139,7 @@ const entrar: Manejador = async (c) => {
 
 const yo = conSesion(async (c, { id }) => {
   // Token auténtico de un jugador que ya no existe: equivale a no estar autenticado.
-  const perfil = await jugadores(c.env).perfil(id);
+  const perfil = await jugadoresGlobal(c.env).perfil(id);
   return perfil === null ? noAutenticado() : json(perfil);
 });
 
@@ -163,12 +161,12 @@ const ranking: Manejador = async (c) => {
   if (!esOrden(orden)) return error(400, "orden_invalido");
   // El token es opcional: sin él, o con uno inválido, se ve el ranking como anónimo.
   const jugador = await autenticar(c);
-  const respuesta: RespuestaRanking = await jugadores(c.env).ranking(orden, jugador?.id ?? null);
+  const respuesta: RespuestaRanking = await jugadoresGlobal(c.env).ranking(orden, jugador?.id ?? null);
   return json(respuesta);
 };
 
 const rescate = conSesion(async (c, { id }) => {
-  const r = await jugadores(c.env).rescate(id);
+  const r = await jugadoresGlobal(c.env).rescate(id);
   return r.ok ? json({ fichas: r.fichas }) : error(409, r.error);
 });
 
@@ -207,9 +205,13 @@ async function manejarApi(request: Request, env: Env): Promise<Response> {
 /** Las únicas rutas de /parties: la sala y las dos mesas de una partida, con su código (aún sin pasar a mayúsculas). */
 const RUTA_PARTY = /^\/parties\/(partida|mesa-blackjack|mesa-carrera)\/([A-Za-z2-9]{4})$/;
 
+/** Cabeceras con las que partyserver configura el Durable Object: las pone el enrutador, nunca el cliente. */
+const CABECERAS_PARTYKIT = ["x-partykit-props", "x-partykit-room", "x-partykit-jurisdiction"];
+
 /**
  * Deja pasar la conexión a la sala o la mesa si trae un token válido y la partida existe. La identidad del token viaja
- * a la sala en `x-jugador-id` y `x-apodo`: solo el Worker las pone (`set` descarta las que mande el cliente).
+ * a la sala en `x-jugador-id` y `x-apodo`: solo el Worker las pone (`set` descarta las que mande el cliente). Tampoco
+ * pasan las cabeceras `x-partykit-*` ni `?_pk=` del cliente (con él elegiría el id de su conexión).
  */
 async function autorizarConexion(request: Request, codigo: string, env: Env): Promise<Request | Response> {
   const token = new URL(request.url).searchParams.get("token");
@@ -217,10 +219,13 @@ async function autorizarConexion(request: Request, codigo: string, env: Env): Pr
   if (jugador === null) return noAutenticado();
   if (!(await partidaAbierta(env, codigo))) return error(404, "partida_inexistente");
 
+  const destino = new URL(request.url);
+  destino.searchParams.delete("_pk");
   const cabeceras = new Headers(request.headers);
+  for (const nombre of CABECERAS_PARTYKIT) cabeceras.delete(nombre);
   cabeceras.set("x-jugador-id", String(jugador.id));
   cabeceras.set("x-apodo", jugador.apodo);
-  return new Request(request, { headers: cabeceras });
+  return new Request(destino, { method: request.method, headers: cabeceras });
 }
 
 /** Atiende `/parties/*`: solo WebSockets autenticados. Cualquier excepción no controlada se registra y responde 503. */

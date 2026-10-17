@@ -111,7 +111,10 @@ async function intentarEntrar(sql: SqlStorage, apodo: string, pin: string, ahora
   return registrarFallo(sql, fila.apodo, ahora);
 }
 
-/** Jugadores, fichas, estadísticas y rankings. Una única instancia global (`idFromName("global")`). */
+/** El Durable Object `Jugadores`: una única instancia global. */
+export const jugadoresGlobal = (env: Env) => env.Jugadores.get(env.Jugadores.idFromName("global"));
+
+/** Jugadores, fichas, estadísticas y rankings. Una única instancia global (`jugadoresGlobal`). */
 export class Jugadores extends DurableObject<Env> {
   private readonly sql: SqlStorage;
   /**
@@ -273,15 +276,17 @@ export class Jugadores extends DurableObject<Env> {
     return { top: filas.filter((f) => f.posicion <= TAMANO_TOP).map(aFila), yo: mia === undefined ? null : aFila(mia) };
   }
 
-  async rankingPartida(codigo: string): Promise<FilaRankingPartida[]> {
+  /** Neto de cada jugador en la partida `codigo` con los resultados de `desde` (ms, inclusive) en adelante: un código reutilizado empieza de cero. */
+  async rankingPartida(codigo: string, desde: number): Promise<FilaRankingPartida[]> {
     return this.sql
       .exec<{ apodo: string; neto: number }>(
         `SELECT j.apodo AS apodo, SUM(r.neto) AS neto
          FROM resultados r JOIN jugadores j ON j.id = r.jugador_id
-         WHERE r.codigo_partida = ?
+         WHERE r.codigo_partida = ? AND r.momento >= ?
          GROUP BY r.jugador_id
          ORDER BY neto DESC, j.apodo COLLATE NOCASE ASC`,
         codigo,
+        desde,
       )
       .toArray();
   }

@@ -2,6 +2,7 @@ import { type Connection, type ConnectionContext, Server } from "partyserver";
 import type { FilaRankingPartida, MensajeSala } from "../shared/api";
 import type { IdJuego, ResumenMesa } from "../shared/juegos/tipos";
 import type { Env } from "./index";
+import { jugadoresGlobal } from "./jugadores";
 
 const CLAVE_PARTIDA = "partida";
 const CLAVE_MESAS = "mesas";
@@ -103,7 +104,11 @@ export class Partida extends Server<Env> {
   onMessage(): void {}
 
   async onAlarm(): Promise<void> {
-    if (this.conectados().length > 0) return;
+    if (this.conectados().length > 0) {
+      // Hay gente: la sala sigue abierta. Se vuelve a armar por si se perdió algún evento de cierre y se quedara abierta para siempre.
+      await this.ctx.storage.setAlarm(this.ahora() + INACTIVIDAD_MS);
+      return;
+    }
     const estado = await this.ctx.storage.get<EstadoPartida>(CLAVE_PARTIDA);
     if (estado !== undefined && !estado.cerrada) await this.ctx.storage.put(CLAVE_PARTIDA, { ...estado, cerrada: true });
   }
@@ -125,9 +130,20 @@ export class Partida extends Server<Env> {
     return { ...mesasVacias(), ...(await this.ctx.storage.get<Partial<Mesas>>(CLAVE_MESAS)) };
   }
 
+  /**
+   * Pide a Jugadores el ranking de lo jugado desde que se abrió la partida y lo guarda. Si Jugadores falla se registra
+   * y se sigue con el ranking que hubiera (o ninguno): la sala no depende de él para funcionar.
+   */
   private async cargarRanking(): Promise<void> {
-    const jugadores = this.env.Jugadores.get(this.env.Jugadores.idFromName("global"));
-    await this.ctx.storage.put(CLAVE_RANKING, await jugadores.rankingPartida(this.name));
+    const estado = await this.ctx.storage.get<EstadoPartida>(CLAVE_PARTIDA);
+    let ranking: FilaRankingPartida[];
+    try {
+      ranking = await jugadoresGlobal(this.env).rankingPartida(this.name, estado?.creadaEn ?? 0);
+    } catch (e) {
+      console.error(e);
+      return;
+    }
+    await this.ctx.storage.put(CLAVE_RANKING, ranking);
   }
 
   /** Envía a todas las conexiones el estado actual de la sala. */
