@@ -1,3 +1,4 @@
+import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import type { IdJuego } from "../../src/shared/juegos/tipos";
@@ -99,15 +100,82 @@ describe("entrar", () => {
     expect(ok).toMatchObject({ ok: true, jugador: { apodo: "Fran" } });
   });
 
-  it("intentos simultáneos no esquivan el bloqueo: 4 fallos con aviso y el resto bloqueado", async () => {
-    const j = nuevo();
-    await crear(j);
-    const resultados = await Promise.all(Array.from({ length: 8 }, () => j.entrar("Fran", "0000", T0)));
+  describe("entradas simultáneas (la cola serializa entrar)", () => {
+    type Entrada = Awaited<ReturnType<Stub["entrar"]>>;
+    const avisos = (rs: Entrada[]) => rs.map((r) => (!r.ok && r.error === "pin" ? r.intentosRestantes : null)).filter((n) => n !== null);
 
-    expect(resultados.filter((r) => !r.ok && r.error === "pin").map((r) => !r.ok && r.error === "pin" && r.intentosRestantes).sort()).toEqual([1, 2, 3, 4]);
-    const bloqueados = resultados.filter((r) => !r.ok && r.error === "bloqueado");
-    expect(bloqueados).toHaveLength(4);
-    for (const b of bloqueados) expect(b).toEqual({ ok: false, error: "bloqueado", hasta: T0 + QUINCE_MIN });
+    it("10 PIN incorrectos a la vez: 4 avisos (4,3,2,1) y 6 bloqueados; después ni el PIN correcto entra", async () => {
+      const j = nuevo();
+      await crear(j);
+      const rs = await Promise.all(Array.from({ length: 10 }, () => j.entrar("Fran", "0000", T0)));
+
+      expect(avisos(rs).sort()).toEqual([1, 2, 3, 4]);
+      const bloqueados = rs.filter((r) => !r.ok && r.error === "bloqueado");
+      expect(bloqueados).toHaveLength(6);
+      for (const b of bloqueados) expect(b).toEqual({ ok: false, error: "bloqueado", hasta: T0 + QUINCE_MIN });
+      expect(await j.entrar("Fran", "1234", T0 + 1)).toEqual({ ok: false, error: "bloqueado", hasta: T0 + QUINCE_MIN });
+    });
+
+    // Dentro del objeto todas las llamadas arrancan en el mismo turno, así que se solapan en cada `await` de PBKDF2:
+    // es el solape que produce una ráfaga de peticiones en producción.
+    it("una ráfaga con el PIN correcto después de 5 fallos no entra: el bloqueo se respeta", async () => {
+      const j = nuevo();
+      await crear(j);
+      const pins = ["0000", "0001", "0002", "0003", "0004", "0005", "1234", "0006"];
+      const rs = await runInDurableObject(j, (instancia) => Promise.all(pins.map((pin) => instancia.entrar("Fran", pin, T0))));
+
+      expect(rs.slice(0, 4)).toEqual([4, 3, 2, 1].map((intentosRestantes) => ({ ok: false, error: "pin", intentosRestantes })));
+      expect(rs.slice(4)).toEqual(Array(4).fill({ ok: false, error: "bloqueado", hasta: T0 + QUINCE_MIN }));
+    });
+
+    it("10 PIN incorrectos solapados dentro del objeto: tampoco pasan de 5 intentos", async () => {
+      const j = nuevo();
+      await crear(j);
+      const rs = await runInDurableObject(j, (instancia) => Promise.all(Array.from({ length: 10 }, () => instancia.entrar("Fran", "0000", T0))));
+
+      expect(avisos(rs)).toEqual([4, 3, 2, 1]);
+      expect(rs.filter((r) => !r.ok && r.error === "bloqueado")).toHaveLength(6);
+    });
+
+    it("dos apodos a la vez: cada uno recibe su propio resultado", async () => {
+      const j = nuevo();
+      await crear(j, "Ana", "1111");
+      await crear(j, "Beto", "2222");
+      const rs = await runInDurableObject(j, (instancia) =>
+        Promise.all([
+          instancia.entrar("Ana", "0000", T0),
+          instancia.entrar("Beto", "2222", T0),
+          instancia.entrar("Ana", "0000", T0),
+          instancia.entrar("Beto", "0000", T0),
+          instancia.entrar("Ana", "1111", T0),
+        ]),
+      );
+
+      expect(rs).toEqual([
+        { ok: false, error: "pin", intentosRestantes: 4 },
+        { ok: true, jugador: expect.objectContaining({ apodo: "Beto" }) },
+        { ok: false, error: "pin", intentosRestantes: 3 },
+        { ok: false, error: "pin", intentosRestantes: 4 },
+        { ok: true, jugador: expect.objectContaining({ apodo: "Ana" }) },
+      ]);
+    });
+
+    it("una entrada que falla no rompe la cola de las siguientes", async () => {
+      const j = nuevo();
+      await crear(j, "Rota");
+      await crear(j, "Fran");
+      // Una sal ilegible hace que `verificarPin` lance.
+      await runInDurableObject(j, (_instancia, estado) => {
+        estado.storage.sql.exec("UPDATE jugadores SET pin_sal = 'zz' WHERE apodo = 'Rota'");
+      });
+
+      const [rota, fran] = await runInDurableObject(j, (instancia) =>
+        Promise.allSettled([instancia.entrar("Rota", "1234", T0), instancia.entrar("Fran", "1234", T0)]),
+      );
+      expect(rota.status).toBe("rejected");
+      expect(fran).toMatchObject({ status: "fulfilled", value: { ok: true, jugador: { apodo: "Fran" } } });
+      expect(await j.entrar("Fran", "1234", T0)).toMatchObject({ ok: true });
+    });
   });
 
   it("un acierto pone los fallos a 0", async () => {

@@ -52,6 +52,12 @@ const ORIGEN_RANKING: Record<OrdenRanking, string> = {
 
 type FilaJugador = { id: number; apodo: string; fichas: number };
 
+type ResultadoEntrar =
+  | { ok: true; jugador: JugadorPublico }
+  | { ok: false; error: "no_existe" }
+  | { ok: false; error: "pin"; intentosRestantes: number }
+  | { ok: false; error: "bloqueado"; hasta: number };
+
 function leerIntentos(sql: SqlStorage, apodo: string): { fallos: number; bloqueadoHasta: number } {
   const fila = sql.exec<{ fallos: number; bloqueado_hasta: number }>("SELECT fallos, bloqueado_hasta FROM intentos WHERE apodo = ?", apodo).toArray()[0];
   return { fallos: fila?.fallos ?? 0, bloqueadoHasta: fila?.bloqueado_hasta ?? 0 };
@@ -68,14 +74,12 @@ function guardarIntentos(sql: SqlStorage, apodo: string, fallos: number, bloquea
 }
 
 /**
- * Anota un PIN incorrecto. Es síncrona y relee el estado, porque entre el chequeo previo y aquí hubo un `await`
- * (PBKDF2): si otro intento llegó a bloquear la cuenta, no se pisa el bloqueo. Al llegar al 5º fallo se bloquea
- * y el contador vuelve a 0, de modo que al vencer el bloqueo no hay que limpiar nada.
+ * Anota un PIN incorrecto. Solo se llama desde `intentarEntrar`, que `entrar` serializa: nadie ha tocado los
+ * intentos desde la comprobación del bloqueo. Al llegar al 5º fallo se bloquea y el contador vuelve a 0, de modo
+ * que al vencer el bloqueo no hay que limpiar nada.
  */
 function registrarFallo(sql: SqlStorage, apodo: string, ahora: number) {
   const previo = leerIntentos(sql, apodo);
-  if (ahora < previo.bloqueadoHasta) return { ok: false, error: "bloqueado", hasta: previo.bloqueadoHasta } as const;
-
   const fallos = previo.fallos + 1;
   if (fallos >= MAX_FALLOS) {
     const hasta = ahora + BLOQUEO_MS;
@@ -86,9 +90,36 @@ function registrarFallo(sql: SqlStorage, apodo: string, ahora: number) {
   return { ok: false, error: "pin", intentosRestantes: MAX_FALLOS - fallos } as const;
 }
 
+/**
+ * Una entrada completa: bloqueo, verificación del PIN y registro del resultado. Con un `await` en medio (PBKDF2),
+ * solo es correcta si no se solapa con otra entrada: ver `Jugadores.entrar`.
+ */
+async function intentarEntrar(sql: SqlStorage, apodo: string, pin: string, ahora: number): Promise<ResultadoEntrar> {
+  const fila = sql
+    .exec<FilaJugador & { pin_hash: string; pin_sal: string }>("SELECT id, apodo, fichas, pin_hash, pin_sal FROM jugadores WHERE apodo = ?", apodo)
+    .toArray()[0];
+  if (fila === undefined) return { ok: false, error: "no_existe" };
+
+  // El bloqueo se comprueba antes de derivar el PIN: PBKDF2 es CPU pura y no debe poder forzarse durante el bloqueo.
+  const { bloqueadoHasta } = leerIntentos(sql, fila.apodo);
+  if (ahora < bloqueadoHasta) return { ok: false, error: "bloqueado", hasta: bloqueadoHasta };
+
+  if (await verificarPin(pin, fila.pin_hash, fila.pin_sal)) {
+    sql.exec("UPDATE intentos SET fallos = 0 WHERE apodo = ?", fila.apodo);
+    return { ok: true, jugador: { id: fila.id, apodo: fila.apodo, fichas: fila.fichas } };
+  }
+  return registrarFallo(sql, fila.apodo, ahora);
+}
+
 /** Jugadores, fichas, estadísticas y rankings. Una única instancia global (`idFromName("global")`). */
 export class Jugadores extends DurableObject<Env> {
   private readonly sql: SqlStorage;
+  /**
+   * Cola en memoria de `entrar`. Los RPC de un Durable Object se entrelazan en los `await` que no son de
+   * almacenamiento (PBKDF2): sin cola, una ráfaga de PIN distintos pasaría todos el chequeo del bloqueo antes de
+   * que ningún fallo lo activara, y un acierto dentro de la ráfaga entraría pese al bloqueo. Nunca rechaza (ver `entrar`).
+   */
+  private colaEntrar: Promise<unknown> = Promise.resolve();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -120,30 +151,11 @@ export class Jugadores extends DurableObject<Env> {
     return fila === undefined ? { ok: false, error: "apodo_ocupado" } : { ok: true, jugador: fila };
   }
 
-  async entrar(
-    apodo: string,
-    pin: string,
-    ahora: number,
-  ): Promise<
-    | { ok: true; jugador: JugadorPublico }
-    | { ok: false; error: "no_existe" }
-    | { ok: false; error: "pin"; intentosRestantes: number }
-    | { ok: false; error: "bloqueado"; hasta: number }
-  > {
-    const fila = this.sql
-      .exec<FilaJugador & { pin_hash: string; pin_sal: string }>("SELECT id, apodo, fichas, pin_hash, pin_sal FROM jugadores WHERE apodo = ?", apodo)
-      .toArray()[0];
-    if (fila === undefined) return { ok: false, error: "no_existe" };
-
-    // El bloqueo se comprueba antes de derivar el PIN: PBKDF2 es CPU pura y no debe poder forzarse durante el bloqueo.
-    const { bloqueadoHasta } = leerIntentos(this.sql, fila.apodo);
-    if (ahora < bloqueadoHasta) return { ok: false, error: "bloqueado", hasta: bloqueadoHasta };
-
-    if (await verificarPin(pin, fila.pin_hash, fila.pin_sal)) {
-      this.sql.exec("UPDATE intentos SET fallos = 0 WHERE apodo = ?", fila.apodo);
-      return { ok: true, jugador: { id: fila.id, apodo: fila.apodo, fichas: fila.fichas } };
-    }
-    return registrarFallo(this.sql, fila.apodo, ahora);
+  /** Las entradas se ejecutan de una en una, en orden de llegada; un fallo inesperado de una no detiene a las siguientes. */
+  async entrar(apodo: string, pin: string, ahora: number): Promise<ResultadoEntrar> {
+    const turno = this.colaEntrar.then(() => intentarEntrar(this.sql, apodo, pin, ahora));
+    this.colaEntrar = turno.catch(() => undefined);
+    return turno;
   }
 
   async perfil(jugadorId: number): Promise<Perfil | null> {
