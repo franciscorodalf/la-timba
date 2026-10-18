@@ -237,7 +237,7 @@ export function MesaBlackjack({ codigo }: { codigo: string }) {
   const textoError = error === null ? null : (TEXTO_ERROR[error] ?? "No puedes hacer eso ahora");
 
   const miEtiqueta = (
-    <div className="bj-etiqueta bj-etiqueta--yo">
+    <div className="bj-etiqueta">
       <span>Tú</span>
       <Total valor={miTotal} tono={tonoDe(miMano, miTotal, miNeto)} />
       {miNeto !== undefined && <Resultado key={`${resultados?.ronda}`} neto={miNeto} />}

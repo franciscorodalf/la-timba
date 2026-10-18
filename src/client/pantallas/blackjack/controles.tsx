@@ -48,7 +48,7 @@ export function Apostar({ fichas, activo, esperando, onApostar }: ApostarProps) 
         <Boton variante="secundario" className="bj-apostar__borrar" aria-label="Borrar apuesta" disabled={cantidad === 0} onClick={() => setMontante(0)}>
           Borrar
         </Boton>
-        <Boton className="bj-apostar__boton" disabled={!activo || cantidad < BJ.MIN} cargando={esperando} onClick={() => {
+        <Boton disabled={!activo || cantidad < BJ.MIN} cargando={esperando} onClick={() => {
             ultimaApuesta = cantidad;
             onApostar(cantidad);
           }}>
