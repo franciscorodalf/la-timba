@@ -2,45 +2,66 @@ import { type RefObject, useEffect, useState } from "react";
 import type { VistaBJ } from "../../../shared/juegos/blackjack";
 import type { Evento } from "../../../shared/juegos/tipos";
 import { sonidos } from "../../efectos/sonidos";
-import { GIRO_MS, type Guion, GUION_VACIO, guionDelLote, VUELO_MS } from "./guion";
+import { encolarGuion, GIRO_MS, type Guion, GUION_VACIO, guionDelLote, VUELO_MS } from "./guion";
 
 export const hayCartas = (lote: Evento[]): boolean => lote.some((e) => e.tipo === "carta_repartida" || e.tipo === "carta_girada");
 
 export interface Reloj {
   lote: Evento[];
+  /** Los tiempos van en milisegundos desde `inicio`. */
   guion: Guion;
+  /** `performance.now()` cuando empezó el guion en curso. */
+  inicio: number;
+  /** Lo que llevaba el guion cuando llegó el último lote: una carta que aparece ahora espera `salida − desde`. */
+  desde: number;
   /** Milisegundos del guion que ya han pasado (a saltos: cada llegada de una carta). */
   hito: number;
-  /** Dónde estaba el mazo cuando llegó el guion: de ahí salen sus cartas. */
+  /** Dónde estaba el mazo cuando llegó el último lote: de ahí salen sus cartas. */
   origen: DOMRect | null;
 }
 
 /**
- * El guion del último lote con cartas y su avance. Un lote sin cartas (alguien apuesta, otro se sienta) no interrumpe el
- * reparto en curso. Cada carta suena al salir del mazo.
+ * El guion de los lotes con cartas y su avance. Un lote con cartas que llega con un reparto en marcha se pone detrás
+ * (`encolarGuion`): sus cartas no adelantan a las que esperan, los totales no se adelantan y no se pierde ningún sonido.
+ * Un lote sin cartas (alguien apuesta, otro se sienta) no toca el guion. Cada carta suena al salir del mazo.
  */
 export function useGuion(lote: Evento[], vista: VistaBJ | null, mazo: RefObject<HTMLElement | null>): Reloj {
-  const [reloj, setReloj] = useState<Reloj>({ lote, guion: GUION_VACIO, hito: Infinity, origen: null });
+  const [reloj, setReloj] = useState<Reloj>({ lote, guion: GUION_VACIO, inicio: 0, desde: 0, hito: Infinity, origen: null });
   let actual = reloj;
   if (lote !== reloj.lote) {
-    actual =
-      vista !== null && hayCartas(lote)
-        ? { lote, guion: guionDelLote(lote, vista), hito: 0, origen: mazo.current?.getBoundingClientRect() ?? null }
-        : { ...reloj, lote };
+    if (vista !== null && hayCartas(lote)) {
+      const ahora = performance.now();
+      const nuevo = guionDelLote(lote, vista);
+      const origen = mazo.current?.getBoundingClientRect() ?? null;
+      const transcurrido = ahora - reloj.inicio;
+      actual =
+        reloj.guion !== GUION_VACIO && transcurrido < reloj.guion.fin
+          ? { lote, guion: encolarGuion(reloj.guion, transcurrido, nuevo), inicio: reloj.inicio, desde: transcurrido, hito: reloj.hito, origen }
+          : { lote, guion: nuevo, inicio: ahora, desde: 0, hito: 0, origen };
+    } else {
+      actual = { ...reloj, lote };
+    }
     setReloj(actual);
   }
 
-  const { guion } = actual;
+  const { guion, inicio, desde } = actual;
   useEffect(() => {
     if (guion === GUION_VACIO) return;
+    // Al cambiar el guion se cancelan los relojes del anterior: aquí se vuelven a poner los que aún no han llegado.
+    const pasado = performance.now() - inicio;
+    const relojes: ReturnType<typeof setTimeout>[] = [];
     const hitos = new Set([...guion.cartas.values()].map((t) => t + VUELO_MS));
-    if (guion.giro) hitos.add(GIRO_MS);
+    if (guion.giro !== null) hitos.add(guion.giro + GIRO_MS);
     hitos.add(guion.fin);
-    const relojes = [...hitos].map((t) => setTimeout(() => setReloj((r) => (r.guion === guion ? { ...r, hito: Math.max(r.hito, t) } : r)), t));
-    for (const t of guion.cartas.values()) relojes.push(setTimeout(() => sonidos.reproducir("carta"), t));
-    if (guion.giro) sonidos.reproducir("carta");
+    for (const t of hitos) {
+      relojes.push(setTimeout(() => setReloj((r) => (r.guion === guion ? { ...r, hito: Math.max(r.hito, t) } : r)), Math.max(0, t - pasado)));
+    }
+    // Suenan las cartas que aún no habían salido al llegar el último lote (las suyas y las que esperaban turno).
+    const salidas = [...guion.cartas.values()];
+    if (guion.giro !== null) salidas.push(guion.giro);
+    for (const t of salidas) if (t >= desde) relojes.push(setTimeout(() => sonidos.reproducir("carta"), Math.max(0, t - pasado)));
     return () => relojes.forEach(clearTimeout);
-  }, [guion]);
+  }, [guion, inicio, desde]);
 
   return actual;
 }
@@ -49,4 +70,14 @@ export function useGuion(lote: Evento[], vista: VistaBJ | null, mazo: RefObject<
 export function aterrizada(reloj: Reloj, clave: string): boolean {
   const salida = reloj.guion.cartas.get(clave);
   return salida === undefined || reloj.hito >= salida + VUELO_MS;
+}
+
+/** La tapada de la banca ya se ha girado del todo (o no se gira en el guion en curso). */
+export function girada(reloj: Reloj): boolean {
+  return reloj.guion.giro === null || reloj.hito >= reloj.guion.giro + GIRO_MS;
+}
+
+/** Lo que le queda al guion en curso por terminar de verse, ahora mismo. */
+export function restante(reloj: Reloj): number {
+  return reloj.guion === GUION_VACIO ? 0 : Math.max(0, reloj.guion.fin - (performance.now() - reloj.inicio));
 }

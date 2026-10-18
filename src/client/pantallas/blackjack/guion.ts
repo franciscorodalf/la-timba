@@ -17,13 +17,13 @@ const PAUSA_GIRO_MS = 150;
 export interface Guion {
   /** Cuándo sale cada carta repartida en el lote, por su clave (`claveCarta`), en el orden de los eventos. */
   cartas: Map<string, number>;
-  /** En este lote se gira la carta tapada de la banca (empieza nada más llegar). */
-  giro: boolean;
+  /** Cuándo empieza a girarse la carta tapada de la banca, si se gira en este guion. */
+  giro: number | null;
   /** Cuándo ha terminado de verse todo lo del lote. */
   fin: number;
 }
 
-export const GUION_VACIO: Guion = { cartas: new Map(), giro: false, fin: 0 };
+export const GUION_VACIO: Guion = { cartas: new Map(), giro: null, fin: 0 };
 
 /** Identifica una carta de la mesa: la ronda, de quién es (un jugador o la banca) y su posición en la mano. */
 export const claveCarta = (ronda: number, de: JugadorId | "banca", indice: number): string => `${ronda}:${de}:${indice}`;
@@ -42,11 +42,11 @@ export function guionDelLote(lote: Evento[], vista: VistaBJ): Guion {
   const cartas = new Map<string, number>();
   let momento = 0;
   let fin = 0;
-  let giro = false;
+  let giro: number | null = null;
 
   for (const evento of lote) {
     if (evento.tipo === "carta_girada") {
-      giro = true;
+      giro = momento;
       fin = Math.max(fin, momento + GIRO_MS);
       momento += GIRO_MS + PAUSA_GIRO_MS;
     } else if (evento.tipo === "carta_repartida") {
@@ -64,6 +64,26 @@ export function guionDelLote(lote: Evento[], vista: VistaBJ): Guion {
     }
   }
   return { cartas, giro, fin };
+}
+
+/**
+ * Pone un guion `nuevo` detrás del que está en marcha (`previo`, del que ya han pasado `transcurrido` ms), en la escala
+ * de tiempo de `previo`: sus cartas salen cuando termina la última del anterior (o ya, si el anterior terminó), así que
+ * una carta pedida a mitad de reparto no adelanta a las que aún esperan. Del anterior se olvida lo que ya ha aterrizado
+ * (cuenta como en su sitio) y se conserva lo que aún vuela o espera, con su momento.
+ */
+export function encolarGuion(previo: Guion, transcurrido: number, nuevo: Guion): Guion {
+  const desde = Math.max(transcurrido, previo.fin);
+  const cartas = new Map<string, number>();
+  for (const [clave, salida] of previo.cartas) if (salida + VUELO_MS > transcurrido) cartas.set(clave, salida);
+  for (const [clave, salida] of nuevo.cartas) cartas.set(clave, desde + salida);
+  const giroPrevio = previo.giro !== null && previo.giro + GIRO_MS > transcurrido ? previo.giro : null;
+  const hayNuevo = nuevo.cartas.size > 0 || nuevo.giro !== null;
+  return {
+    cartas,
+    giro: nuevo.giro !== null ? desde + nuevo.giro : giroPrevio,
+    fin: hayNuevo ? Math.max(previo.fin, desde + nuevo.fin) : previo.fin,
+  };
 }
 
 /** El total de las cartas de una mano que ya se ven (las tapadas no cuentan); `null` si aún no se ve ninguna. */

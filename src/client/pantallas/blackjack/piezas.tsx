@@ -48,7 +48,9 @@ export function Mano({ cartas, de, ronda, ancho, reloj, etiqueta }: ManoProps) {
           {cartas.map((carta, i) => {
             const clave = claveCarta(ronda, de, i);
             const salida = reloj.guion.cartas.get(clave);
-            return <Naipe key={clave} carta={carta} ancho={ancho} retardo={salida} origen={salida === undefined ? null : reloj.origen} />;
+            // Solo cuenta para las cartas que aparecen ahora (las del último lote): esperan lo que le falta a su salida.
+            const retardo = salida === undefined ? undefined : Math.max(0, salida - reloj.desde);
+            return <Naipe key={clave} carta={carta} ancho={ancho} retardo={retardo} origen={salida === undefined ? null : reloj.origen} />;
           })}
         </CapaMano>
       </AnimatePresence>

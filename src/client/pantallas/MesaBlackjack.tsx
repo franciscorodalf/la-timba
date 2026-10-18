@@ -21,9 +21,9 @@ import { useAhoraServidor } from "../red/reloj";
 import { useSesion } from "../red/sesion";
 import { useMesa } from "../red/useMesa";
 import { Apostar, Decidir, textoEstado } from "./blackjack/controles";
-import { claveCarta, GIRO_MS, guionDelLote, totalVisible } from "./blackjack/guion";
+import { claveCarta, totalVisible } from "./blackjack/guion";
 import { Apuesta, Leyenda, Mano, type ManoVista, Neto, Resultado, SimboloMano, Total, tonoDe } from "./blackjack/piezas";
-import { aterrizada, hayCartas, useGuion } from "./blackjack/useGuion";
+import { aterrizada, girada, restante, useGuion } from "./blackjack/useGuion";
 
 /** A partir de este ancho, la mesa entera con los asientos en semicírculo; por debajo, la vista de móvil. */
 const ORDENADOR_PX = 900;
@@ -163,7 +163,8 @@ export function MesaBlackjack({ codigo }: { codigo: string }) {
     const ronda = vista.ronda;
     const mio = pagos.find((p) => p.jugadorId === vista.yo);
     const pasado = vista.manos.find((m) => m.jugadorId === vista.yo)?.estado === "pasado";
-    const espera = (hayCartas(lote) ? guionDelLote(lote, vista).fin : 0) + PAUSA_PREMIO_MS;
+    // Cuando termina de verse el guion en curso, que ya incluye las cartas de este lote si las trae.
+    const espera = restante(reloj) + PAUSA_PREMIO_MS;
     despues(espera, () => {
       setResultados({ ronda, netos: new Map(pagos.map((p) => [p.jugadorId, p.neto])) });
       if (mio === undefined) return;
@@ -227,8 +228,7 @@ export function MesaBlackjack({ codigo }: { codigo: string }) {
       ? resultados.netos.get(yo)
       : undefined;
 
-  const girada = !reloj.guion.giro || reloj.hito >= GIRO_MS;
-  const totalBanca = vista === null ? null : totalVisible(vista.banca, (i) => aterrizada(reloj, claveCarta(ronda, "banca", i)) && (i !== 1 || girada));
+  const totalBanca = vista === null ? null : totalVisible(vista.banca, (i) => aterrizada(reloj, claveCarta(ronda, "banca", i)) && (i !== 1 || girada(reloj)));
   const totalDe = (mano: ManoVista) => totalVisible(mano.cartas, (i) => aterrizada(reloj, claveCarta(ronda, mano.jugadorId, i)));
   const miTotal = miMano ? totalDe(miMano) : null;
   const miManoEnLaMesa = miMano === undefined || miMano.cartas.every((_, i) => aterrizada(reloj, claveCarta(ronda, miMano.jugadorId, i)));

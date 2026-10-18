@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { claveCarta, ESCALONADO_MS, GIRO_MS, guionDelLote, totalVisible, VUELO_MS } from "../../src/client/pantallas/blackjack/guion";
+import { claveCarta, encolarGuion, ESCALONADO_MS, GIRO_MS, guionDelLote, totalVisible, VUELO_MS } from "../../src/client/pantallas/blackjack/guion";
 import type { Carta } from "../../src/shared/cartas";
 import type { VistaBJ } from "../../src/shared/juegos/blackjack";
 
@@ -36,7 +36,7 @@ describe("guionDelLote", () => {
       [claveCarta(3, 2, 1), 1040],
       [claveCarta(3, "banca", 1), 1300],
     ]);
-    expect(guion.giro).toBe(false);
+    expect(guion.giro).toBeNull();
     expect(guion.fin).toBe(1300 + VUELO_MS);
   });
 
@@ -57,7 +57,7 @@ describe("guionDelLote", () => {
       ],
       v,
     );
-    expect(guion.giro).toBe(true);
+    expect(guion.giro).toBe(0);
     const primera = guion.cartas.get(claveCarta(3, "banca", 2))!;
     expect(primera).toBeGreaterThanOrEqual(GIRO_MS);
     expect(guion.cartas.get(claveCarta(3, "banca", 3))).toBe(primera + ESCALONADO_MS);
@@ -69,6 +69,49 @@ describe("guionDelLote", () => {
     const guion = guionDelLote([{ tipo: "carta_repartida", a: 9, oculta: false, carta: c("5D") }], vista({ manos: [mano(1, [c("5D")])] }));
     expect(guion.cartas.size).toBe(0);
     expect(guion.fin).toBe(0);
+  });
+});
+
+describe("encolarGuion", () => {
+  // Reparto de tres cartas (0, 260 y 520 ms; termina a los 1.000) y, por separado, una carta pedida.
+  const reparto = guionDelLote(
+    [
+      { tipo: "carta_repartida", a: 1, oculta: false, carta: c("10H") },
+      { tipo: "carta_repartida", a: "banca", oculta: false, carta: c("6S") },
+      { tipo: "carta_repartida", a: 1, oculta: false, carta: c("9C") },
+    ],
+    vista({ banca: [c("6S")], manos: [mano(1, [c("10H"), c("9C")])] }),
+  );
+  const pedida = guionDelLote([{ tipo: "carta_repartida", a: 2, oculta: false, carta: c("5D") }], vista({ manos: [mano(2, [c("KD"), c("2S"), c("5D")])] }));
+
+  it("un lote que llega con el reparto en marcha sale detrás de la última carta, sin adelantarla", () => {
+    expect(reparto.fin).toBe(520 + VUELO_MS);
+    const guion = encolarGuion(reparto, 300, pedida);
+    expect([...guion.cartas]).toEqual([
+      [claveCarta(3, 1, 0), 0],
+      [claveCarta(3, "banca", 0), 260],
+      [claveCarta(3, 1, 1), 520],
+      [claveCarta(3, 2, 2), reparto.fin],
+    ]);
+    expect(guion.fin).toBe(reparto.fin + VUELO_MS);
+  });
+
+  it("las cartas que ya han aterrizado se olvidan (cuentan como en su sitio); sin reparto en marcha, la nueva sale ya", () => {
+    const aMedias = encolarGuion(reparto, 900, pedida);
+    expect([...aMedias.cartas]).toEqual([
+      [claveCarta(3, 1, 1), 520],
+      [claveCarta(3, 2, 2), reparto.fin],
+    ]);
+    const acabado = encolarGuion(reparto, 1500, pedida);
+    expect([...acabado.cartas]).toEqual([[claveCarta(3, 2, 2), 1500]]);
+    expect(acabado.fin).toBe(1500 + VUELO_MS);
+  });
+
+  it("el giro de la tapada se conserva mientras dura y se desplaza con su lote", () => {
+    const banca = guionDelLote([{ tipo: "carta_girada", carta: c("10D") }], vista({ fase: "resultado", banca: [c("6S"), c("10D")] }));
+    expect(encolarGuion(banca, 200, pedida).giro).toBe(0);
+    expect(encolarGuion(banca, GIRO_MS + 50, pedida).giro).toBeNull();
+    expect(encolarGuion(reparto, 300, banca).giro).toBe(reparto.fin);
   });
 });
 
