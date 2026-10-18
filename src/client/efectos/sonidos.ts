@@ -145,9 +145,28 @@ function victoria(ctx: AudioContext, destino: AudioNode, t: number): void {
 
 const INSTRUMENTOS: Record<NombreSonido, (ctx: AudioContext, destino: AudioNode, t: number) => void> = { carta, fichas, victoria };
 
-// El primer toque en cualquier sitio de la página despierta el audio. Crearlo no se hace dentro del toque (el botón
-// tardaría en responder) sino en el siguiente rato libre: el toque ya cuenta para que el navegador lo deje sonar. Si aun
-// así nace suspendido (Safari solo lo arranca dentro de un toque), el toque siguiente lo reanuda.
+// El audio se despierta con el primer gesto del jugador en cualquier sitio de la página. Se escuchan todos los que pueden
+// contar como gesto: en iOS un `pointerdown` de un dedo no cuenta (sí `touchend`, `pointerup` y `click`). Crearlo no se
+// hace dentro del gesto (el botón tardaría en responder) sino en el siguiente rato libre, y solo cuando el navegador ya
+// considera que ha habido un gesto. Si aun así nace suspendido (Safari solo lo arranca dentro de uno), el gesto siguiente
+// lo reanuda y toca un búfer mudo para desbloquearlo; los oyentes siguen puestos hasta que suena.
+const GESTOS = ["pointerdown", "pointerup", "touchend", "click", "keydown"] as const;
+
+type ConActivacion = Navigator & { userActivation?: { hasBeenActive: boolean } };
+
+/** Dentro de un gesto: reanuda el audio suspendido y toca un instante de silencio (lo que desbloquea iOS). */
+function desbloquear(ctx: AudioContext): void {
+  try {
+    void ctx.resume().catch(() => {});
+    const silencio = ctx.createBufferSource();
+    silencio.buffer = ctx.createBuffer(1, 1, ctx.sampleRate);
+    silencio.connect(ctx.destination);
+    silencio.start(0);
+  } catch {
+    // Sin desbloqueo: se intentará en el gesto siguiente.
+  }
+}
+
 if (typeof window !== "undefined") {
   let creando = false;
   const crearEnReposo = () => {
@@ -157,15 +176,19 @@ if (typeof window !== "undefined") {
     if (typeof window.requestIdleCallback === "function") window.requestIdleCallback(crear, { timeout: 300 });
     else setTimeout(crear, 0);
   };
-  const despertar = () => {
-    if (contexto === null) return crearEnReposo();
-    if (audio(false) !== null) {
-      window.removeEventListener("pointerdown", despertar, true);
-      window.removeEventListener("keydown", despertar, true);
-    }
+  const dejarDeEscuchar = () => {
+    for (const gesto of GESTOS) window.removeEventListener(gesto, despertar, true);
   };
-  window.addEventListener("pointerdown", despertar, { capture: true, passive: true });
-  window.addEventListener("keydown", despertar, { capture: true, passive: true });
+  function despertar() {
+    if (contexto === null) {
+      // Un evento que el navegador aún no cuenta como gesto (el `pointerdown` de iOS): se espera al siguiente.
+      if ((navigator as ConActivacion).userActivation?.hasBeenActive === false) return;
+      return crearEnReposo();
+    }
+    if (contexto.state === "running") return dejarDeEscuchar();
+    desbloquear(contexto);
+  }
+  for (const gesto of GESTOS) window.addEventListener(gesto, despertar, { capture: true, passive: true });
 }
 
 export const sonidos = {
