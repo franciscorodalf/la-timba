@@ -13,6 +13,12 @@ import "./tema/reconectando.css";
 import "./tema/sala.css";
 import "./tema/invitar.css";
 import "./tema/pendiente.css";
+import "./tema/naipe.css";
+import "./tema/temporizador.css";
+import "./tema/destellos.css";
+import "./tema/confirmar.css";
+import "./tema/barra-mesa.css";
+import "./tema/mesa-blackjack.css";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

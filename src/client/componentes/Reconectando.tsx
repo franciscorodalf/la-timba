@@ -19,13 +19,14 @@ function useTrasRetraso(condicion: boolean, ms: number): boolean {
 }
 
 /**
- * «Reconectando…» mientras el socket de la sala está caído, para cualquier pantalla de dentro de la partida. No existe
- * hasta pasado `RETRASO_MS` sin conexión: en una carga normal no se pinta ni se anuncia. La región `status` sí está
- * siempre, vacía, para que los lectores de pantalla anuncien el texto cuando aparece.
+ * «Reconectando…» mientras el socket de la sala está caído (o el de la mesa, si la pantalla pasa `conectado`), para
+ * cualquier pantalla de dentro de la partida. No existe hasta pasado `RETRASO_MS` sin conexión: en una carga normal no se
+ * pinta ni se anuncia. La región `status` sí está siempre, vacía, para que los lectores de pantalla anuncien el texto
+ * cuando aparece.
  */
-export function Reconectando() {
-  const { conectado } = usePartida();
-  const visible = useTrasRetraso(!conectado, RETRASO_MS);
+export function Reconectando({ conectado }: { conectado?: boolean }) {
+  const sala = usePartida();
+  const visible = useTrasRetraso(!(conectado ?? sala.conectado), RETRASO_MS);
   return (
     <div role="status">
       {visible && (

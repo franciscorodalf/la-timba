@@ -1,0 +1,54 @@
+/* Confirmar: diálogo modal para lo que no tiene vuelta atrás (salir de una mesa con la apuesta en juego). */
+
+.confirmar {
+  width: min(92vw, 360px);
+  padding: 0;
+  border: 1px solid rgba(212, 175, 55, 0.5);
+  border-radius: 20px;
+  color: var(--crema);
+  background:
+    linear-gradient(160deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.015)),
+    #0b3a24;
+  box-shadow:
+    0 30px 80px rgba(0, 0, 0, 0.6),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.confirmar[open] {
+  animation: aparecer 0.3s var(--curva) both;
+}
+
+.confirmar::backdrop {
+  background: rgba(2, 14, 8, 0.72);
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
+}
+
+.confirmar__cuerpo {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 26px 22px 22px;
+  text-align: center;
+}
+
+.confirmar__cuerpo .panel__texto {
+  text-wrap: balance;
+}
+
+.confirmar__botones {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.confirmar__botones .boton {
+  padding: 0 12px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .confirmar[open] {
+    animation-duration: 0.2s;
+  }
+}

@@ -5,6 +5,7 @@ import { Boton } from "./componentes/Boton";
 import { Cargando } from "./componentes/Cargando";
 import { Entrada } from "./pantallas/Entrada";
 import { Inicio } from "./pantallas/Inicio";
+import { MesaBlackjack } from "./pantallas/MesaBlackjack";
 import { Sala } from "./pantallas/Sala";
 import { PartidaProvider } from "./red/usePartida";
 import { SesionProvider, useSesion } from "./red/sesion";
@@ -54,7 +55,7 @@ function LayoutPartida({ codigo }: { codigo: string }) {
           <Sala codigo={codigo} />
         </Route>
         <Route path="/blackjack">
-          <Pendiente nombre="Blackjack" />
+          <MesaBlackjack codigo={codigo} />
         </Route>
         <Route path="/carrera">
           <Pendiente nombre="Carrera" />
