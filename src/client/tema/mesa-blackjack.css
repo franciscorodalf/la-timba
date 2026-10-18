@@ -88,6 +88,23 @@
   align-items: center;
 }
 
+/* El hueco impreso en el tapete donde caen las cartas: se ve mientras la mano está vacía. */
+.bj-mano::before {
+  content: "";
+  grid-area: 1 / 1;
+  width: var(--ancho);
+  height: calc(var(--ancho) * 1.4);
+  border: 1.5px solid rgba(212, 175, 55, 0.2);
+  border-radius: calc(var(--ancho) * 0.06);
+  box-shadow: inset 0 0 0 4px rgba(0, 0, 0, 0.06);
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+
+.bj-mano:not(:has(.naipe))::before {
+  opacity: 1;
+}
+
 .bj-mano__cartas > .naipe + .naipe {
   margin-left: calc(var(--ancho) * var(--solape));
 }
@@ -96,8 +113,8 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 26px;
-  font-size: 0.6875rem;
+  min-height: 28px;
+  font-size: 0.75rem;
   font-weight: 700;
   letter-spacing: 0.16em;
   text-transform: uppercase;
@@ -108,13 +125,13 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 30px;
-  height: 24px;
-  padding: 0 8px;
+  min-width: 34px;
+  height: 27px;
+  padding: 0 9px;
   border-radius: 999px;
   background: linear-gradient(180deg, #e6c75f, var(--oro) 60%, #c29f2f);
   color: var(--tinta);
-  font: 800 0.8125rem/1 var(--fuente-ui);
+  font: 800 0.9375rem/1 var(--fuente-ui);
   letter-spacing: 0;
   box-shadow: 0 2px 0 rgba(0, 0, 0, 0.28);
 }
@@ -226,12 +243,12 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  min-height: 28px;
-  padding: 3px 10px;
+  min-height: 32px;
+  padding: 4px 12px;
   border-radius: 999px;
   border: 1px solid rgba(243, 231, 196, 0.15);
   background: rgba(0, 0, 0, 0.25);
-  font-size: 0.75rem;
+  font-size: 0.875rem;
   line-height: 1.2;
 }
 
@@ -275,7 +292,13 @@
 
 /* ---------- Leyenda del tapete ---------- */
 
+/* Mientras está el cartel del premio, la leyenda del tapete se aparta para no cruzarse con él. */
+.bj--premio .bj-leyenda {
+  opacity: 0;
+}
+
 .bj-leyenda {
+  transition: opacity 0.3s;
   display: block;
   width: min(100%, 300px);
   margin: auto auto;
@@ -408,7 +431,9 @@
   r: 9.2px;
 }
 
+/* Posicionado: el SVG lleva `filter` (contexto de apilamiento) y, sin esto, se pintaría encima del número. */
 .bj-ficha__valor {
+  position: relative;
   grid-area: 1 / 1;
   font: 800 0.8125rem/1 var(--fuente-ui);
   color: var(--crema);

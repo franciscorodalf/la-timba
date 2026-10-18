@@ -1,6 +1,6 @@
-import type { Carta } from "../../shared/cartas";
-import { puntuacion, type VistaBJ } from "../../shared/juegos/blackjack";
-import type { Evento, JugadorId } from "../../shared/juegos/tipos";
+import type { Carta } from "../../../shared/cartas";
+import { puntuacion, type VistaBJ } from "../../../shared/juegos/blackjack";
+import type { Evento, JugadorId } from "../../../shared/juegos/tipos";
 
 // El «guion» de un lote de eventos: en qué momento sale cada carta, para que se repartan una detrás de otra como en una
 // mesa de verdad aunque el servidor mande todas a la vez. Los tiempos son milisegundos desde que llegó el lote.

@@ -1,6 +1,7 @@
 // Los sonidos de las mesas, sintetizados con Web Audio en el momento: no hay archivos que descargar ni licencias que
 // vigilar, y cada vez suenan un poco distintos (como una carta de verdad). Nada de aquí lanza: sin Web Audio, antes del
 // primer toque en la página (los navegadores no dejan sonar antes) o con el sonido silenciado, simplemente no suena.
+// El audio se despierta con el primer toque o tecla en cualquier sitio de la página (ver el final del archivo).
 
 export type NombreSonido = "carta" | "fichas" | "victoria";
 
@@ -19,16 +20,16 @@ let contexto: AudioContext | null = null;
 let salida: AudioNode | null = null;
 let ruido: AudioBuffer | null = null;
 
-type ConActivacion = Navigator & { userActivation?: { hasBeenActive: boolean } };
-
-/** El contexto de audio listo para sonar, o `null` si aún no puede (o nunca podrá). Lo crea la primera vez que se puede. */
-function audio(): AudioContext | null {
+/**
+ * El contexto de audio listo para sonar, o `null` si aún no puede (o nunca podrá). Solo lo crea con `crear`, que pasa
+ * únicamente el despertar tras un toque del jugador: crearlo cuesta decenas de milisegundos (cientos en un móvil lento) y
+ * no debe pasar en mitad de un reparto; además, antes de un toque el navegador lo dejaría mudo.
+ */
+function audio(crear: boolean): AudioContext | null {
   try {
     if (contexto === null) {
       const Contexto: typeof AudioContext | undefined = globalThis.AudioContext ?? (globalThis as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-      if (typeof Contexto !== "function") return null;
-      // Sin un toque previo el navegador lo dejaría mudo y avisaría en la consola: se espera al primero.
-      if ((navigator as ConActivacion).userActivation?.hasBeenActive === false) return null;
+      if (!crear || typeof Contexto !== "function") return null;
       contexto = new Contexto({ latencyHint: "interactive" });
       salida = cadenaDeSalida(contexto);
       ruido = ruidoBlanco(contexto);
@@ -44,12 +45,12 @@ function audio(): AudioContext | null {
 /** Volumen general con un compresor suave: varias fichas o cartas a la vez no saturan. */
 function cadenaDeSalida(ctx: AudioContext): AudioNode {
   const compresor = ctx.createDynamicsCompressor();
-  compresor.threshold.value = -14;
-  compresor.ratio.value = 4;
+  compresor.threshold.value = -9;
+  compresor.ratio.value = 3;
   compresor.attack.value = 0.003;
   compresor.release.value = 0.12;
   const volumen = ctx.createGain();
-  volumen.gain.value = 0.7;
+  volumen.gain.value = 0.9;
   volumen.connect(compresor).connect(ctx.destination);
   return volumen;
 }
@@ -99,8 +100,8 @@ function tono(ctx: AudioContext, destino: AudioNode, inicio: number, tipo: Oscil
 
 /** Una carta que sale del mazo: un roce que se apaga y un golpecito sordo al caer en el tapete. */
 function carta(ctx: AudioContext, destino: AudioNode, t: number): void {
-  soplo(ctx, destino, t, { desde: azar(4200, 0.15), hasta: azar(1500, 0.15), q: 0.8 }, azar(0.5, 0.1), 0.006, 0.11);
-  tono(ctx, destino, t + 0.035, "sine", azar(150, 0.1), 0.22, 0.004, 0.06);
+  soplo(ctx, destino, t, { desde: azar(4200, 0.15), hasta: azar(1500, 0.15), q: 0.8 }, azar(1.9, 0.1), 0.006, 0.11);
+  tono(ctx, destino, t + 0.035, "sine", azar(150, 0.1), 0.5, 0.004, 0.06);
 }
 
 /** Fichas de arcilla que chocan: tres o cuatro chasquidos agudos con una pizca de resonancia. */
@@ -109,8 +110,8 @@ function fichas(ctx: AudioContext, destino: AudioNode, t: number): void {
   let cuando = t;
   for (let i = 0; i < golpes; i++) {
     const f = azar(3400, 0.2);
-    soplo(ctx, destino, cuando, { desde: f, hasta: f * 0.8, q: 5 }, azar(0.55, 0.15), 0.0015, azar(0.035, 0.25));
-    tono(ctx, destino, cuando, "sine", f * azar(1.3, 0.05), 0.05, 0.001, 0.045);
+    soplo(ctx, destino, cuando, { desde: f, hasta: f * 0.8, q: 5 }, azar(2.6, 0.15), 0.0015, azar(0.035, 0.25));
+    tono(ctx, destino, cuando, "sine", f * azar(1.3, 0.05), 0.12, 0.001, 0.045);
     cuando += azar(0.042, 0.35);
   }
 }
@@ -132,8 +133,8 @@ function victoria(ctx: AudioContext, destino: AudioNode, t: number): void {
     }
   };
   // Sol5, Do6, Mi6, Sol6 y el acorde de Do mayor arriba.
-  [784, 1047, 1319, 1568].forEach((f, i) => nota(t + i * 0.085, f, 0.16, 0.32));
-  for (const f of [1047, 1319, 1568, 2093]) nota(t + 0.36, f, 0.09, 0.75);
+  [784, 1047, 1319, 1568].forEach((f, i) => nota(t + i * 0.085, f, 0.2, 0.32));
+  for (const f of [1047, 1319, 1568, 2093]) nota(t + 0.36, f, 0.11, 0.75);
   // El bucle del eco no se apaga solo: se desconecta cuando ya no suena, para no dejar nodos vivos.
   setTimeout(() => {
     eco.disconnect();
@@ -144,10 +145,21 @@ function victoria(ctx: AudioContext, destino: AudioNode, t: number): void {
 
 const INSTRUMENTOS: Record<NombreSonido, (ctx: AudioContext, destino: AudioNode, t: number) => void> = { carta, fichas, victoria };
 
-// El primer toque en cualquier sitio de la página despierta el audio (en iOS, solo se puede dentro de un toque).
+// El primer toque en cualquier sitio de la página despierta el audio. Crearlo no se hace dentro del toque (el botón
+// tardaría en responder) sino en el siguiente rato libre: el toque ya cuenta para que el navegador lo deje sonar. Si aun
+// así nace suspendido (Safari solo lo arranca dentro de un toque), el toque siguiente lo reanuda.
 if (typeof window !== "undefined") {
+  let creando = false;
+  const crearEnReposo = () => {
+    if (creando) return;
+    creando = true;
+    const crear = () => void audio(true);
+    if (typeof window.requestIdleCallback === "function") window.requestIdleCallback(crear, { timeout: 300 });
+    else setTimeout(crear, 0);
+  };
   const despertar = () => {
-    if (audio() !== null) {
+    if (contexto === null) return crearEnReposo();
+    if (audio(false) !== null) {
       window.removeEventListener("pointerdown", despertar, true);
       window.removeEventListener("keydown", despertar, true);
     }
@@ -157,10 +169,10 @@ if (typeof window !== "undefined") {
 }
 
 export const sonidos = {
-  /** Toca un sonido ya. Silenciado, sin Web Audio o antes del primer toque en la página, no hace nada. */
+  /** Toca un sonido ya. Silenciado, sin Web Audio o antes del primer toque en la página, no hace nada (y no crea el audio). */
   reproducir(nombre: NombreSonido): void {
     if (silenciado) return;
-    const ctx = audio();
+    const ctx = audio(false);
     if (ctx === null || salida === null) return;
     try {
       INSTRUMENTOS[nombre](ctx, salida, ctx.currentTime + 0.005);

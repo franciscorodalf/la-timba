@@ -1,18 +1,16 @@
-import { AnimatePresence, motion, useIsPresent } from "motion/react";
-import { type CSSProperties, type ReactNode, type Ref, type RefObject, useCallback, useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
+import { AnimatePresence, motion } from "motion/react";
+import { type CSSProperties, type ReactNode, useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Link, useLocation } from "wouter";
-import type { Carta } from "../../shared/cartas";
 import { type AccionBJ, BJ, type VistaBJ } from "../../shared/juegos/blackjack";
 import type { CodigoError, Evento, JugadorId } from "../../shared/juegos/tipos";
 import { Aviso } from "../componentes/Aviso";
 import { BarraMesa } from "../componentes/BarraMesa";
-import { Boton } from "../componentes/Boton";
 import { Confirmar } from "../componentes/Confirmar";
 import { Destellos } from "../componentes/Destellos";
 import { Ficha } from "../componentes/Ficha";
 import { FichasVolando } from "../componentes/FichasVolando";
 import { Mazo } from "../componentes/Mazo";
-import { cargarBaraja, Naipe } from "../componentes/Naipe";
+import { cargarBaraja } from "../componentes/Naipe";
 import { Reconectando } from "../componentes/Reconectando";
 import { Temporizador } from "../componentes/Temporizador";
 import { useMovimientoReducido } from "../efectos/movimiento";
@@ -22,9 +20,10 @@ import { cuentaAtras, miles } from "../formato";
 import { useAhoraServidor } from "../red/reloj";
 import { useSesion } from "../red/sesion";
 import { useMesa } from "../red/useMesa";
-import { claveCarta, GIRO_MS, type Guion, GUION_VACIO, guionDelLote, totalVisible, VUELO_MS } from "./guion-blackjack";
-
-type ManoVista = VistaBJ["manos"][number];
+import { Apostar, Decidir, textoEstado } from "./blackjack/controles";
+import { claveCarta, GIRO_MS, guionDelLote, totalVisible } from "./blackjack/guion";
+import { Apuesta, Leyenda, Mano, type ManoVista, Neto, Resultado, SimboloMano, Total, tonoDe } from "./blackjack/piezas";
+import { aterrizada, hayCartas, useGuion } from "./blackjack/useGuion";
 
 /** A partir de este ancho, la mesa entera con los asientos en semicírculo; por debajo, la vista de móvil. */
 const ORDENADOR_PX = 900;
@@ -36,15 +35,11 @@ const CARTEL_MS = 2_000;
 const LLEGADA_FICHAS_MS = 450;
 /** Lo que dura el aviso «Barajando». */
 const BARAJADO_MS = 1_600;
-const VALORES_FICHA = [10, 25, 50, 100, 500] as const;
 
 const TEXTO_ERROR: Partial<Record<CodigoError, string>> = {
   sin_fichas: "No tienes fichas suficientes",
   no_disponible: "No se pudo hacer la apuesta. Inténtalo de nuevo",
 };
-
-/** La última apuesta hecha en esta pestaña: la siguiente ronda empieza con ella preparada. */
-let ultimaApuesta = 0;
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Medidas
@@ -74,283 +69,6 @@ function useMedidas(): Medidas {
   const yo = Math.round(Math.min(Math.max(ancho * 0.25, 66), 112, alto * 0.14));
   const banca = Math.round(Math.min(Math.max(ancho * 0.185, 50), 84, alto * 0.105));
   return { ordenador: false, banca, yo, otros: 0, mazo: Math.round(banca * 0.72) };
-}
-
-// ---------------------------------------------------------------------------------------------------------------------
-// Guion: cuándo sale y cuándo ha llegado cada carta
-// ---------------------------------------------------------------------------------------------------------------------
-
-const hayCartas = (lote: Evento[]): boolean => lote.some((e) => e.tipo === "carta_repartida" || e.tipo === "carta_girada");
-
-interface Reloj {
-  lote: Evento[];
-  guion: Guion;
-  /** Milisegundos del guion que ya han pasado (a saltos: cada llegada de una carta). */
-  hito: number;
-  /** Dónde estaba el mazo cuando llegó el guion: de ahí salen sus cartas. */
-  origen: DOMRect | null;
-}
-
-/**
- * El guion del último lote con cartas y su avance. Un lote sin cartas (alguien apuesta, otro se sienta) no interrumpe el
- * reparto en curso. Cada carta suena al salir del mazo.
- */
-function useGuion(lote: Evento[], vista: VistaBJ | null, mazo: RefObject<HTMLElement | null>): Reloj {
-  const [reloj, setReloj] = useState<Reloj>({ lote, guion: GUION_VACIO, hito: Infinity, origen: null });
-  let actual = reloj;
-  if (lote !== reloj.lote) {
-    actual =
-      vista !== null && hayCartas(lote)
-        ? { lote, guion: guionDelLote(lote, vista), hito: 0, origen: mazo.current?.getBoundingClientRect() ?? null }
-        : { ...reloj, lote };
-    setReloj(actual);
-  }
-
-  const { guion } = actual;
-  useEffect(() => {
-    if (guion === GUION_VACIO) return;
-    const hitos = new Set([...guion.cartas.values()].map((t) => t + VUELO_MS));
-    if (guion.giro) hitos.add(GIRO_MS);
-    hitos.add(guion.fin);
-    const relojes = [...hitos].map((t) => setTimeout(() => setReloj((r) => (r.guion === guion ? { ...r, hito: Math.max(r.hito, t) } : r)), t));
-    for (const t of guion.cartas.values()) relojes.push(setTimeout(() => sonidos.reproducir("carta"), t));
-    if (guion.giro) sonidos.reproducir("carta");
-    return () => relojes.forEach(clearTimeout);
-  }, [guion]);
-
-  return actual;
-}
-
-/** La carta ya está en su sitio (o no venía en el guion en curso). */
-function aterrizada(reloj: Reloj, clave: string): boolean {
-  const salida = reloj.guion.cartas.get(clave);
-  return salida === undefined || reloj.hito >= salida + VUELO_MS;
-}
-
-// ---------------------------------------------------------------------------------------------------------------------
-// Piezas de la mesa
-// ---------------------------------------------------------------------------------------------------------------------
-
-/** Las cartas de una ronda. Al cambiar de ronda, las de la anterior se retiran con un fundido. */
-function CapaMano({ children }: { children: ReactNode }) {
-  const presente = useIsPresent();
-  const reducido = useMovimientoReducido();
-  return (
-    <motion.div
-      className="bj-mano__cartas"
-      aria-hidden={presente ? undefined : true}
-      exit={reducido ? { opacity: 0 } : { opacity: 0, transform: "translateY(-12px) scale(0.94)" }}
-      transition={{ duration: 0.32, ease: "easeIn" }}
-    >
-      {children}
-    </motion.div>
-  );
-}
-
-interface ManoProps {
-  cartas: (Carta | null)[];
-  de: JugadorId | "banca";
-  ronda: number;
-  ancho: number;
-  reloj: Reloj;
-  etiqueta: string;
-}
-
-function Mano({ cartas, de, ronda, ancho, reloj, etiqueta }: ManoProps) {
-  const estilo = { "--ancho": `${ancho}px`, "--solape": cartas.length > 5 ? -0.62 : -0.42 } as CSSProperties;
-  return (
-    <div className="bj-mano" role="group" aria-label={etiqueta} style={estilo}>
-      <AnimatePresence initial={false}>
-        <CapaMano key={ronda}>
-          {cartas.map((carta, i) => {
-            const clave = claveCarta(ronda, de, i);
-            const salida = reloj.guion.cartas.get(clave);
-            return <Naipe key={clave} carta={carta} ancho={ancho} retardo={salida} origen={salida === undefined ? null : reloj.origen} />;
-          })}
-        </CapaMano>
-      </AnimatePresence>
-    </div>
-  );
-}
-
-type Tono = "normal" | "pasado" | "gana" | "blackjack";
-
-/** El total de una mano, que aparece con un pequeño rebote cada vez que cambia. */
-function Total({ valor, tono = "normal" }: { valor: number | null; tono?: Tono }) {
-  const reducido = useMovimientoReducido();
-  if (valor === null) return null;
-  return (
-    <motion.span
-      key={valor}
-      className={`bj-total bj-total--${tono}`}
-      initial={reducido ? { opacity: 0 } : { transform: "scale(0.2)" }}
-      animate={reducido ? { opacity: 1 } : { transform: ["scale(0.2)", "scale(1.15)", "scale(1)"] }}
-      transition={{ duration: reducido ? 0.2 : 0.38, ease: [0.2, 0.8, 0.2, 1.4], times: reducido ? undefined : [0, 0.6, 1] }}
-    >
-      <span className="solo-lectores">Total </span>
-      {valor}
-    </motion.span>
-  );
-}
-
-/** Las fichas apostadas en una mano: una pila y la cantidad. */
-function Apuesta({ cantidad, refPila }: { cantidad: number; refPila?: Ref<HTMLSpanElement> }) {
-  const reducido = useMovimientoReducido();
-  return (
-    <span className="bj-apuesta" ref={refPila}>
-      <span className="bj-apuesta__pila" aria-hidden="true">
-        <Ficha tamaño={18} />
-        <Ficha tamaño={18} />
-        <Ficha tamaño={18} />
-      </span>
-      <span className="solo-lectores">Apuesta </span>
-      <motion.b key={cantidad} initial={reducido ? { opacity: 0 } : { transform: "scale(0.6)" }} animate={reducido ? { opacity: 1 } : { transform: "scale(1)" }} transition={{ duration: 0.3, ease: [0.2, 0.8, 0.2, 1.4] }}>
-        {miles(cantidad)}
-      </motion.b>
-    </span>
-  );
-}
-
-/** «Ganas 50», «Pierdes 50» o «Empate»: lo que ha dejado la mano, cuando ya se ha visto el final. */
-function Resultado({ neto }: { neto: number }) {
-  const reducido = useMovimientoReducido();
-  const texto = neto > 0 ? `Ganas ${neto}` : neto < 0 ? `Pierdes ${-neto}` : "Empate";
-  const tono = neto > 0 ? "gana" : neto < 0 ? "pierde" : "empata";
-  return (
-    <motion.span
-      className={`bj-resultado bj-resultado--${tono}`}
-      role="status"
-      initial={reducido ? { opacity: 0 } : { opacity: 0, transform: "translateY(6px)" }}
-      animate={reducido ? { opacity: 1 } : { opacity: 1, transform: "translateY(0px)" }}
-      transition={{ duration: 0.3, ease: "easeOut" }}
-    >
-      {texto}
-    </motion.span>
-  );
-}
-
-function tonoDe(mano: ManoVista | undefined, total: number | null, neto: number | undefined): Tono {
-  if (total !== null && total > 21) return "pasado";
-  if (mano?.estado === "blackjack" && total === 21) return "blackjack";
-  if (neto !== undefined && neto > 0) return "gana";
-  return "normal";
-}
-
-/** Texto corto del estado de otra mano para su pastilla. */
-function SimboloMano({ mano, total }: { mano: ManoVista; total: number | null }) {
-  if (mano.estado === "plantado" && total !== null) return <span className="bj-pastilla__simbolo">✓<span className="solo-lectores"> se planta</span></span>;
-  if (mano.estado === "pasado" && total !== null && total > 21) return <span className="solo-lectores">se pasa</span>;
-  return null;
-}
-
-/** El arco dorado impreso en el tapete. Decorativo. */
-function Leyenda() {
-  const id = useId();
-  return (
-    <svg className="bj-leyenda" viewBox="0 0 340 74" aria-hidden="true" focusable="false">
-      <path id={id} d="M 12 10 Q 170 84 328 10" fill="none" />
-      <text className="bj-leyenda__arco">
-        <textPath href={`#${id}`} startOffset="50%" textAnchor="middle">
-          Blackjack paga 3 a 2
-        </textPath>
-      </text>
-      <text className="bj-leyenda__linea" x="170" y="68" textAnchor="middle">
-        La banca se planta en 17
-      </text>
-    </svg>
-  );
-}
-
-// ---------------------------------------------------------------------------------------------------------------------
-// Controles
-// ---------------------------------------------------------------------------------------------------------------------
-
-interface ApostarProps {
-  fichas: number;
-  activo: boolean;
-  esperando: boolean;
-  onApostar(cantidad: number): void;
-}
-
-/** Las fichas de 10 a 500 para ir sumando la apuesta, «Borrar» y «Apostar N». No deja pasar de 500 ni de tus fichas. */
-function Apostar({ fichas, activo, esperando, onApostar }: ApostarProps) {
-  const tope = Math.min(BJ.MAX, fichas);
-  const [montante, setMontante] = useState(() => (ultimaApuesta <= tope ? ultimaApuesta : 0));
-  const cantidad = montante <= tope ? montante : 0;
-  return (
-    <div className="bj-apostar">
-      <div className="bj-fichas" role="group" aria-label="Fichas para apostar">
-        {VALORES_FICHA.map((valor) => (
-          <button
-            key={valor}
-            type="button"
-            className={`bj-ficha bj-ficha--${valor}`}
-            aria-label={`Añadir ${valor}`}
-            disabled={!activo || cantidad + valor > tope}
-            onClick={() => setMontante(cantidad + valor)}
-          >
-            <Ficha tamaño={50} />
-            <span className="bj-ficha__valor" aria-hidden="true">
-              {valor}
-            </span>
-          </button>
-        ))}
-      </div>
-      <div className="bj-apostar__fila">
-        <Boton variante="secundario" className="bj-apostar__borrar" aria-label="Borrar apuesta" disabled={cantidad === 0} onClick={() => setMontante(0)}>
-          Borrar
-        </Boton>
-        <Boton className="bj-apostar__boton" disabled={!activo || cantidad < BJ.MIN} cargando={esperando} onClick={() => onApostar(cantidad)}>
-          {cantidad === 0 ? "Elige tu apuesta" : `Apostar ${miles(cantidad)}`}
-        </Boton>
-      </div>
-    </div>
-  );
-}
-
-function Decidir({ mano, fichas, activo, onActuar }: { mano: ManoVista; fichas: number; activo: boolean; onActuar(accion: AccionBJ): void }) {
-  const puede = activo && mano.estado === "jugando";
-  const puedeDoblar = puede && mano.cartas.length === 2 && fichas >= mano.apuesta;
-  return (
-    <div className="bj-decidir">
-      <Boton variante="secundario" disabled={!puede} onClick={() => onActuar({ t: "plantarse" })}>
-        Plantarse
-      </Boton>
-      <Boton disabled={!puede} onClick={() => onActuar({ t: "pedir" })}>
-        Pedir
-      </Boton>
-      <Boton
-        variante="secundario"
-        disabled={!puedeDoblar}
-        onClick={() => {
-          sonidos.reproducir("fichas");
-          onActuar({ t: "doblar" });
-        }}
-      >
-        Doblar
-      </Boton>
-    </div>
-  );
-}
-
-function textoEstado(vista: VistaBJ | null, mano: ManoVista | undefined): string {
-  if (vista === null) return "Sentándote en la mesa…";
-  switch (vista.fase) {
-    case "esperando":
-      return "Apuesta para empezar la ronda";
-    case "apuestas":
-      return mano ? "Apuesta hecha. Esperando al reparto" : "Haz tu apuesta";
-    case "decisiones":
-      if (!mano) return "Miras esta ronda";
-      if (mano.estado === "jugando") return "Tu turno: ¿pides o te plantas?";
-      if (mano.estado === "blackjack") return "¡Blackjack! Esperando al resto";
-      if (mano.estado === "pasado") return "Te has pasado. Esperando al resto";
-      return "Esperando al resto";
-    case "banca":
-      return "Juega la banca";
-    case "resultado":
-      return "Nueva ronda en";
-  }
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -507,7 +225,6 @@ export function MesaBlackjack({ codigo }: { codigo: string }) {
         activo={conectado && sentado}
         esperando={esperando}
         onApostar={(cantidad) => {
-          ultimaApuesta = cantidad;
           sonidos.reproducir("fichas");
           actuar({ t: "apostar", cantidad });
         }}
@@ -535,7 +252,7 @@ export function MesaBlackjack({ codigo }: { codigo: string }) {
   );
 
   return (
-    <main className={`bj${medidas.ordenador ? " bj--ordenador" : ""}`}>
+    <main className={`bj${medidas.ordenador ? " bj--ordenador" : ""}${premio !== null ? " bj--premio" : ""}`}>
       <Reconectando conectado={conectado || vista === null} />
       <BarraMesa titulo="Blackjack" onVolver={() => (apuestaEnJuego ? setConfirmando(true) : salirDeLaMesa())} refFichas={refFichas} />
 
@@ -668,12 +385,6 @@ export function MesaBlackjack({ codigo }: { codigo: string }) {
       )}
     </main>
   );
-}
-
-/** «+50», «−50» o «=»: lo que se ha llevado otro jugador. */
-function Neto({ neto }: { neto: number }) {
-  const tono = neto > 0 ? "gana" : neto < 0 ? "pierde" : "empata";
-  return <span className={`bj-neto bj-neto--${tono}`}>{neto > 0 ? `+${miles(neto)}` : neto < 0 ? `−${miles(-neto)}` : "="}</span>;
 }
 
 /** Huecos alrededor de la banca para el resto: alternando a tu izquierda y a tu derecha, tú siempre en el centro. */

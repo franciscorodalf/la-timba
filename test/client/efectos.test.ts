@@ -59,6 +59,23 @@ describe("sonidos", () => {
       sonidos.reproducir("victoria");
     }).not.toThrow();
   });
+
+  it("reproducir nunca crea el audio (cuesta decenas de ms): eso solo lo hace un toque del jugador", async () => {
+    vi.stubGlobal("localStorage", almacen());
+    const creado = vi.fn();
+    vi.stubGlobal(
+      "AudioContext",
+      class {
+        constructor() {
+          creado();
+        }
+      },
+    );
+    const { sonidos } = await import("../../src/client/efectos/sonidos");
+    sonidos.reproducir("carta");
+    sonidos.reproducir("victoria");
+    expect(creado).not.toHaveBeenCalled();
+  });
 });
 
 describe("vibrar", () => {

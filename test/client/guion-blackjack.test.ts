@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { claveCarta, ESCALONADO_MS, GIRO_MS, guionDelLote, totalVisible, VUELO_MS } from "../../src/client/pantallas/guion-blackjack";
+import { claveCarta, ESCALONADO_MS, GIRO_MS, guionDelLote, totalVisible, VUELO_MS } from "../../src/client/pantallas/blackjack/guion";
 import type { Carta } from "../../src/shared/cartas";
 import type { VistaBJ } from "../../src/shared/juegos/blackjack";
 

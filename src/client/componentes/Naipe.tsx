@@ -78,6 +78,8 @@ const CURVA_VUELO = [0.2, 0.8, 0.2, 1] as const;
 const GIRO_S = 0.55;
 const CURVA_GIRO = [0.3, 0.7, 0.2, 1.1] as const;
 const FUNDIDO_S = 0.3;
+/** La cara (un SVG pesado) de una carta que espera su turno se pinta este rato antes de salir del mazo, no al aparecer. */
+const ANTELACION_CARA_MS = 80;
 
 /** Para devolverla desde un efecto: al desmontar (o repetir el efecto) la animación se para donde iba. */
 const detener = (animacion: { stop(): void }) => () => animacion.stop();
@@ -107,6 +109,14 @@ export function Naipe({ carta, ancho, retardo = 0, origen = null }: Props) {
   const [entrada] = useState(() => ({ origen, retardo }));
   const tapada = carta === null;
   const estabaTapada = useRef(tapada);
+  // En un reparto aparecen todas las cartas a la vez, cada una con su espera: montar todas las caras de golpe sería una
+  // tarea larga. Cada una pinta su cara poco antes de salir, mientras las anteriores vuelan.
+  const [caraLista, setCaraLista] = useState(() => entrada.origen === null || entrada.retardo <= ANTELACION_CARA_MS);
+  useEffect(() => {
+    if (caraLista) return;
+    const espera = setTimeout(() => setCaraLista(true), entrada.retardo - ANTELACION_CARA_MS);
+    return () => clearTimeout(espera);
+  }, [caraLista, entrada]);
 
   useLayoutEffect(() => {
     const el = caja.current;
@@ -151,7 +161,7 @@ export function Naipe({ carta, ancho, retardo = 0, origen = null }: Props) {
     >
       <div ref={giro} className="naipe__giro">
         <div ref={cara} className="naipe__cara">
-          {carta !== null && (Cara ? <Cara aria-hidden="true" focusable="false" /> : <CaraProvisional carta={carta} />)}
+          {carta !== null && caraLista && (Cara ? <Cara aria-hidden="true" focusable="false" /> : <CaraProvisional carta={carta} />)}
         </div>
         <Reverso />
       </div>
