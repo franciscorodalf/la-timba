@@ -376,6 +376,14 @@
   font-variant-numeric: tabular-nums lining-nums;
 }
 
+/* La mesa no contesta: aviso y salida a la sala. */
+.bj-sin-mesa {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  animation: aparecer 0.4s var(--curva) both;
+}
+
 .bj-decidir {
   display: grid;
   grid-template-columns: 1fr 1.15fr 1fr;

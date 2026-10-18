@@ -84,7 +84,11 @@ export function Decidir({ mano, fichas, activo, onActuar }: { mano: ManoVista; f
   );
 }
 
-export function textoEstado(vista: VistaBJ | null, mano: ManoVista | undefined): string {
+/**
+ * El texto de la fase para el panel. `manoEnLaMesa` dice si tus cartas ya han llegado a su sitio: mientras alguna vuela,
+ * el texto no adelanta lo que aún no se ve (tu blackjack, que te has pasado o que te toca).
+ */
+export function textoEstado(vista: VistaBJ | null, mano: ManoVista | undefined, manoEnLaMesa: boolean): string {
   if (vista === null) return "Sentándote en la mesa…";
   switch (vista.fase) {
     case "esperando":
@@ -93,6 +97,7 @@ export function textoEstado(vista: VistaBJ | null, mano: ManoVista | undefined):
       return mano ? "Apuesta hecha. Esperando al reparto" : "Haz tu apuesta";
     case "decisiones":
       if (!mano) return "Miras esta ronda";
+      if (!manoEnLaMesa) return "Repartiendo…";
       if (mano.estado === "jugando") return "Tu turno: ¿pides o te plantas?";
       if (mano.estado === "blackjack") return "¡Blackjack! Esperando al resto";
       if (mano.estado === "pasado") return "Te has pasado. Esperando al resto";

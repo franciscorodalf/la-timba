@@ -99,8 +99,10 @@ test("dos jugadores apuestan 50, se plantan y cobran lo que enseña la mesa; rec
 const c = (texto: string): Carta => ({ palo: texto.at(-1) as Carta["palo"], valor: texto.slice(0, -1) as Carta["valor"] });
 
 interface Mesa {
-  /** El mensaje con el que contesta la mesa al conectar. Se fija antes de abrir la página. */
-  alConectar(mensaje: MensajeMesa<VistaBJ>): void;
+  /** El mensaje con el que contesta la mesa al conectar (o `null`: no contesta). Se fija antes de abrir la página. */
+  alConectar(mensaje: MensajeMesa<VistaBJ> | null): void;
+  /** Al conectar, en vez de contestar, cierra con este código. */
+  cerrarAlConectar(codigo: number): void;
   enviar(mensaje: MensajeMesa<VistaBJ>): void;
   cerrar(codigo: number): Promise<void>;
   /** Las acciones que ha mandado el cliente, en orden. */
@@ -112,17 +114,22 @@ interface Mesa {
 async function simularMesa(pagina: Page): Promise<Mesa> {
   let socket: WebSocketRoute | null = null;
   let inicial: MensajeMesa<VistaBJ> | null = null;
+  let cierre: number | null = null;
   const recibidas: unknown[] = [];
   let conexiones = 0;
   await pagina.routeWebSocket(/\/parties\/mesa-blackjack\//, (ws) => {
     conexiones++;
     socket = ws;
     ws.onMessage((m) => recibidas.push(JSON.parse(String(m))));
-    if (inicial !== null) ws.send(JSON.stringify(inicial));
+    if (cierre !== null) void ws.close({ code: cierre });
+    else if (inicial !== null) ws.send(JSON.stringify(inicial));
   });
   return {
     alConectar: (mensaje) => {
       inicial = mensaje;
+    },
+    cerrarAlConectar: (codigo) => {
+      cierre = codigo;
     },
     enviar: (mensaje) => (socket as WebSocketRoute | null)?.send(JSON.stringify(mensaje)),
     cerrar: async (codigo) => (socket as WebSocketRoute | null)?.close({ code: codigo }),
@@ -196,7 +203,13 @@ test.describe("mesa simulada", () => {
     await page.goto(`/p/${codigo}/blackjack`);
     await expect(page.getByText("Haz tu apuesta")).toBeVisible();
 
+    // Solo, el exceso de mensajes no enseña nada. Detrás va un cambio visible por el mismo socket: cuando se ve, el error
+    // ya se ha atendido.
     mesa.enviar({ t: "error", codigo: "demasiados_mensajes" });
+    mesa.enviar(estado(vista(sesion, { fase: "esperando", finFase: null })));
+    await expect(page.getByText("Apuesta para empezar la ronda")).toBeVisible();
+    await expect(page.getByRole("alert")).toHaveCount(0);
+
     mesa.enviar({ t: "error", codigo: "sin_fichas" });
     await expect(page.getByText("No tienes fichas suficientes")).toBeVisible();
     await expect(page.getByRole("alert")).toHaveCount(1);
@@ -231,8 +244,10 @@ test.describe("mesa simulada", () => {
     const yo = sesion.jugador.id;
     let fichas = 950;
     await page.route("**/api/yo", async (ruta) => {
+      // Las fichas de cuando se pide, no de cuando contesta el servidor: una petición en vuelo no ve el cambio siguiente.
+      const valor = fichas;
       const respuesta = await ruta.fetch();
-      await ruta.fulfill({ response: respuesta, json: { ...(await respuesta.json()), fichas } });
+      await ruta.fulfill({ response: respuesta, json: { ...(await respuesta.json()), fichas: valor } });
     });
     const mano = (cartas: Carta[], total: number, estadoMano: VistaBJ["manos"][number]["estado"] = "jugando") => ({
       jugadorId: yo,
@@ -311,13 +326,90 @@ test.describe("mesa simulada", () => {
     await page.getByRole("button", { name: "Volver a la sala" }).click();
     await dialogo.getByRole("button", { name: "Salir" }).click();
     await expect(page).toHaveURL(`/p/${codigo}`);
-    expect(mesa.recibidas).toContainEqual({ t: "salir" });
+    const salidas = () => mesa.recibidas.filter((m) => (m as { t: string }).t === "salir").length;
+    await expect.poll(salidas).toBe(1);
 
-    // Sin apuesta: directo a la sala.
+    // Sin apuesta: directo a la sala, y también deja el asiento.
     mesa.alConectar(estado(vista(sesion)));
     await page.goto(`/p/${codigo}/blackjack`);
     await expect(page.getByText("Haz tu apuesta")).toBeVisible();
     await page.getByRole("button", { name: "Volver a la sala" }).click();
     await expect(page).toHaveURL(`/p/${codigo}`);
+    await expect.poll(salidas).toBe(2);
+  });
+
+  test("el contador se pone al día al reconectar con la ronda ya liquidada (sin evento de pago) y al cambiar de ronda", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    let fichas = 950;
+    await page.route("**/api/yo", async (ruta) => {
+      // Las fichas de cuando se pide, no de cuando contesta el servidor: una petición en vuelo no ve el cambio siguiente.
+      const valor = fichas;
+      const respuesta = await ruta.fetch();
+      await ruta.fulfill({ response: respuesta, json: { ...(await respuesta.json()), fichas: valor } });
+    });
+    const mano = { jugadorId: sesion.jugador.id, apodo: sesion.jugador.apodo, apuesta: 50, cartas: [c("10H"), c("9C")], estado: "plantado" as const, doblada: false, total: 19 };
+    mesa.alConectar(estado(vista(sesion, { fase: "banca", finFase: Date.now() + 1_000, banca: [c("6S"), null], totalBanca: 6, manos: [mano] })));
+    await page.goto(`/p/${codigo}/blackjack`);
+    await expect(contador(page)).toHaveText("Tienes 950 fichas");
+    await page.waitForLoadState("networkidle");
+
+    // La ronda se paga con la conexión caída: al volver, la mesa manda la foto ya en «resultado», sin eventos.
+    fichas = 1050;
+    mesa.alConectar(
+      estado(vista(sesion, { fase: "resultado", finFase: Date.now() + 4_000, banca: [c("6S"), c("KD"), c("9C")], totalBanca: 25, manos: [mano] })),
+    );
+    await mesa.cerrar(1001);
+    await expect(contador(page)).toHaveText("Tienes 1.050 fichas", { timeout: 15_000 });
+
+    // Un pago que llega tarde (reintento de la liquidación) no trae evento: la ronda siguiente vuelve a leer las fichas.
+    fichas = 1100;
+    mesa.enviar(estado(vista(sesion, { ronda: 2 })));
+    await expect(contador(page)).toHaveText("Tienes 1.100 fichas");
+  });
+
+  test("mientras «Pedir» espera respuesta, una novedad de otro jugador no lo reactiva: un doble toque pide una sola carta", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    const yo = sesion.jugador.id;
+    const mia = (cartas: Carta[]) => ({ jugadorId: yo, apodo: sesion.jugador.apodo, apuesta: 50, cartas, estado: "jugando" as const, doblada: false, total: 0 });
+    const otra = (cartas: Carta[]) => ({ jugadorId: 900, apodo: "Otro", apuesta: 50, cartas, estado: "jugando" as const, doblada: false, total: 0 });
+    const mesaCon = (mias: Carta[], otras: Carta[]) =>
+      vista(sesion, { fase: "decisiones", banca: [c("6S"), null], totalBanca: 6, sentados: [sesion.jugador.apodo, "Otro"], manos: [mia(mias), otra(otras)] });
+    mesa.alConectar(estado(mesaCon([c("10H"), c("2C")], [c("5D"), c("3S")])));
+    await page.goto(`/p/${codigo}/blackjack`);
+    const pedir = page.getByRole("button", { name: "Pedir" });
+    const pedidas = () => mesa.recibidas.filter((m) => (m as { t: string }).t === "pedir").length;
+    await expect(pedir).toBeEnabled();
+
+    await pedir.click();
+    await expect.poll(pedidas).toBe(1);
+    // Antes de contestar, la mesa difunde que el otro jugador ha pedido carta.
+    mesa.enviar(estado(mesaCon([c("10H"), c("2C")], [c("5D"), c("3S"), c("KH")]), [{ tipo: "carta_repartida", a: 900, oculta: false, carta: c("KH") }]));
+    if (test.info().project.name === "desktop") await expect(page.getByRole("group", { name: "Mano de Otro" }).getByRole("img")).toHaveCount(3);
+    else await expect(page.getByRole("list", { name: "Otros jugadores" }).getByText("18")).toBeVisible();
+    await expect(pedir).toBeDisabled();
+    await pedir.click({ force: true });
+    await page.waitForTimeout(300);
+    expect(pedidas()).toBe(1);
+
+    // Llega tu carta: ya se puede volver a pedir.
+    mesa.enviar(estado(mesaCon([c("10H"), c("2C"), c("4D")], [c("5D"), c("3S"), c("KH")]), [{ tipo: "carta_repartida", a: yo, oculta: false, carta: c("4D") }]));
+    await expect(pedir).toBeEnabled();
+  });
+
+  test("si la mesa no llega a contestar, lo dice y deja volver a la sala", async ({ page, request }) => {
+    const { codigo, mesa } = await entrarSimulada(page, request);
+    mesa.alConectar(null);
+    await page.goto(`/p/${codigo}/blackjack`);
+    await expect(page.getByText("No conseguimos sentarte en la mesa")).toBeVisible({ timeout: 15_000 });
+    await page.getByRole("link", { name: "Volver a la sala" }).click();
+    await expect(page).toHaveURL(`/p/${codigo}`);
+  });
+
+  test("si la mesa cierra la primera conexión sin reintento posible (4401), lo dice y deja volver a la sala", async ({ page, request }) => {
+    const { codigo, mesa } = await entrarSimulada(page, request);
+    mesa.cerrarAlConectar(4401);
+    await page.goto(`/p/${codigo}/blackjack`);
+    await expect(page.getByText("No conseguimos sentarte en la mesa")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole("link", { name: "Volver a la sala" })).toBeVisible();
   });
 });

@@ -2,7 +2,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { type CSSProperties, type ReactNode, useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Link, useLocation } from "wouter";
 import { type AccionBJ, BJ, type VistaBJ } from "../../shared/juegos/blackjack";
-import type { CodigoError, Evento, JugadorId } from "../../shared/juegos/tipos";
+import type { CodigoError, JugadorId } from "../../shared/juegos/tipos";
 import { Aviso } from "../componentes/Aviso";
 import { BarraMesa } from "../componentes/BarraMesa";
 import { Confirmar } from "../componentes/Confirmar";
@@ -33,6 +33,8 @@ const PAUSA_PREMIO_MS = 250;
 const CARTEL_MS = 2_000;
 /** Las fichas que vuelan tardan esto en empezar a llegar al contador: entonces empieza a contar. */
 const LLEGADA_FICHAS_MS = 450;
+/** Sin ninguna vista de la mesa en este rato (no contesta, o cerró sin reintento), se avisa y se ofrece volver. */
+const SIN_MESA_MS = 5_000;
 /** Lo que dura el aviso «Barajando». */
 const BARAJADO_MS = 1_600;
 
@@ -102,7 +104,6 @@ export function MesaBlackjack({ codigo }: { codigo: string }) {
   const [premio, setPremio] = useState<{ neto: number; id: number } | null>(null);
   const [barajando, setBarajando] = useState(false);
   const [confirmando, setConfirmando] = useState(false);
-  const [enviadoCon, setEnviadoCon] = useState<Evento[] | null>(null);
   const premios = useRef(0);
 
   // Temporizadores que no deben cortarse al llegar otro mensaje (el premio de esta ronda); se cancelan al salir.
@@ -122,8 +123,20 @@ export function MesaBlackjack({ codigo }: { codigo: string }) {
   // Las caras de las cartas se piden al entrar, para tenerlas antes del primer reparto.
   useEffect(() => {
     cargarBaraja().catch(() => {});
-    void refrescar();
-  }, [refrescar]);
+  }, []);
+
+  // Las fichas se vuelven a leer al (re)conectar y al empezar cada ronda: un pago que no trae evento (la foto al
+  // reconectar con la ronda ya liquidada, una liquidación reintentada más tarde) también llega al contador.
+  useEffect(() => {
+    if (conectado) void refrescar();
+  }, [conectado, refrescar]);
+  const rondaVista = vista?.ronda;
+  const rondaAnterior = useRef(rondaVista);
+  useEffect(() => {
+    const antes = rondaAnterior.current;
+    rondaAnterior.current = rondaVista;
+    if (antes !== undefined && rondaVista !== antes) void refrescar();
+  }, [rondaVista, refrescar]);
 
   const yo = vista?.yo ?? null;
   const miMano = vista?.manos.find((m) => m.jugadorId === yo);
@@ -169,14 +182,21 @@ export function MesaBlackjack({ codigo }: { codigo: string }) {
     // Solo al llegar un lote nuevo: la vista y el resto son los de ese momento.
   }, [lote]);
 
-  // Un error de la mesa responde a lo último que se mandó: se puede volver a intentar.
+  // Tras una acción tuya, los botones esperan a que cambie TU mano (cartas, estado o apuesta, en esta ronda): las novedades
+  // de otros jugadores no los reactivan, así que un doble toque no pide dos cartas. También se liberan con un error de la
+  // mesa (la acción no se hizo) y al caerse o volver la conexión (la respuesta pudo perderse).
+  const firmaMano = vista === null ? null : `${vista.ronda}:${miMano === undefined ? "-" : `${miMano.cartas.length}:${miMano.estado}:${miMano.apuesta}`}`;
+  const [enviadoCon, setEnviadoCon] = useState<string | null>(null);
   useEffect(() => {
     if (error !== null) setEnviadoCon(null);
   }, [error]);
-  const esperando = enviadoCon === lote;
+  useEffect(() => {
+    setEnviadoCon(null);
+  }, [conectado]);
+  const esperando = enviadoCon !== null && enviadoCon === firmaMano;
   const actuar = (accion: AccionBJ) => {
     enviar(accion);
-    setEnviadoCon(lote);
+    setEnviadoCon(firmaMano);
   };
 
   const apuestaEnJuego = miMano !== undefined && vista?.fase !== "resultado";
@@ -186,6 +206,15 @@ export function MesaBlackjack({ codigo }: { codigo: string }) {
   };
 
   const ahora = useAhoraServidor(vista !== null && vista.finFase !== null && vista.fase !== "banca");
+
+  const sinVista = vista === null;
+  const [sinMesa, setSinMesa] = useState(false);
+  useEffect(() => {
+    setSinMesa(false);
+    if (!sinVista) return;
+    const espera = setTimeout(() => setSinMesa(true), SIN_MESA_MS);
+    return () => clearTimeout(espera);
+  }, [sinVista]);
 
   if (error === "mesa_llena") return <MesaLlena codigo={codigo} />;
 
@@ -202,6 +231,7 @@ export function MesaBlackjack({ codigo }: { codigo: string }) {
   const totalBanca = vista === null ? null : totalVisible(vista.banca, (i) => aterrizada(reloj, claveCarta(ronda, "banca", i)) && (i !== 1 || girada));
   const totalDe = (mano: ManoVista) => totalVisible(mano.cartas, (i) => aterrizada(reloj, claveCarta(ronda, mano.jugadorId, i)));
   const miTotal = miMano ? totalDe(miMano) : null;
+  const miManoEnLaMesa = miMano === undefined || miMano.cartas.every((_, i) => aterrizada(reloj, claveCarta(ronda, miMano.jugadorId, i)));
 
   // El resto de la mesa: los sentados por orden de llegada y quien se fue con una mano en juego.
   const otros: Otro[] = [];
@@ -335,8 +365,16 @@ export function MesaBlackjack({ codigo }: { codigo: string }) {
       </div>
 
       <section className="bj-panel" aria-label="Tu jugada">
+        {sinMesa && (
+          <div className="bj-sin-mesa">
+            <Aviso tipo="info">No conseguimos sentarte en la mesa. Puedes esperar un poco o volver a la sala.</Aviso>
+            <Link href={`~/p/${codigo}`} className="boton boton--secundario boton--ancho">
+              Volver a la sala
+            </Link>
+          </div>
+        )}
         <div className="bj-estado">
-          <p role="status">{textoEstado(vista, miMano)}</p>
+          <p role="status">{textoEstado(vista, miMano, miManoEnLaMesa)}</p>
           {cuenta !== null && (
             <span className="bj-estado__cuenta" aria-hidden="true">
               {cuenta}
