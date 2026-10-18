@@ -204,11 +204,12 @@ test.describe("mesa simulada", () => {
     await expect(page.getByText("Haz tu apuesta")).toBeVisible();
 
     // Solo, el exceso de mensajes no enseña nada. Detrás va un cambio visible por el mismo socket: cuando se ve, el error
-    // ya se ha atendido.
+    // ya se ha atendido (y, si se enseñara, seguiría a la vista 4 s). Se cuenta en ese momento, sin reintentos: esperar a
+    // que el recuento baje a 0 daría por buena también una alerta que se va sola.
     mesa.enviar({ t: "error", codigo: "demasiados_mensajes" });
     mesa.enviar(estado(vista(sesion, { fase: "esperando", finFase: null })));
     await expect(page.getByText("Apuesta para empezar la ronda")).toBeVisible();
-    await expect(page.getByRole("alert")).toHaveCount(0);
+    expect(await page.getByRole("alert").count()).toBe(0);
 
     mesa.enviar({ t: "error", codigo: "sin_fichas" });
     await expect(page.getByText("No tienes fichas suficientes")).toBeVisible();
