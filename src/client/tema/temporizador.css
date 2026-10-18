@@ -1,0 +1,39 @@
+/* Temporizador: la barra dorada que se vacía hasta el final de la fase (la mueve el componente con `transform`). */
+
+.temporizador {
+  height: 4px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.32);
+  box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.35);
+  transition: opacity 0.3s;
+}
+
+.temporizador--parado {
+  opacity: 0.45;
+}
+
+.temporizador__barra {
+  position: relative;
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--oro-oscuro), var(--oro) 45%, var(--oro-claro));
+  transform-origin: left center;
+  transform: scaleX(0);
+}
+
+/* En los últimos segundos se tiñe de rojo (un fundido de esta capa). */
+.temporizador__urgente {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #8a0d22, var(--rojo) 50%, #e04a62);
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .temporizador {
+    transition-duration: 0.15s;
+  }
+}

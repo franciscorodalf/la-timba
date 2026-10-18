@@ -1,0 +1,30 @@
+/* Destellos: las chispas doradas de un premio. Salen del centro de su contenedor (lo mueve el componente). */
+
+.destellos {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+
+.destellos__chispa {
+  position: absolute;
+  left: -3px;
+  top: -3px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--oro-claro);
+  box-shadow:
+    0 0 8px var(--oro),
+    0 0 2px #fff8d6;
+}
+
+/* Movimiento reducido: el componente no lanza chispas; por si acaso, no se ven. */
+@media (prefers-reduced-motion: reduce) {
+  .destellos__chispa {
+    display: none;
+  }
+}
