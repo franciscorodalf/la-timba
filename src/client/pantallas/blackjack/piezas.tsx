@@ -96,24 +96,6 @@ export function Apuesta({ cantidad, refPila }: { cantidad: number; refPila?: Ref
   );
 }
 
-/** «Ganas 50», «Pierdes 50» o «Empate»: lo que ha dejado la mano, cuando ya se ha visto el final. */
-export function Resultado({ neto }: { neto: number }) {
-  const reducido = useMovimientoReducido();
-  const texto = neto > 0 ? `Ganas ${neto}` : neto < 0 ? `Pierdes ${-neto}` : "Empate";
-  const tono = neto > 0 ? "gana" : neto < 0 ? "pierde" : "empata";
-  return (
-    <motion.span
-      className={`bj-resultado bj-resultado--${tono}`}
-      role="status"
-      initial={reducido ? { opacity: 0 } : { opacity: 0, transform: "translateY(6px)" }}
-      animate={reducido ? { opacity: 1 } : { opacity: 1, transform: "translateY(0px)" }}
-      transition={{ duration: 0.3, ease: "easeOut" }}
-    >
-      {texto}
-    </motion.span>
-  );
-}
-
 export function tonoDe(mano: ManoVista | undefined, total: number | null, neto: number | undefined): Tono {
   if (total !== null && total > 21) return "pasado";
   if (mano?.estado === "blackjack" && total === 21) return "blackjack";
@@ -144,10 +126,4 @@ export function Leyenda() {
       </text>
     </svg>
   );
-}
-
-/** «+50», «−50» o «=»: lo que se ha llevado otro jugador. */
-export function Neto({ neto }: { neto: number }) {
-  const tono = neto > 0 ? "gana" : neto < 0 ? "pierde" : "empata";
-  return <span className={`bj-neto bj-neto--${tono}`}>{neto > 0 ? `+${miles(neto)}` : neto < 0 ? `−${miles(-neto)}` : "="}</span>;
 }

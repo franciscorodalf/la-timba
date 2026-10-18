@@ -1,0 +1,33 @@
+/* Estado de la mesa: el texto de la fase, la cuenta atrás y, debajo, la barra del temporizador. */
+
+.estado-mesa {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.estado-mesa__fila {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 24px;
+  font-size: 0.875rem;
+  color: var(--crema-tenue);
+}
+
+.estado-mesa__texto {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  min-width: 0;
+}
+
+.estado-mesa__cuenta {
+  font-family: var(--fuente-titulo);
+  font-weight: 600;
+  font-size: 1.0625rem;
+  color: var(--oro);
+  font-variant-numeric: tabular-nums lining-nums;
+}

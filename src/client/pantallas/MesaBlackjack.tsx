@@ -1,28 +1,34 @@
 import { AnimatePresence, motion } from "motion/react";
-import { type CSSProperties, type ReactNode, useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { type CSSProperties, type ReactNode, useEffect, useRef, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { type AccionBJ, BJ, type VistaBJ } from "../../shared/juegos/blackjack";
-import type { CodigoError, JugadorId } from "../../shared/juegos/tipos";
-import { Aviso } from "../componentes/Aviso";
+import type { JugadorId } from "../../shared/juegos/tipos";
+import { AvisoMesa } from "../componentes/AvisoMesa";
 import { BarraMesa } from "../componentes/BarraMesa";
 import { Confirmar } from "../componentes/Confirmar";
-import { Destellos } from "../componentes/Destellos";
+import { CartelPremio } from "../componentes/CartelPremio";
+import { EstadoMesa } from "../componentes/EstadoMesa";
 import { Ficha } from "../componentes/Ficha";
 import { FichasVolando } from "../componentes/FichasVolando";
 import { Mazo } from "../componentes/Mazo";
 import { cargarBaraja } from "../componentes/Naipe";
 import { Reconectando } from "../componentes/Reconectando";
-import { Temporizador } from "../componentes/Temporizador";
+import { Neto, Resultado } from "../componentes/Resultado";
+import { SinMesa, useSinMesa } from "../componentes/SinMesa";
 import { useMovimientoReducido } from "../efectos/movimiento";
 import { sonidos } from "../efectos/sonidos";
+import { useDespues } from "../efectos/useDespues";
 import { vibrar } from "../efectos/vibrar";
+import { useAltoVentana, useAnchoVentana } from "../efectos/ventana";
 import { cuentaAtras, miles } from "../formato";
 import { useAhoraServidor } from "../red/reloj";
 import { useSesion } from "../red/sesion";
+import { useFichasAlDia } from "../red/useFichasAlDia";
 import { useMesa } from "../red/useMesa";
+import { MesaLlena } from "./MesaLlena";
 import { Apostar, Decidir, textoEstado } from "./blackjack/controles";
 import { claveCarta, totalVisible } from "./blackjack/guion";
-import { Apuesta, Leyenda, Mano, type ManoVista, Neto, Resultado, SimboloMano, Total, tonoDe } from "./blackjack/piezas";
+import { Apuesta, Leyenda, Mano, type ManoVista, SimboloMano, Total, tonoDe } from "./blackjack/piezas";
 import { aterrizada, girada, restante, useGuion } from "./blackjack/useGuion";
 
 /** A partir de este ancho, la mesa entera con los asientos en semicírculo; por debajo, la vista de móvil. */
@@ -33,24 +39,12 @@ const PAUSA_PREMIO_MS = 250;
 const CARTEL_MS = 2_000;
 /** Las fichas que vuelan tardan esto en empezar a llegar al contador: entonces empieza a contar. */
 const LLEGADA_FICHAS_MS = 450;
-/** Sin ninguna vista de la mesa en este rato (no contesta, o cerró sin reintento), se avisa y se ofrece volver. */
-const SIN_MESA_MS = 5_000;
 /** Lo que dura el aviso «Barajando». */
 const BARAJADO_MS = 1_600;
-
-const TEXTO_ERROR: Partial<Record<CodigoError, string>> = {
-  sin_fichas: "No tienes fichas suficientes",
-  no_disponible: "No se pudo hacer la apuesta. Inténtalo de nuevo",
-};
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Medidas
 // ---------------------------------------------------------------------------------------------------------------------
-
-function suscribirVentana(avisar: () => void): () => void {
-  window.addEventListener("resize", avisar);
-  return () => window.removeEventListener("resize", avisar);
-}
 
 interface Medidas {
   ordenador: boolean;
@@ -62,8 +56,8 @@ interface Medidas {
 
 /** El ancho de las cartas según la pantalla: en móvil se ajusta al ancho (y a lo bajo que sea), en ordenador a lo alto. */
 function useMedidas(): Medidas {
-  const ancho = useSyncExternalStore(suscribirVentana, () => window.innerWidth, () => 1024);
-  const alto = useSyncExternalStore(suscribirVentana, () => window.innerHeight, () => 768);
+  const ancho = useAnchoVentana();
+  const alto = useAltoVentana();
   if (ancho >= ORDENADOR_PX) {
     const k = Math.min(1.15, Math.max(0.75, alto / 820));
     return { ordenador: true, banca: Math.round(78 * k), yo: Math.round(96 * k), otros: Math.round(62 * k), mazo: Math.round(56 * k) };
@@ -106,37 +100,16 @@ export function MesaBlackjack({ codigo }: { codigo: string }) {
   const [confirmando, setConfirmando] = useState(false);
   const premios = useRef(0);
 
-  // Temporizadores que no deben cortarse al llegar otro mensaje (el premio de esta ronda); se cancelan al salir.
-  const pendientes = useRef(new Set<ReturnType<typeof setTimeout>>());
-  const despues = useCallback((ms: number, hacer: () => void) => {
-    const id = setTimeout(() => {
-      pendientes.current.delete(id);
-      hacer();
-    }, ms);
-    pendientes.current.add(id);
-  }, []);
-  useEffect(() => {
-    const relojes = pendientes.current;
-    return () => relojes.forEach(clearTimeout);
-  }, []);
+  // Temporizadores que no deben cortarse al llegar otro mensaje (el premio de esta ronda).
+  const despues = useDespues();
 
   // Las caras de las cartas se piden al entrar, para tenerlas antes del primer reparto.
   useEffect(() => {
     cargarBaraja().catch(() => {});
   }, []);
 
-  // Las fichas se vuelven a leer al (re)conectar y al empezar cada ronda: un pago que no trae evento (la foto al
-  // reconectar con la ronda ya liquidada, una liquidación reintentada más tarde) también llega al contador.
-  useEffect(() => {
-    if (conectado) void refrescar();
-  }, [conectado, refrescar]);
-  const rondaVista = vista?.ronda;
-  const rondaAnterior = useRef(rondaVista);
-  useEffect(() => {
-    const antes = rondaAnterior.current;
-    rondaAnterior.current = rondaVista;
-    if (antes !== undefined && rondaVista !== antes) void refrescar();
-  }, [rondaVista, refrescar]);
+  // Las fichas se vuelven a leer al (re)conectar y al empezar cada ronda, aunque el pago no traiga evento.
+  useFichasAlDia(conectado, vista?.ronda);
 
   const yo = vista?.yo ?? null;
   const miMano = vista?.manos.find((m) => m.jugadorId === yo);
@@ -208,16 +181,9 @@ export function MesaBlackjack({ codigo }: { codigo: string }) {
 
   const ahora = useAhoraServidor(vista !== null && vista.finFase !== null && vista.fase !== "banca");
 
-  const sinVista = vista === null;
-  const [sinMesa, setSinMesa] = useState(false);
-  useEffect(() => {
-    setSinMesa(false);
-    if (!sinVista) return;
-    const espera = setTimeout(() => setSinMesa(true), SIN_MESA_MS);
-    return () => clearTimeout(espera);
-  }, [sinVista]);
+  const sinMesa = useSinMesa(vista !== null);
 
-  if (error === "mesa_llena") return <MesaLlena codigo={codigo} />;
+  if (error === "mesa_llena") return <MesaLlena codigo={codigo} juego="blackjack" jugadores={BJ.MAX_JUGADORES} />;
 
   const ronda = vista?.ronda ?? 0;
   const yoApodo = jugador?.apodo.toLowerCase();
@@ -264,8 +230,6 @@ export function MesaBlackjack({ codigo }: { codigo: string }) {
     controles = <Decidir mano={miMano} fichas={fichas} activo={conectado && !esperando} onActuar={actuar} />;
   }
 
-  const textoError = error === null ? null : (TEXTO_ERROR[error] ?? "No puedes hacer eso ahora");
-
   const miEtiqueta = (
     <div className="bj-etiqueta">
       <span>Tú</span>
@@ -282,7 +246,7 @@ export function MesaBlackjack({ codigo }: { codigo: string }) {
   );
 
   return (
-    <main className={`bj${medidas.ordenador ? " bj--ordenador" : ""}${premio !== null ? " bj--premio" : ""}`}>
+    <main className={`marco-mesa bj${medidas.ordenador ? " bj--ordenador" : ""}${premio !== null ? " bj--premio" : ""}`}>
       <Reconectando conectado={conectado || vista === null} />
       <BarraMesa titulo="Blackjack" onVolver={() => (apuestaEnJuego ? setConfirmando(true) : salirDeLaMesa())} refFichas={refFichas} />
 
@@ -365,51 +329,19 @@ export function MesaBlackjack({ codigo }: { codigo: string }) {
       </div>
 
       <section className="bj-panel" aria-label="Tu jugada">
-        {sinMesa && (
-          <div className="bj-sin-mesa">
-            <Aviso tipo="info">No conseguimos sentarte en la mesa. Puedes esperar un poco o volver a la sala.</Aviso>
-            <Link href={`~/p/${codigo}`} className="boton boton--secundario boton--ancho">
-              Volver a la sala
-            </Link>
-          </div>
-        )}
-        <div className="bj-estado">
-          <p role="status">{textoEstado(vista, miMano, miManoEnLaMesa)}</p>
-          {cuenta !== null && (
-            <span className="bj-estado__cuenta" aria-hidden="true">
-              {cuenta}
-            </span>
-          )}
-        </div>
-        <Temporizador finFase={conTemporizador ? (vista?.finFase ?? null) : null} duracionMs={fase === "decisiones" ? BJ.DECISIONES_MS : BJ.APUESTAS_MS} />
+        {sinMesa && <SinMesa codigo={codigo} />}
+        <EstadoMesa
+          texto={textoEstado(vista, miMano, miManoEnLaMesa)}
+          cuenta={cuenta}
+          finFase={conTemporizador ? (vista?.finFase ?? null) : null}
+          duracionMs={fase === "decisiones" ? BJ.DECISIONES_MS : BJ.APUESTAS_MS}
+        />
         {controles}
       </section>
 
-      <AnimatePresence>
-        {premio !== null && (
-          <motion.div
-            key={premio.id}
-            className="bj-premio"
-            aria-hidden="true"
-            initial={reducido ? { opacity: 0 } : { opacity: 0, transform: "scale(0.3)" }}
-            animate={reducido ? { opacity: 1 } : { opacity: [0, 1, 1], transform: ["scale(0.3)", "scale(1.12)", "scale(1)"] }}
-            exit={{ opacity: 0, transition: { duration: 0.4 } }}
-            transition={{ duration: reducido ? 0.3 : 0.52, ease: [0.2, 0.8, 0.2, 1.3], times: reducido ? undefined : [0, 0.6, 1] }}
-          >
-            <span className="bj-premio__texto">¡Ganas +{miles(premio.neto)}!</span>
-            <Destellos disparo={premio.id} />
-          </motion.div>
-        )}
-      </AnimatePresence>
+      <CartelPremio premio={premio} />
       <FichasVolando disparo={premio?.id ?? 0} desde={refApuesta} hasta={refFichas} />
-
-      <AnimatePresence>
-        {textoError !== null && (
-          <motion.div key={error} className="bj-aviso" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}>
-            <Aviso>{textoError}</Aviso>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      <AvisoMesa error={error} />
 
       {confirmando && (
         <Confirmar
@@ -434,21 +366,4 @@ function asientosEnArco(otros: Otro[]): { otro: Otro; hueco: number }[] {
 function estiloHueco(hueco: number): CSSProperties {
   const angulo = (hueco * 23 * Math.PI) / 180;
   return { "--x": `${(50 + 41 * Math.sin(angulo)).toFixed(2)}%`, "--y": `${(88 * Math.cos(angulo)).toFixed(2)}%` } as CSSProperties;
-}
-
-function MesaLlena({ codigo }: { codigo: string }) {
-  return (
-    <main className="pantalla pantalla--entrada">
-      <h1 className="marca__logo aparece">La Timba</h1>
-      <section className="panel aparece" aria-labelledby="mesa-llena">
-        <h2 className="panel__titulo" id="mesa-llena">
-          La mesa está llena
-        </h2>
-        <p className="panel__texto">Ya hay {BJ.MAX_JUGADORES} jugadores en el blackjack. Prueba en un rato o echa una carrera mientras tanto.</p>
-        <Link href={`~/p/${codigo}`} className="boton boton--principal boton--ancho">
-          Volver a la sala
-        </Link>
-      </section>
-    </main>
-  );
 }

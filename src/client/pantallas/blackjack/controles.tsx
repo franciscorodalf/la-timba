@@ -1,14 +1,12 @@
 import { useState } from "react";
 import { type AccionBJ, BJ, type VistaBJ } from "../../../shared/juegos/blackjack";
 import { Boton } from "../../componentes/Boton";
-import { Ficha } from "../../componentes/Ficha";
+import { FichasApuesta } from "../../componentes/FichasApuesta";
 import { sonidos } from "../../efectos/sonidos";
 import { miles } from "../../formato";
 import type { ManoVista } from "./piezas";
 
 // Los controles de la mesa: las fichas para apostar, las decisiones y el texto de cada fase.
-
-const VALORES_FICHA = [10, 25, 50, 100, 500] as const;
 
 /** La última apuesta hecha en esta pestaña: la siguiente ronda empieza con ella preparada. */
 let ultimaApuesta = 0;
@@ -27,23 +25,7 @@ export function Apostar({ fichas, activo, esperando, onApostar }: ApostarProps) 
   const cantidad = montante <= tope ? montante : 0;
   return (
     <div className="bj-apostar">
-      <div className="bj-fichas" role="group" aria-label="Fichas para apostar">
-        {VALORES_FICHA.map((valor) => (
-          <button
-            key={valor}
-            type="button"
-            className={`bj-ficha bj-ficha--${valor}`}
-            aria-label={`Añadir ${valor}`}
-            disabled={!activo || cantidad + valor > tope}
-            onClick={() => setMontante(cantidad + valor)}
-          >
-            <Ficha tamaño={50} />
-            <span className="bj-ficha__valor" aria-hidden="true">
-              {valor}
-            </span>
-          </button>
-        ))}
-      </div>
+      <FichasApuesta montante={cantidad} tope={tope} activo={activo} onCambiar={setMontante} />
       <div className="bj-apostar__fila">
         <Boton variante="secundario" className="bj-apostar__borrar" aria-label="Borrar apuesta" disabled={cantidad === 0} onClick={() => setMontante(0)}>
           Borrar

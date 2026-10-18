@@ -1,0 +1,108 @@
+/* Fichas para apostar: de casino, con su color por valor. */
+
+.fichas-apuesta {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.ficha-apuesta {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 54px;
+  height: 54px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  cursor: pointer;
+  transition:
+    transform 0.12s var(--curva),
+    filter 0.12s,
+    opacity 0.2s;
+}
+
+.ficha-apuesta .ficha {
+  grid-area: 1 / 1;
+  width: 100%;
+  height: 100%;
+  filter: drop-shadow(0 3px 0 rgba(0, 0, 0, 0.38)) drop-shadow(0 6px 10px rgba(0, 0, 0, 0.3));
+}
+
+.ficha-apuesta .ficha__anillo {
+  r: 10.4px;
+}
+
+.ficha-apuesta .ficha__centro {
+  r: 9.2px;
+}
+
+/* Posicionado: el SVG lleva `filter` (contexto de apilamiento) y, sin esto, se pintaría encima del número. */
+.ficha-apuesta__valor {
+  position: relative;
+  grid-area: 1 / 1;
+  font: 800 0.8125rem/1 var(--fuente-ui);
+  color: var(--crema);
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.55);
+}
+
+.ficha-apuesta:hover:not(:disabled) {
+  transform: translateY(-2px);
+}
+
+.ficha-apuesta:active:not(:disabled) {
+  transform: scale(0.92);
+  filter: brightness(1.15);
+}
+
+.ficha-apuesta:disabled {
+  cursor: default;
+  opacity: 0.3;
+}
+
+.ficha-apuesta--10 .ficha__cuerpo {
+  fill: #2462b3;
+}
+
+.ficha-apuesta--10 .ficha__centro {
+  fill: #163f78;
+}
+
+.ficha-apuesta--25 .ficha__cuerpo {
+  fill: #18804f;
+}
+
+.ficha-apuesta--25 .ficha__centro {
+  fill: #0d5232;
+}
+
+.ficha-apuesta--50 .ficha__centro {
+  fill: #7a1020;
+}
+
+.ficha-apuesta--100 .ficha__cuerpo {
+  fill: #232326;
+}
+
+.ficha-apuesta--100 .ficha__centro {
+  fill: #0f0f11;
+}
+
+.ficha-apuesta--500 .ficha__cuerpo {
+  fill: #66308f;
+}
+
+.ficha-apuesta--500 .ficha__centro {
+  fill: #401a5c;
+}
+
+/* Movimiento reducido: las fichas no se levantan ni se hunden. */
+@media (prefers-reduced-motion: reduce) {
+  .ficha-apuesta,
+  .ficha-apuesta:hover:not(:disabled),
+  .ficha-apuesta:active:not(:disabled) {
+    transform: none;
+    transition-property: filter, opacity;
+  }
+}

@@ -1,0 +1,15 @@
+/* Fichas volando: las que van de la apuesta al contador al ganar (las mueve el componente). */
+
+.fichas-volando {
+  position: fixed;
+  inset: 0;
+  z-index: 35;
+  pointer-events: none;
+}
+
+.fichas-volando__ficha {
+  position: absolute;
+  display: block;
+  width: 22px;
+  height: 22px;
+}

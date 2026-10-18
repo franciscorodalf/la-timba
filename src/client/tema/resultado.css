@@ -1,0 +1,39 @@
+/* Resultado y neto: lo que ha dejado una mano o una carrera, en una pastilla («Ganas 50», «−50»). */
+
+.resultado,
+.neto {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font: 700 0.75rem/1.2 var(--fuente-ui);
+  letter-spacing: 0.02em;
+  text-transform: none;
+  white-space: nowrap;
+}
+
+.resultado--gana,
+.neto--gana {
+  color: var(--acierto);
+  background: rgba(126, 226, 168, 0.14);
+  box-shadow: inset 0 0 0 1px rgba(126, 226, 168, 0.45);
+}
+
+.resultado--pierde,
+.neto--pierde {
+  color: var(--fallo);
+  background: rgba(240, 138, 138, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(240, 138, 138, 0.4);
+}
+
+.resultado--empata,
+.neto--empata {
+  color: var(--crema);
+  background: rgba(243, 231, 196, 0.1);
+  box-shadow: inset 0 0 0 1px rgba(243, 231, 196, 0.3);
+}
+
+.neto {
+  padding: 1px 7px;
+  font-size: 0.6875rem;
+}

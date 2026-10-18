@@ -1,0 +1,23 @@
+/* Avisos de una mesa: el error flotante de la acción y «la mesa no contesta» con su salida a la sala. */
+
+.aviso-mesa {
+  position: fixed;
+  z-index: 40;
+  top: calc(max(10px, env(safe-area-inset-top)) + 56px);
+  left: 50%;
+  width: min(calc(100vw - 32px), 380px);
+  translate: -50% 0;
+  pointer-events: none;
+}
+
+.aviso-mesa .aviso--error {
+  background: rgba(74, 10, 22, 0.95);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45);
+}
+
+.sin-mesa {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  animation: aparecer 0.4s var(--curva) both;
+}

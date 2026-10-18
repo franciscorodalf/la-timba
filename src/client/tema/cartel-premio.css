@@ -1,0 +1,24 @@
+/* Cartel del premio: «¡Ganas +50!» grande en el centro de la pantalla, con sus destellos. */
+
+.cartel-premio {
+  position: fixed;
+  z-index: 30;
+  left: 0;
+  right: 0;
+  top: 41%;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.cartel-premio__texto {
+  font-family: var(--fuente-titulo);
+  font-weight: 800;
+  font-size: clamp(2.125rem, 9vw, 3rem);
+  line-height: 1.1;
+  color: var(--oro);
+  white-space: nowrap;
+  text-shadow:
+    0 2px 0 var(--madera-1),
+    0 0 24px rgba(212, 175, 55, 0.8);
+}
