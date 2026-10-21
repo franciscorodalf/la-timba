@@ -475,9 +475,9 @@ test.describe("movimiento de la pista (mesa simulada)", () => {
     await page.goto(`/p/${codigo}/carrera`);
     await expect(contador(page)).toHaveText("Tienes 950 fichas");
     await expect(caballo(page, "H")).toHaveAttribute("data-casilla", "7");
-    const casilla = await paso(page);
     await page.waitForLoadState("networkidle");
     await pistaQuieta(page);
+    const casilla = await paso(page);
 
     fichas.poner(1150);
     await mirar(page, 2500);

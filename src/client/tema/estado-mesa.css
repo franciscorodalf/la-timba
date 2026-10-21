@@ -11,7 +11,8 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  min-height: 24px;
+  /* El alto no depende de si hay cuenta atrás: sin ella, lo de debajo (y la pista) no se mueve al cambiar de fase. */
+  min-height: 26px;
   font-size: 0.875rem;
   color: var(--crema-tenue);
 }
@@ -28,6 +29,7 @@
   font-family: var(--fuente-titulo);
   font-weight: 600;
   font-size: 1.0625rem;
+  line-height: 1.2;
   color: var(--oro);
   font-variant-numeric: tabular-nums lining-nums;
 }
