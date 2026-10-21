@@ -12,7 +12,6 @@ import { cargarBaraja } from "../componentes/Naipe";
 import { Reconectando } from "../componentes/Reconectando";
 import { Resultado } from "../componentes/Resultado";
 import { SinMesa, useSinMesa } from "../componentes/SinMesa";
-import { useMovimientoReducido } from "../efectos/movimiento";
 import { sonidos } from "../efectos/sonidos";
 import { useDespues } from "../efectos/useDespues";
 import { vibrar } from "../efectos/vibrar";
@@ -48,7 +47,6 @@ export function MesaCarrera({ codigo }: { codigo: string }) {
   const { vista, lote, enviar, error, conectado } = useMesa<VistaCarrera, AccionCarrera>("mesa-carrera", codigo);
   const [, navegar] = useLocation();
   const ordenador = useAnchoVentana() >= ORDENADOR_PX;
-  const reducido = useMovimientoReducido();
   const despues = useDespues();
 
   const mazo = useRef<HTMLDivElement>(null);

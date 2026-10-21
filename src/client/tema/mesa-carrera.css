@@ -27,7 +27,6 @@
 .carrera-pista {
   grid-area: pista;
   position: relative;
-  overflow: hidden;
   border-radius: 16px;
   background:
     linear-gradient(180deg, rgba(0, 0, 0, 0.34), rgba(0, 0, 0, 0.06) 26%, rgba(0, 0, 0, 0.06) 72%, rgba(0, 0, 0, 0.3)),
@@ -37,6 +36,14 @@
     inset 0 0 0 1.5px rgba(212, 175, 55, 0.34),
     inset 0 2px 22px rgba(0, 0, 0, 0.5),
     0 10px 26px rgba(0, 0, 0, 0.3);
+}
+
+/* El marco recorta lo de dentro a las esquinas redondeadas de la pista; los destellos van fuera, por encima. */
+.carrera-pista__marco {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: inherit;
 }
 
 .carrera-carriles {
@@ -230,6 +237,20 @@
   height: 100%;
 }
 
+/* La estela de un avance: una franja dorada detrás del caballo que se estira y se apaga. */
+.carrera-caballo__estela {
+  position: absolute;
+  left: 14%;
+  right: 14%;
+  top: 92%;
+  height: 78%;
+  border-radius: 0 0 40% 40%;
+  background: linear-gradient(180deg, rgba(245, 215, 110, 0.55), rgba(245, 215, 110, 0));
+  transform-origin: 50% 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
 /* Un halo del tamaño de la carta: rojo un instante al retroceder; dorado, y se queda, en el ganador. */
 .carrera-caballo__aura,
 .carrera-caballo__brillo {
@@ -265,6 +286,24 @@
   to {
     opacity: 1;
   }
+}
+
+/* El punto de donde salen los destellos: el centro del ganador en la meta, en el carril de cada caballo. */
+.carrera-festejos {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  pointer-events: none;
+}
+
+.carrera-festejo {
+  position: relative;
+}
+
+.carrera-festejo .destellos {
+  top: calc(var(--meta) + var(--cab-largo) / 2);
 }
 
 /* ---------- Tramos ---------- */
@@ -500,7 +539,7 @@
   min-height: 114px;
 }
 
-.panel-carrera {
+.carrera-resumen {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -508,7 +547,7 @@
   text-align: center;
 }
 
-.panel-carrera__titulo {
+.carrera-resumen__titulo {
   font-size: 0.75rem;
   font-weight: 700;
   letter-spacing: 0.16em;
@@ -516,14 +555,14 @@
   color: var(--oro);
 }
 
-.panel-carrera__vacio {
+.carrera-resumen__vacio {
   max-width: 28ch;
   font-size: 0.9375rem;
   color: var(--crema-tenue);
   text-wrap: balance;
 }
 
-.panel-carrera__lista {
+.carrera-resumen__lista {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
@@ -533,7 +572,7 @@
   list-style: none;
 }
 
-.panel-carrera__apuesta {
+.carrera-resumen__apuesta {
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -549,23 +588,23 @@
   font-variant-numeric: tabular-nums lining-nums;
 }
 
-.panel-carrera__palo,
-.panel-ganador__palo {
+.carrera-resumen__palo,
+.carrera-ganador__palo {
   font-family: var(--fuente-titulo);
   line-height: 1;
   color: var(--crema);
 }
 
-.panel-carrera__palo {
+.carrera-resumen__palo {
   font-size: 1.375rem;
 }
 
-.panel-carrera__palo--rojo,
-.panel-ganador__palo--rojo {
+.carrera-resumen__palo--rojo,
+.carrera-ganador__palo--rojo {
   color: #ef5a6f;
 }
 
-.panel-ganador {
+.carrera-ganador {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -580,12 +619,12 @@
   animation: carrera-ganador-entra 0.5s var(--curva) both;
 }
 
-.panel-ganador__palo {
+.carrera-ganador__palo {
   font-size: 2.25rem;
   text-shadow: 0 2px 0 rgba(0, 0, 0, 0.35);
 }
 
-.panel-ganador__texto {
+.carrera-ganador__texto {
   font-family: var(--fuente-titulo);
   font-weight: 800;
   font-size: clamp(1.25rem, 5.6vw, 1.75rem);
@@ -690,6 +729,28 @@
     -5px 0 14px rgba(0, 0, 0, 0.45);
 }
 
+.carrera--ordenador .carrera-festejos {
+  grid-template-columns: none;
+  grid-template-rows: repeat(4, minmax(0, 1fr));
+}
+
+.carrera--ordenador .carrera-festejo .destellos {
+  left: calc(100% - var(--meta) - var(--cab-largo) / 2);
+  top: 50%;
+}
+
+.carrera--ordenador .carrera-caballo__estela {
+  left: auto;
+  right: 92%;
+  top: 14%;
+  bottom: 14%;
+  width: 78%;
+  height: auto;
+  border-radius: 40% 0 0 40%;
+  background: linear-gradient(270deg, rgba(245, 215, 110, 0.55), rgba(245, 215, 110, 0));
+  transform-origin: 100% 50%;
+}
+
 .carrera--ordenador .carrera-caballo {
   left: var(--salida);
   bottom: auto;
@@ -754,7 +815,7 @@
   margin: 26px auto 0;
 }
 
-.carrera--ordenador .panel-ganador__texto {
+.carrera--ordenador .carrera-ganador__texto {
   font-size: 1.75rem;
 }
 
@@ -776,7 +837,7 @@
     animation-delay: 0ms;
   }
 
-  .panel-ganador {
+  .carrera-ganador {
     animation-name: carrera-aparece;
     animation-duration: 0.3s;
   }

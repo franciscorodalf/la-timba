@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from "motion/react";
 import { type CSSProperties, type ReactNode, useEffect, useRef, useState } from "react";
-import { Link, useLocation } from "wouter";
+import { useLocation } from "wouter";
 import { type AccionBJ, BJ, type VistaBJ } from "../../shared/juegos/blackjack";
 import type { JugadorId } from "../../shared/juegos/tipos";
 import { AvisoMesa } from "../componentes/AvisoMesa";

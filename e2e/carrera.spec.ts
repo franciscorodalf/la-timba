@@ -162,8 +162,12 @@ test.describe("mesa simulada", () => {
     for (const valor of [10, 25, 50, 100, 500]) await expect(ficha(page, valor)).toBeDisabled();
     await expect(page.getByRole("button", { name: "Elige un caballo" })).toBeDisabled();
 
+    // El caballo se elige tocando su as en la pista o su cabecera.
+    await page.getByRole("img", { name: "As de tréboles" }).click();
+    await expect(cabecera(page, "tréboles")).toHaveAttribute("aria-pressed", "true");
     await cabecera(page, "picas").click();
     await expect(cabecera(page, "picas")).toHaveAttribute("aria-pressed", "true");
+    await expect(cabecera(page, "tréboles")).toHaveAttribute("aria-pressed", "false");
     for (const valor of [10, 25, 50, 100, 500]) await expect(ficha(page, valor)).toBeEnabled();
     await ficha(page, 25).click();
     await ficha(page, 50).click();
@@ -605,5 +609,63 @@ test.describe("movimiento de la pista (mesa simulada)", () => {
     expect(await page.locator(".carrera-tramo .naipe__giro").first().evaluate((el) => getComputedStyle(el).transform)).toBe("none");
     // Y no vuela nada hacia el contador al ganar.
     expect(await page.locator(".fichas-volando").count()).toBe(0);
+  });
+
+  test("suena una carta al salir cada una y otra al girarse un tramo (sin ráfagas); al ganar, la victoria y una vibración corta", async ({ page, request }) => {
+    // Cada sonido crea sus osciladores: se cuentan, y la vibración se anota.
+    await page.addInitScript(() => {
+      const w = window as unknown as { __osciladores: number; __vibraciones: number[]; __audio: AudioContext | null };
+      w.__osciladores = 0;
+      w.__vibraciones = [];
+      w.__audio = null;
+      // El audio de la página nace al primer toque, en un rato libre: se guarda para saber cuándo está en marcha.
+      const crear = AudioContext.prototype.createDynamicsCompressor;
+      AudioContext.prototype.createDynamicsCompressor = function (...args) {
+        w.__audio = this;
+        return crear.apply(this, args);
+      };
+      const original = AudioContext.prototype.createOscillator;
+      AudioContext.prototype.createOscillator = function (...args) {
+        w.__osciladores++;
+        return original.apply(this, args);
+      };
+      navigator.vibrate = (ms) => (w.__vibraciones.push(ms as number), true);
+    });
+    const { sesion, codigo, mesa } = await entrar(page, request);
+    const yo = sesion.jugador.id;
+    await fichasDe(page, 950);
+    const antes = vista(sesion, { fase: "carrera", posiciones: pos(1, 2, 2, 2), tramos: tramos(), misApuestas: [{ caballo: "H", cantidad: 50 }], finFase: Date.now() + 800 });
+    mesa.alConectar(estado(antes));
+    await page.goto(`/p/${codigo}/carrera`);
+    await expect(caballo(page, "H")).toHaveAttribute("data-casilla", "1");
+    // El audio solo despierta con un toque del jugador; se espera a que esté en marcha tocando algo.
+    await page.locator("body").click({ position: { x: 5, y: 5 } });
+    await expect.poll(() => page.evaluate(() => (window as unknown as { __audio: AudioContext | null }).__audio?.state ?? "sin audio"), { timeout: 15_000 }).toBe("running");
+    const osciladores = () => page.evaluate(() => (window as unknown as { __osciladores: number }).__osciladores);
+    const inicio = await osciladores();
+
+    // Un paso sin giros: una carta (un oscilador por carta).
+    mesa.enviar(estado({ ...antes, posiciones: pos(2, 2, 2, 2), ultimaCarta: c("5H") }, [{ tipo: "caballo_avanza", palo: "H", carta: c("5H") }]));
+    await page.waitForTimeout(700);
+    expect((await osciladores()) - inicio).toBe(1);
+    // Un paso con giro: la carta al salir y otra al girarse el tramo.
+    mesa.enviar(
+      estado({ ...antes, posiciones: pos(2, 2, 2, 2), tramos: tramos("9D"), ultimaCarta: c("3S") }, [{ tipo: "caballo_avanza", palo: "S", carta: c("3S") }, { tipo: "tramo_girado", indice: 0, palo: "D" }]),
+    );
+    await page.waitForTimeout(900);
+    expect((await osciladores()) - inicio).toBe(3);
+
+    // Al ganar tú: la victoria (un arpegio de varias notas) y una vibración de 80 ms.
+    expect(await page.evaluate(() => (window as unknown as { __vibraciones: number[] }).__vibraciones)).toEqual([]);
+    mesa.enviar(
+      estado({ ...antes, fase: "resultado", finFase: Date.now() + 5_000, posiciones: pos(8, 2, 2, 2), tramos: tramos("9D"), ultimaCarta: c("KH"), ganador: "H" }, [
+        { tipo: "caballo_avanza", palo: "H", carta: c("KH") },
+        { tipo: "ganador", palo: "H" },
+        { tipo: "pago", jugadorId: yo, neto: 150 },
+      ]),
+    );
+    await expect(premio(page)).toBeVisible();
+    expect(await page.evaluate(() => (window as unknown as { __vibraciones: number[] }).__vibraciones)).toEqual([80]);
+    expect((await osciladores()) - inicio).toBeGreaterThan(8);
   });
 });

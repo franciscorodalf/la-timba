@@ -45,16 +45,16 @@ export function PanelApuestas({ elegido, montante, tope, alMaximo, activo, esper
 /** Mientras corren: lo que has apostado, o una invitación a mirar si no apostaste. */
 export function PanelEnCarrera({ apuestas }: { apuestas: { caballo: Palo; cantidad: number }[] }) {
   return (
-    <div className="panel-carrera">
+    <div className="carrera-resumen">
       {apuestas.length === 0 ? (
-        <p className="panel-carrera__vacio">No has apostado en esta carrera. Mira cómo corren.</p>
+        <p className="carrera-resumen__vacio">No has apostado en esta carrera. Mira cómo corren.</p>
       ) : (
         <>
-          <p className="panel-carrera__titulo">Tus apuestas</p>
-          <ul className="panel-carrera__lista" aria-label="Tus apuestas">
+          <p className="carrera-resumen__titulo">Tus apuestas</p>
+          <ul className="carrera-resumen__lista" aria-label="Tus apuestas">
             {apuestas.map(({ caballo, cantidad }) => (
-              <li key={caballo} className="panel-carrera__apuesta">
-                <span className={`panel-carrera__palo${esRojo(caballo) ? " panel-carrera__palo--rojo" : ""}`} aria-hidden="true">
+              <li key={caballo} className="carrera-resumen__apuesta">
+                <span className={`carrera-resumen__palo${esRojo(caballo) ? " carrera-resumen__palo--rojo" : ""}`} aria-hidden="true">
                   {SIMBOLO_PALO[caballo]}
                 </span>
                 <span className="solo-lectores">{NOMBRE_PALO[caballo]} </span>
@@ -71,11 +71,11 @@ export function PanelEnCarrera({ apuestas }: { apuestas: { caballo: Palo; cantid
 /** El cartel del ganador, donde estaban las fichas. */
 export function PanelGanador({ ganador }: { ganador: Palo }) {
   return (
-    <div className="panel-ganador" role="status" key={ganador}>
-      <span className={`panel-ganador__palo${esRojo(ganador) ? " panel-ganador__palo--rojo" : ""}`} aria-hidden="true">
+    <div className="carrera-ganador" role="status" key={ganador}>
+      <span className={`carrera-ganador__palo${esRojo(ganador) ? " carrera-ganador__palo--rojo" : ""}`} aria-hidden="true">
         {SIMBOLO_PALO[ganador]}
       </span>
-      <p className="panel-ganador__texto">¡Gana el caballo de {NOMBRE_PALO[ganador]}!</p>
+      <p className="carrera-ganador__texto">¡Gana el caballo de {NOMBRE_PALO[ganador]}!</p>
     </div>
   );
 }

@@ -28,16 +28,15 @@ interface CaballoProps {
   palo: Palo;
   casilla: number;
   ganador: Palo | null;
-  /** Destellos del ganador: cambia en el instante de festejar. */
-  festejo: number;
   ancho: number;
 }
 
 /** El as de un palo, que corre por su carril. Salta un poco al avanzar y se tiñe de rojo un instante al retroceder. */
-const Caballo = memo(function Caballo({ palo, casilla, ganador, festejo, ancho }: CaballoProps) {
+const Caballo = memo(function Caballo({ palo, casilla, ganador, ancho }: CaballoProps) {
   const reducido = useMovimientoReducido();
   const [salto, animarSalto] = useAnimate<HTMLDivElement>();
   const [aura, animarAura] = useAnimate<HTMLSpanElement>();
+  const [estela, animarEstela] = useAnimate<HTMLSpanElement>();
   const previa = useRef(casilla);
   // Se lee antes de repintar: la clase de «va hacia atrás» cambia en el mismo pintado que la casilla. Volver más de una
   // casilla (una pista nueva) es un regreso largo, más pausado que el retroceso de una.
@@ -50,21 +49,27 @@ const Caballo = memo(function Caballo({ palo, casilla, ganador, festejo, ancho }
     if (casilla > antes && salto.current) {
       const inclinacion = casilla % 2 === 0 ? -3 : 3;
       const reposo = "translate(0px, 0px) scale(1) rotate(0deg)";
-      return detener(animarSalto(salto.current, { transform: [reposo, `translate(0px, -4px) scale(1.1) rotate(${inclinacion}deg)`, reposo] }, { duration: 0.42, ease: "easeOut" }));
+      const saltar = animarSalto(salto.current, { transform: [reposo, `translate(0px, -4px) scale(1.1) rotate(${inclinacion}deg)`, reposo] }, { duration: 0.42, ease: "easeOut" });
+      // Y deja una estela dorada detrás, que se estira y se apaga.
+      const rastro = estela.current ? animarEstela(estela.current, { opacity: [0, 0.85, 0], transform: ["scale(0.25)", "scale(1)", "scale(1)"] }, { duration: 0.55, ease: "easeOut", times: [0, 0.35, 1] }) : null;
+      return () => {
+        saltar.stop();
+        rastro?.stop();
+      };
     }
     if (casilla < antes && aura.current) return detener(animarAura(aura.current, { opacity: [0, 1, 0] }, { duration: 0.95, ease: "easeInOut" }));
-  }, [casilla, reducido, salto, aura, animarSalto, animarAura]);
+  }, [casilla, reducido, salto, aura, estela, animarSalto, animarAura, animarEstela]);
 
   const clase = ["carrera-caballo", vuelta === 1 && "carrera-caballo--atras", vuelta > 1 && "carrera-caballo--regreso", ganador === palo && "carrera-caballo--ganador", ganador !== null && ganador !== palo && "carrera-caballo--atenuado"].filter(Boolean).join(" ");
   return (
     <div className={clase} data-caballo={palo} data-casilla={casilla} style={variable("--casilla", casilla)} role="group" aria-label={nombreCaballo(palo)}>
       <div ref={salto} className="carrera-caballo__salto">
+        <span ref={estela} className="carrera-caballo__estela" aria-hidden="true" />
         <span ref={aura} className="carrera-caballo__aura" aria-hidden="true" />
         <span className="carrera-caballo__brillo" aria-hidden="true" />
         <Naipe carta={AS_DE[palo]} ancho={ancho} />
         <span className="carrera-caballo__sombra" aria-hidden="true" />
       </div>
-      <Destellos disparo={ganador === palo ? festejo : 0} />
     </div>
   );
 });
@@ -88,24 +93,34 @@ interface PistaProps {
 export const Pista = forwardRef<HTMLDivElement, PistaProps>(function Pista({ escena, elegido, eligible, onElegir, caballoAncho }, ref) {
   return (
     <div ref={ref} className="carrera-pista">
-      <div className="carrera-carriles">
+      <div className="carrera-pista__marco">
+        <div className="carrera-carriles">
+          {CABALLOS.map((palo) => (
+            // El carril entero es un blanco cómodo para elegir; el control accesible es la cabecera.
+            <div
+              key={`${escena.epoca}:${palo}`}
+              className={`carrera-carril carrera-carril--${palo}${elegido === palo ? " carrera-carril--elegido" : ""}${eligible ? " carrera-carril--eligible" : ""}`}
+              onClick={eligible ? () => onElegir(palo) : undefined}
+            >
+              {caballoAncho !== null && <Caballo palo={palo} casilla={escena.posiciones[palo]} ganador={escena.ganador} ancho={caballoAncho} />}
+            </div>
+          ))}
+        </div>
+        <div className="carrera-lineas" aria-hidden="true">
+          <span className="carrera-linea carrera-linea--salida" style={variable("--k", 0)} />
+          {Array.from({ length: CARRERA.TRAMOS }, (_, i) => (
+            <span key={i} className={`carrera-linea${i < escena.girados ? " carrera-linea--encendida" : ""}`} style={variable("--k", i + 1)} />
+          ))}
+          <span className="carrera-meta" />
+        </div>
+      </div>
+      {/* Los destellos del ganador salen de la meta por encima del marco de la pista, que recorta lo suyo. */}
+      <div className="carrera-festejos" aria-hidden="true">
         {CABALLOS.map((palo) => (
-          // El carril entero es un blanco cómodo para elegir; el control accesible es la cabecera.
-          <div
-            key={`${escena.epoca}:${palo}`}
-            className={`carrera-carril carrera-carril--${palo}${elegido === palo ? " carrera-carril--elegido" : ""}${eligible ? " carrera-carril--eligible" : ""}`}
-            onClick={eligible ? () => onElegir(palo) : undefined}
-          >
-            {caballoAncho !== null && <Caballo palo={palo} casilla={escena.posiciones[palo]} ganador={escena.ganador} festejo={escena.festejo} ancho={caballoAncho} />}
+          <div key={palo} className="carrera-festejo">
+            <Destellos disparo={escena.ganador === palo ? escena.festejo : 0} />
           </div>
         ))}
-      </div>
-      <div className="carrera-lineas" aria-hidden="true">
-        <span className="carrera-linea carrera-linea--salida" style={variable("--k", 0)} />
-        {Array.from({ length: CARRERA.TRAMOS }, (_, i) => (
-          <span key={i} className={`carrera-linea${i < escena.girados ? " carrera-linea--encendida" : ""}`} style={variable("--k", i + 1)} />
-        ))}
-        <span className="carrera-meta" />
       </div>
     </div>
   );
