@@ -1,5 +1,22 @@
 /* Fichas para apostar: de casino, con su color por valor. */
 
+/* El bloque de apostar de una mesa: las fichas y, debajo, «Borrar» y el botón de apostar. */
+.panel-apuesta {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.panel-apuesta__fila {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px;
+}
+
+.panel-apuesta__borrar {
+  padding: 0 16px;
+}
+
 .fichas-apuesta {
   display: flex;
   justify-content: space-between;

@@ -43,6 +43,11 @@
   height: 100%;
 }
 
+/* El as de picas del paquete lleva la dirección web de su autor impresa en el centro (el diseño es CC0: no hace falta). */
+.naipe__cara svg text {
+  display: none;
+}
+
 /* El reverso: granate con celosía dorada, un filete y la pica en un medallón. */
 .naipe__reverso {
   transform: rotateY(180deg);

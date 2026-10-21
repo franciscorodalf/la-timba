@@ -298,24 +298,6 @@
   padding: 0 8px;
 }
 
-.bj-apostar {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.bj-apostar__fila {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 8px;
-}
-
-.bj-apostar__borrar {
-  padding: 0 16px;
-}
-
-/* ---------- Premio, avisos ---------- */
-
 /* ---------- Ordenador: la mesa entera con los asientos en semicírculo ---------- */
 
 .bj--ordenador {

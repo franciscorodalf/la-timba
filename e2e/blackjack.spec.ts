@@ -1,9 +1,8 @@
-import { type Browser, type BrowserContext, expect, type Locator, type Page, test, type WebSocketRoute } from "@playwright/test";
-import type { MensajeMesa, RespuestaSesion } from "../src/shared/api";
+import { type Browser, type BrowserContext, expect, type Locator, type Page, test } from "@playwright/test";
+import type { RespuestaSesion } from "../src/shared/api";
 import type { Carta } from "../src/shared/cartas";
 import type { VistaBJ } from "../src/shared/juegos/blackjack";
-import type { Evento } from "../src/shared/juegos/tipos";
-import { abrirPartida, apodoUnico, conSesion, registrar } from "./ayudas";
+import { abrirPartida, apodoUnico, carta, conSesion, entrarSimulada as baseEntrarSimulada, mensajeEstado, registrar } from "./ayudas";
 
 // La mesa anima sin parar (la barra del temporizador se vacía durante 15 s): las capturas continuas de la traza, con
 // varios trabajadores en paralelo, saturan la máquina y retrasan los clics más que la ventana de decisiones. La traza se
@@ -96,48 +95,7 @@ test("dos jugadores apuestan 50, se plantan y cobran lo que enseña la mesa; rec
 // Con la mesa simulada: el socket de la mesa no llega al servidor y la prueba decide qué manda la mesa.
 // ---------------------------------------------------------------------------------------------------------------------
 
-const c = (texto: string): Carta => ({ palo: texto.at(-1) as Carta["palo"], valor: texto.slice(0, -1) as Carta["valor"] });
-
-interface Mesa {
-  /** El mensaje con el que contesta la mesa al conectar (o `null`: no contesta). Se fija antes de abrir la página. */
-  alConectar(mensaje: MensajeMesa<VistaBJ> | null): void;
-  /** Al conectar, en vez de contestar, cierra con este código. */
-  cerrarAlConectar(codigo: number): void;
-  enviar(mensaje: MensajeMesa<VistaBJ>): void;
-  cerrar(codigo: number): Promise<void>;
-  /** Las acciones que ha mandado el cliente, en orden. */
-  recibidas: unknown[];
-  /** Cuántas conexiones ha abierto el cliente con la mesa. */
-  conexiones(): number;
-}
-
-async function simularMesa(pagina: Page): Promise<Mesa> {
-  let socket: WebSocketRoute | null = null;
-  let inicial: MensajeMesa<VistaBJ> | null = null;
-  let cierre: number | null = null;
-  const recibidas: unknown[] = [];
-  let conexiones = 0;
-  await pagina.routeWebSocket(/\/parties\/mesa-blackjack\//, (ws) => {
-    conexiones++;
-    socket = ws;
-    ws.onMessage((m) => recibidas.push(JSON.parse(String(m))));
-    if (cierre !== null) void ws.close({ code: cierre });
-    else if (inicial !== null) ws.send(JSON.stringify(inicial));
-  });
-  return {
-    alConectar: (mensaje) => {
-      inicial = mensaje;
-    },
-    cerrarAlConectar: (codigo) => {
-      cierre = codigo;
-    },
-    enviar: (mensaje) => (socket as WebSocketRoute | null)?.send(JSON.stringify(mensaje)),
-    cerrar: async (codigo) => (socket as WebSocketRoute | null)?.close({ code: codigo }),
-    recibidas,
-    conexiones: () => conexiones,
-  };
-}
-
+const c = carta;
 /** Una mesa de prueba: el jugador que mira (`yo`) sentado, con lo que se cambie. */
 function vista(sesion: RespuestaSesion, resto: Partial<VistaBJ> = {}): VistaBJ {
   return {
@@ -153,15 +111,10 @@ function vista(sesion: RespuestaSesion, resto: Partial<VistaBJ> = {}): VistaBJ {
   };
 }
 
-let version = 0;
-const estado = (v: VistaBJ, eventos: Evento[] = []): MensajeMesa<VistaBJ> => ({ t: "estado", version: ++version, ahora: Date.now(), vista: v, eventos });
+const estado = mensajeEstado<VistaBJ>;
 
 async function entrarSimulada(pagina: Page, request: Parameters<typeof registrar>[0]) {
-  const sesion = await registrar(request, apodoUnico(), "1234");
-  const codigo = await abrirPartida(request, sesion);
-  await conSesion(pagina, sesion);
-  const mesa = await simularMesa(pagina);
-  return { sesion, codigo, mesa };
+  return baseEntrarSimulada<VistaBJ>(pagina, request, "mesa-blackjack");
 }
 
 test.describe("mesa simulada", () => {

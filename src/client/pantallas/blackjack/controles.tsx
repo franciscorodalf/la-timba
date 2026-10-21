@@ -24,10 +24,10 @@ export function Apostar({ fichas, activo, esperando, onApostar }: ApostarProps) 
   const [montante, setMontante] = useState(() => (ultimaApuesta <= tope ? ultimaApuesta : 0));
   const cantidad = montante <= tope ? montante : 0;
   return (
-    <div className="bj-apostar">
+    <div className="panel-apuesta">
       <FichasApuesta montante={cantidad} tope={tope} activo={activo} onCambiar={setMontante} />
-      <div className="bj-apostar__fila">
-        <Boton variante="secundario" className="bj-apostar__borrar" aria-label="Borrar apuesta" disabled={cantidad === 0} onClick={() => setMontante(0)}>
+      <div className="panel-apuesta__fila">
+        <Boton variante="secundario" className="panel-apuesta__borrar" aria-label="Borrar apuesta" disabled={cantidad === 0} onClick={() => setMontante(0)}>
           Borrar
         </Boton>
         <Boton disabled={!activo || cantidad < BJ.MIN} cargando={esperando} onClick={() => {
