@@ -101,6 +101,11 @@ test.describe("con movimiento reducido", () => {
     await expect(tuMano(page)).toHaveCount(2, { timeout: 30_000 });
     const plantarse = page.getByRole("button", { name: "Plantarse" });
     await expect(plantarse.or(resultado(page))).toBeVisible({ timeout: 30_000 });
+    // Se espera a que cada carta del reparto cumpla sus 300 ms antes de actuar: al plantarse llegan las cartas de la banca y su mano
+    // se vuelve a centrar, un movimiento lateral legítimo que no debe caer dentro de la ventana de ninguna carta ya medida.
+    await expect
+      .poll(() => page.evaluate(() => (window as unknown as { __seguimientos: Seguimiento[] }).__seguimientos.every((s) => s.despues !== null)), { timeout: 10_000 })
+      .toBe(true);
     if (await plantarse.isEnabled().catch(() => false)) await plantarse.click();
     await resultado(page).waitFor({ timeout: 30_000 });
     // Que se cobra lo que enseña la mesa: la ronda se ha completado de verdad.
