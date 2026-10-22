@@ -1,0 +1,156 @@
+# La Timba
+
+Una web para jugar a las cartas con amigos: **Blackjack** y una **carrera de caballos** con la baraja francesa, en un tapete de casino clásico. Alguien crea una partida, los demás entran con un código, un QR o un enlace, y todos juegan con las mismas fichas y un ranking compartido. Funciona en el móvil y en el ordenador, no necesita instalar nada y se aloja gratis en Cloudflare.
+
+> **Demo: pendiente de desplegar**
+
+<p align="center">
+  <img src="docs/capturas/sala-movil.png" alt="La sala de una partida en el móvil: quién hay, las dos mesas y el ranking de esta noche" width="23%">
+  <img src="docs/capturas/blackjack-movil.png" alt="Mesa de blackjack en el móvil, a mitad de ronda" width="23%">
+  <img src="docs/capturas/carrera-movil.png" alt="Mesa de la carrera de caballos en el móvil, a mitad de carrera" width="23%">
+  <img src="docs/capturas/carrera-ganador-movil.png" alt="El caballo de corazones gana la carrera y el jugador cobra" width="23%">
+</p>
+
+## Cómo se juega
+
+1. **Entra** con un apodo y un PIN de 4 cifras. Si el apodo no existe, se crea tu perfil con **1.000 fichas**.
+2. **Crea una partida** (te da un código de 4 caracteres, un QR y un enlace) o **únete** con el de un amigo.
+3. En la **sala** ves quién está conectado, qué hay en cada mesa y quién va ganando esta noche. Entra en la mesa que quieras y vuelve cuando quieras: la sala y las mesas comparten conexión.
+4. **Blackjack.** Seis barajas, hasta 6 jugadores. Apuestas durante 15 s (de 10 a 500 fichas), cada uno recibe dos cartas y decides en 15 s: *Pedir*, *Plantarse* o *Doblar*. La banca pide hasta 17 y se planta en cualquier 17 o más. Ganar paga 1:1, blackjack natural 3:2 y un empate devuelve la apuesta.
+5. **Carrera de caballos.** Los cuatro ases son los caballos. Apuesta durante 20 s a uno o a varios (de 10 a 500 por caballo, hasta 12 jugadores). Se levanta una carta cada 800 ms y avanza el caballo de su palo; cuando todos pasan un tramo de la pista se gira su carta y el caballo de ese palo retrocede. Gana el primero que llega a la meta y paga ×4 (apuesta incluida).
+6. Si te quedas **sin fichas**, el perfil te ofrece un **rescate** de 200 (cuenta como una quiebra en tus estadísticas).
+
+## Características
+
+- **Dos juegos** con reglas completas, temporizadores y reconexión: cierra la pestaña a mitad de mano y al volver sigues en tu mesa, con tu mano.
+- **Partidas con código, QR y enlace**; la sala se cierra sola tras 30 minutos sin nadie.
+- **Fichas globales**: tu saldo es el mismo en todas las partidas y mesas.
+- **Ranking global** (fichas, ganancias, % de victorias, mayor premio, mejor racha y quiebras) y **ranking de cada noche**, además de un perfil con estadísticas por juego.
+- **Animaciones cuidadas** con Motion: reparto desde el mazo, cartas que se giran en 3D, caballos con estela, fichas que vuelan al contador. Solo se animan `transform` y `opacity`, y con `prefers-reduced-motion` todo pasa a fundidos.
+- **Sonido sintetizado** (cartas, fichas, victoria) con silencio recordado, y vibración corta al ganar donde el navegador la permita.
+- **Hecha para el móvil**: botones de al menos 44 px, tu mano grande abajo, y en un móvil tumbado las mesas piden girarlo en vez de ofrecer un tapete que obligue a desplazarse. En el ordenador, la mesa completa con los asientos en semicírculo.
+- **Coste 0 €**: solo el plan gratuito de Cloudflare, sin tarjeta.
+
+<p align="center">
+  <img src="docs/capturas/blackjack-escritorio.png" alt="Mesa de blackjack en el ordenador: cuatro jugadores en semicírculo frente a la banca" width="48%">
+  <img src="docs/capturas/carrera-ganador-escritorio.png" alt="Mesa de la carrera en el ordenador: gana el caballo de corazones y se cobra" width="48%">
+</p>
+
+Un paso de la carrera, fotograma a fotograma: sale un 8 de picas (el caballo avanza dejando estela), todos han pasado el tramo 2 y se gira su carta, un 7 de diamantes, así que el caballo de diamantes retrocede.
+
+<p align="center">
+  <img src="docs/capturas/carrera-paso.png" alt="Cuatro fotogramas de un paso de la carrera: avance de picas, giro del tramo y retroceso de diamantes" width="100%">
+</p>
+
+## Arquitectura
+
+Un único Worker de Cloudflare sirve la web, la API y los WebSockets; cada sala y cada mesa es un **Durable Object** con su propio SQLite. Una sola URL y un solo despliegue.
+
+```mermaid
+flowchart TB
+    N["Navegador<br/>React + Motion"]
+
+    subgraph W["Worker · src/server/index.ts"]
+        API["/api/*<br/>entrar, crear partida, ranking, perfil, rescate"]
+        WS["/parties/*<br/>valida token y código<br/>routePartykitRequest"]
+        EST["resto<br/>recursos estáticos de la web (SPA)"]
+    end
+
+    subgraph DO["Durable Objects · cada uno con su SQLite"]
+        J[("Jugadores<br/>nombre = global")]
+        P[("Partida<br/>nombre = código")]
+        MB[("MesaBlackjack<br/>nombre = código")]
+        MC[("MesaCarrera<br/>nombre = código")]
+    end
+
+    N -- "HTTP" --> API
+    N -- "WebSocket con reconexión" --> WS
+    N -- "GET /" --> EST
+
+    API --> J
+    API --> P
+    WS --> P
+    WS --> MB
+    WS --> MC
+    MB -- "cobrar y liquidar fichas" --> J
+    MC -- "cobrar y liquidar fichas" --> J
+    MB -- "ocupación de la mesa" --> P
+    MC -- "ocupación de la mesa" --> P
+    P -- "ranking de la noche" --> J
+```
+
+### Decisiones de diseño
+
+- **El servidor manda, y cada jugador recibe su propia vista.** Las mesas guardan el estado verdadero y lo proyectan para cada conexión con `vista(estado, jugador)`: la baraja y la carta tapada de la banca no salen nunca del servidor. El cliente solo envía intenciones (`apostar`, `pedir`, `plantarse`…) y nunca decide un resultado. Además de la vista, cada mensaje trae los **eventos** ocurridos (`carta_repartida`, `caballo_avanza`, `pago`…) para que la pantalla los anime en orden y luego se asiente en la vista.
+- **Reglas puras y compartidas.** Blackjack y carrera son funciones `(estado, acción) → estado` en `src/shared/juegos`, sin red, sin reloj y sin azar propio: el tiempo y el generador entran como parámetros (el barajado usa siempre `crypto.getRandomValues`). Se prueban con Vitest en milisegundos y una clase base, `Mesa`, las conecta con PartyServer. Añadir un juego es escribir un archivo de reglas, una clase pequeña y su pantalla.
+- **Fichas en dos fases e idempotentes.** Antes de cobrar una apuesta la mesa guarda su intención; luego pide el cobro a `Jugadores` con una clave de idempotencia, y la intención se borra en la misma escritura que guarda la jugada. Un cobro que queda a medias (la instancia cayó, `Jugadores` no contestó) se anula con su clave, y cada ronda se liquida una sola vez por su identificador. Resultado: las fichas siempre cuadran, aunque las alarmas lleguen tarde o los mensajes se repitan.
+- **Pensada para los límites del plan gratuito.** Durable Objects con SQLite, WebSockets con hibernación y temporizadores con **alarmas** del objeto (nada de `setInterval`), de modo que una mesa vacía no consume. Una mesa sin apuestas deja de programar alarmas tras tres ventanas, la sala se cierra a los 30 minutos sin conexiones, cada conexión tiene un tope de 20 mensajes por segundo (más de 60 y se cierra con el código 4008) y cualquier error inesperado responde 503 con «La Timba está descansando, vuelve mañana».
+- **PBKDF2 con 10.000 iteraciones.** El PIN se guarda con PBKDF2-SHA256 y sal de 16 bytes. Con 100.000 iteraciones una sola invocación supera los 10 ms de CPU del plan gratuito (error 1102), así que se usan 10.000 y se compensa por otro lado: 5 fallos bloquean el apodo 15 minutos. La sesión es un token HMAC-SHA256 firmado con `TOKEN_SECRET` que caduca a los 30 días.
+- **Fluidez medida.** Las animaciones usan solo `transform` y `opacity`; se perfiló una carrera completa con la CPU a un cuarto de velocidad (y a un sexto) con CDP y `PerformanceObserver` sin tareas largas, y los e2e comprueban que con movimiento reducido las cartas aparecen ya en su sitio.
+
+## Tecnología
+
+| Capa | Qué se usa |
+|---|---|
+| Cliente | React 18, Vite, [Motion](https://motion.dev), wouter, `qrcode.react`, TypeScript |
+| Tiempo real | [PartyServer](https://github.com/cloudflare/partykit/tree/main/packages/partyserver) en el servidor y `partysocket` (con reconexión) en el cliente |
+| Servidor | Cloudflare Workers y Durable Objects (SQLite), WebCrypto para el PIN y los tokens |
+| Cartas y tipografías | `@letele/playing-cards`, Playfair Display e Inter (Fontsource) |
+| Pruebas | Vitest con `@cloudflare/vitest-plugin` (Durable Objects reales en local) y Playwright |
+
+## Ejecutarlo en local
+
+Hace falta Node.js 22 o superior (lo exige Wrangler).
+
+```bash
+npm i
+cp .dev.vars.example .dev.vars     # y cambia TOKEN_SECRET
+npm run dev                        # http://localhost:5173
+```
+
+`.dev.vars` guarda el secreto con el que se firman los tokens y Git lo ignora. Para generar uno fuerte: `openssl rand -base64 32`.
+
+`npm run dev` arranca todo a la vez (la web, el Worker y los Durable Objects, con su estado en `.wrangler/`). Para ver la versión de producción en local: `npm run build` y `npx vite preview`.
+
+## Pruebas
+
+```bash
+npm test          # unitarias y de integración (reglas puras, Durable Objects reales, utilidades del cliente)
+npm run e2e       # Playwright con Chromium, en dos perfiles: escritorio y móvil (Pixel 7)
+npx tsc --noEmit -p .
+```
+
+Los e2e juegan rondas de verdad contra el servidor local (varias pestañas a la vez) y también con la mesa simulada para provocar situaciones difíciles de conseguir a mano: reconexiones, errores del servidor, pagos que llegan tarde. Si es la primera vez, `npx playwright install chromium` descarga el navegador.
+
+## Despliegue
+
+Lo hace cada persona con su propia cuenta de Cloudflare (el plan gratuito basta):
+
+```bash
+npx wrangler login
+npx wrangler secret put TOKEN_SECRET     # pega aquí un secreto fuerte: openssl rand -base64 32
+npm run deploy
+```
+
+`npm run deploy` construye el cliente y el Worker (`vite build`) y los sube con `wrangler deploy`. La configuración está en [`wrangler.jsonc`](wrangler.jsonc): los cuatro Durable Objects con su migración `new_sqlite_classes` y la web como recursos estáticos con *fallback* de aplicación de una sola página, de modo que `/p/KXP4` abre la partida también al recargar. La URL queda como `https://la-timba.<tu-cuenta>.workers.dev`.
+
+Conviene vigilar el panel de Cloudflare (Workers y Durable Objects → Métricas): una noche típica de 8 jugadores durante 3 horas debería quedarse muy por debajo del límite diario gratuito.
+
+## Estructura
+
+```
+src/
+  shared/    cartas, protocolo y reglas puras de los juegos (se usan en cliente y servidor)
+  server/    Worker (API y WebSockets), Durable Objects (Jugadores, Partida, mesas) y autenticación
+  client/    pantallas, componentes, red, efectos (movimiento, sonido) y el tema visual
+test/        Vitest: reglas, servidor y utilidades del cliente
+e2e/         Playwright: pantallas, mesas y movimiento
+docs/        especificación y plan de implementación, y las capturas de este README
+```
+
+## Créditos
+
+- **Cartas**: diseño de [Adrian Kennard](https://www.me.uk/cards/) (dominio público, CC0), a través del paquete [`@letele/playing-cards`](https://www.npmjs.com/package/@letele/playing-cards). El reverso es propio.
+- **Tipografías**: [Playfair Display](https://fonts.google.com/specimen/Playfair+Display) e [Inter](https://rsms.me/inter/), con licencia SIL Open Font License, servidas con [Fontsource](https://fontsource.org).
+- **Sonidos**: no hay archivos de audio; los sonidos de cartas, fichas y victoria se sintetizan con la Web Audio API en [`src/client/efectos/sonidos.ts`](src/client/efectos/sonidos.ts).
+- Hecho con [PartyServer](https://github.com/cloudflare/partykit/tree/main/packages/partyserver), [Motion](https://motion.dev) y [Cloudflare Workers](https://workers.cloudflare.com).
