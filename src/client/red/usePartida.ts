@@ -7,6 +7,7 @@ import { api, mensajeError } from "./api";
 import { registrarHoraServidor } from "./reloj";
 import { useSesion } from "./sesion";
 import { leerToken } from "./token";
+import { olvidarPartida } from "./ultimaPartida";
 
 export interface EstadoPartida {
   /** Lo último que mandó la sala; `null` hasta que llega el primer mensaje. Se conserva mientras se reconecta. */
@@ -99,6 +100,11 @@ export function PartidaProvider({ codigo, children }: { codigo: string; children
       vigente = false;
     };
   }, [codigo, intento]);
+
+  // Una partida que no existe no es a la que volver desde el «Sala» del ranking y del perfil.
+  useEffect(() => {
+    if (existencia.estado === "no_existe") olvidarPartida(codigo);
+  }, [existencia.estado, codigo]);
 
   // Se perdió la conexión y hay que saber si merece la pena reintentarla:
   // - Si la partida se cerró mientras tanto (30 min sin nadie), el servidor la rechazará siempre: se deja de reintentar.

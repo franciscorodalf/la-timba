@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import type { FilaRanking, FilaRankingPartida, JugadorPublico, OrdenRanking, Perfil } from "../shared/api";
+import { type FilaRanking, type FilaRankingPartida, type JugadorPublico, type OrdenRanking, PARTIDAS_MINIMAS_VICTORIAS, type Perfil } from "../shared/api";
 import type { FilaLiquidacion, IdJuego } from "../shared/juegos/tipos";
 import { apodoValido, hashPin, pinValido, verificarPin } from "./auth";
 import type { Env } from "./index";
@@ -9,7 +9,6 @@ const FICHAS_RESCATE = 200;
 const MAX_FALLOS = 5;
 const BLOQUEO_MS = 15 * 60 * 1000;
 const TAMANO_TOP = 50;
-const PARTIDAS_MINIMAS_VICTORIAS = 10;
 
 const ESQUEMA = [
   `CREATE TABLE IF NOT EXISTS jugadores (

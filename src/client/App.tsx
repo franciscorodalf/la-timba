@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Link, Redirect, Route, Switch } from "wouter";
+import { useEffect, useState } from "react";
+import { Redirect, Route, Switch } from "wouter";
 import { Aviso } from "./componentes/Aviso";
 import { Boton } from "./componentes/Boton";
 import { Cargando } from "./componentes/Cargando";
@@ -7,9 +7,12 @@ import { Entrada } from "./pantallas/Entrada";
 import { Inicio } from "./pantallas/Inicio";
 import { MesaBlackjack } from "./pantallas/MesaBlackjack";
 import { MesaCarrera } from "./pantallas/MesaCarrera";
+import { Perfil } from "./pantallas/Perfil";
+import { Ranking } from "./pantallas/Ranking";
 import { Sala } from "./pantallas/Sala";
 import { PartidaProvider } from "./red/usePartida";
 import { SesionProvider, useSesion } from "./red/sesion";
+import { recordarPartida } from "./red/ultimaPartida";
 
 export function App() {
   return (
@@ -31,12 +34,8 @@ function Pantallas() {
       <Route path="/p/:codigo" nest>
         {({ codigo }) => <LayoutPartida codigo={codigo.toUpperCase()} />}
       </Route>
-      <Route path="/ranking">
-        <Pendiente nombre="Ranking" />
-      </Route>
-      <Route path="/perfil">
-        <Pendiente nombre="Perfil" />
-      </Route>
+      <Route path="/ranking" component={Ranking} />
+      <Route path="/perfil" component={Perfil} />
       <Route>
         <Redirect to="/" replace />
       </Route>
@@ -49,6 +48,8 @@ function Pantallas() {
  * otra. Las rutas de dentro son relativas a `/p/:codigo`. El código se escribe en mayúsculas aunque el enlace venga en minúsculas.
  */
 function LayoutPartida({ codigo }: { codigo: string }) {
+  // El «Sala» del ranking y del perfil vuelve a la última partida visitada en esta pestaña.
+  useEffect(() => recordarPartida(codigo), [codigo]);
   return (
     <PartidaProvider key={codigo} codigo={codigo}>
       <Switch>
@@ -86,19 +87,6 @@ function NoDisponible() {
           Reintentar
         </Boton>
       </section>
-    </main>
-  );
-}
-
-// Pantallas que aún no existen: sus rutas ya están, cada tarea reemplaza la suya.
-function Pendiente({ nombre }: { nombre: string }) {
-  return (
-    <main className="pantalla">
-      <h1 className="cabecera__logo">{nombre}</h1>
-      <p className="saludo">Esta pantalla llega pronto.</p>
-      <Link href="/" className="boton boton--secundario">
-        Volver
-      </Link>
     </main>
   );
 }

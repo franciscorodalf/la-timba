@@ -104,7 +104,7 @@ export async function fichasDeApi(pagina: Page, inicial: number): Promise<{ pone
     } catch (error) {
       // Solo si la prueba ya ha acabado (la página o el contexto se han cerrado con la petición a medias) no hay nada que contestar;
       // cualquier otro fallo es real: se deja que salga en vez de dejar la petición colgada.
-      const cerrada = pagina.isClosed() || (error instanceof Error && /Target (page, context or browser|page|context|browser) has been closed/.test(error.message));
+      const cerrada = pagina.isClosed() || (error instanceof Error && /Target (page, context or browser|page|context|browser) has been closed|Response has been disposed/.test(error.message));
       if (!cerrada) throw error;
     }
   });

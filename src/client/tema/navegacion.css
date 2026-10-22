@@ -1,5 +1,27 @@
 /* Barra inferior de navegación. */
 
+:root {
+  /* Lo que mide la barra sin el área segura de abajo: 6 + 52 + 6 de relleno y el filo de arriba. Lo que quiera ir justo encima, o dejarle sitio, parte de aquí. */
+  --alto-navegacion: 65px;
+}
+
+/* Las pantallas con la barra abajo (ranking, perfil): una columna centrada con sitio al final para que la barra no tape nada. */
+.con-navegacion {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: max(20px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) calc(var(--alto-navegacion) + 28px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+}
+
+.con-navegacion__columna {
+  width: 100%;
+  max-width: var(--ancho-sala);
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
 /* Barra inferior. */
 .navegacion {
   position: fixed;

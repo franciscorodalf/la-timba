@@ -19,6 +19,9 @@ export interface Perfil extends JugadorPublico {
 export const ORDENES_RANKING = ["fichas", "ganancias", "victorias", "premio", "racha", "quiebras"] as const;
 export type OrdenRanking = (typeof ORDENES_RANKING)[number];
 
+/** Rondas jugadas que hacen falta para entrar en el ranking de % victorias (con menos, un par de golpes de suerte darían un 100 %). */
+export const PARTIDAS_MINIMAS_VICTORIAS = 10;
+
 export interface FilaRanking {
   posicion: number;
   apodo: string;
