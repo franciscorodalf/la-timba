@@ -279,6 +279,8 @@
 
 /* ---------- Panel: estado, temporizador y botones ---------- */
 
+/* Reserva siempre el alto del panel más alto (el de apostar: 164 px) aunque la fase solo traiga una línea de estado: si el panel
+   encogiera al plantarte o al repartir, la mesa crecería y tu mano bajaría de golpe con las cartas ya a la vista. */
 .bj-panel {
   position: relative;
   z-index: 2;
@@ -286,6 +288,7 @@
   flex-direction: column;
   gap: 10px;
   margin-top: 14px;
+  min-height: 164px;
 }
 
 .bj-decidir {
