@@ -40,6 +40,10 @@ export interface Escena {
   ganador: Palo | null;
   /** Cuántas victorias se han festejado: cambia en el instante de festejar (destellos). */
   festejo: number;
+  /** El caballo que festejó la última victoria y sigue en pantalla; `null` si no se festejó en esta pantalla (se ha vuelto con la carrera ya acabada). Sin él no hay destellos. */
+  festejoDe: Palo | null;
+  /** Los tramos se colocan de uno en uno al montarse: la primera vez que se ve la pista y en cada pista nueva, pero no al volver de una desconexión. */
+  reparto: boolean;
   /** Los pagos de la carrera, desde el momento de enseñarlos. */
   pagos: { id: number; netos: ReadonlyMap<JugadorId, number> } | null;
   /** Cuántos pagos se han enseñado en total (da el `id` del siguiente). */
@@ -76,6 +80,8 @@ export const ESCENA_VACIA: Escena = {
   n: 0,
   ganador: null,
   festejo: 0,
+  festejoDe: null,
+  reparto: false,
   pagos: null,
   npagos: 0,
   epoca: 0,
@@ -99,6 +105,8 @@ export function escenaDeVista(vista: VistaCarrera, previa?: Escena): Escena {
     n,
     ganador: vista.ganador,
     festejo: previa?.festejo ?? 0,
+    festejoDe: null,
+    reparto: previa === undefined,
     pagos: null,
     npagos: previa?.npagos ?? 0,
     epoca: previa ? previa.epoca + 1 : 0,
@@ -149,7 +157,7 @@ export function planDeLote(previa: Escena | null, lote: Evento[], vista: VistaCa
 
   if (rondaNueva && !hayCarrera && esSalida(vista)) {
     // Pista nueva: los caballos vuelven a la salida (la pista anima el regreso).
-    poner(0, { ronda: vista.ronda, posiciones: { ...vista.posiciones }, girados: 0, cartas: [], ganador: null, pagos: null });
+    poner(0, { ronda: vista.ronda, posiciones: { ...vista.posiciones }, girados: 0, cartas: [], ganador: null, festejoDe: null, reparto: true, pagos: null });
   } else if ((rondaNueva && hayCarrera) || (!hayCarrera && !cuadra)) {
     poner(0, escenaDeVista(vista, previa), true);
   } else if (hayCarrera) {
@@ -180,7 +188,7 @@ export function planDeLote(previa: Escena | null, lote: Evento[], vista: VistaCa
         poner(base + RETROCESO_MS + j * SEPARACION_GIROS_MS, { posiciones: { ...sim.posiciones, [palo]: Math.max(0, sim.posiciones[palo] - 1) } });
       } else if (e.tipo === "ganador") {
         tGanador = base + GANADOR_MS;
-        poner(tGanador, { ganador: e.palo as Palo, festejo: sim.festejo + 1 });
+        poner(tGanador, { ganador: e.palo as Palo, festejo: sim.festejo + 1, festejoDe: e.palo as Palo });
       }
     }
     if (!mismasCasillas(sim.posiciones, vista.posiciones) || sim.girados !== tramosGirados(vista) || sim.ganador !== vista.ganador) {

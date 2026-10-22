@@ -99,14 +99,14 @@ export const Pista = forwardRef<HTMLDivElement, PistaProps>(function Pista({ esc
             // El carril entero es un blanco cómodo para elegir; el control accesible es la cabecera.
             <div
               key={`${escena.epoca}:${palo}`}
-              className={`carrera-carril carrera-carril--${palo}${elegido === palo ? " carrera-carril--elegido" : ""}${eligible ? " carrera-carril--eligible" : ""}`}
+              className={`carrera-carril carrera-carril--${palo}${eligible && elegido === palo ? " carrera-carril--elegido" : ""}${eligible ? " carrera-carril--eligible" : ""}`}
               onClick={eligible ? () => onElegir(palo) : undefined}
             >
               {caballoAncho !== null && <Caballo palo={palo} casilla={escena.posiciones[palo]} ganador={escena.ganador} ancho={caballoAncho} />}
             </div>
           ))}
         </div>
-        <div className="carrera-lineas" aria-hidden="true">
+        <div key={escena.epoca} className="carrera-lineas" aria-hidden="true">
           <span className="carrera-linea carrera-linea--salida" style={variable("--k", 0)} />
           {Array.from({ length: CARRERA.TRAMOS }, (_, i) => (
             <span key={i} className={`carrera-linea${i < escena.girados ? " carrera-linea--encendida" : ""}`} style={variable("--k", i + 1)} />
@@ -118,7 +118,7 @@ export const Pista = forwardRef<HTMLDivElement, PistaProps>(function Pista({ esc
       <div className="carrera-festejos" aria-hidden="true">
         {CABALLOS.map((palo) => (
           <div key={palo} className="carrera-festejo">
-            <Destellos disparo={escena.ganador === palo ? escena.festejo : 0} />
+            <Destellos disparo={escena.festejoDe === palo ? escena.festejo : 0} />
           </div>
         ))}
       </div>
@@ -166,7 +166,7 @@ interface FranjaProps {
 export function Franja({ escena, tramos, ancho }: FranjaProps) {
   return (
     <div className="carrera-franja" role="group" aria-label="Tramos de la pista">
-      <div key={`${escena.epoca}:${escena.ronda}`} className="carrera-franja__tramos">
+      <div key={`${escena.epoca}:${escena.ronda}`} className={`carrera-franja__tramos${escena.reparto ? " carrera-franja__tramos--reparto" : ""}`}>
         {tramos.map((carta, i) => (
           <Tramo key={i} indice={i} carta={carta} revelado={i < escena.girados} ancho={ancho} />
         ))}
@@ -199,7 +199,7 @@ export function Cabeceras({ elegido, activo, ganador, mias, mesa, onElegir, refs
       {CABALLOS.map((palo) => {
         const mia = mias[palo];
         const etiqueta = `${nombreCaballo(palo)}. ${mia > 0 ? `Tu apuesta ${mia}. ` : ""}En la mesa ${mesa[palo]}`;
-        const clase = ["carrera-cabecera", `carrera-cabecera--${palo}`, elegido === palo && "carrera-cabecera--elegida", ganador === palo && "carrera-cabecera--ganadora", ganador !== null && ganador !== palo && "carrera-cabecera--atenuada"]
+        const clase = ["carrera-cabecera", `carrera-cabecera--${palo}`, activo && elegido === palo && "carrera-cabecera--elegida", ganador === palo && "carrera-cabecera--ganadora", ganador !== null && ganador !== palo && "carrera-cabecera--atenuada"]
           .filter(Boolean)
           .join(" ");
         return (

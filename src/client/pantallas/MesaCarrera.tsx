@@ -1,26 +1,27 @@
 import { type CSSProperties, useEffect, useRef, useState } from "react";
-import { useLocation } from "wouter";
 import type { Palo } from "../../shared/cartas";
 import { type AccionCarrera, CARRERA, type FaseCarrera, type VistaCarrera } from "../../shared/juegos/carrera";
 import { AvisoMesa } from "../componentes/AvisoMesa";
 import { BarraMesa } from "../componentes/BarraMesa";
-import { CartelPremio, type Premio } from "../componentes/CartelPremio";
-import { Confirmar } from "../componentes/Confirmar";
+import { CartelPremio } from "../componentes/CartelPremio";
 import { EstadoMesa } from "../componentes/EstadoMesa";
 import { FichasVolando } from "../componentes/FichasVolando";
-import { cargarBaraja } from "../componentes/Naipe";
+import { usePrecargarBaraja } from "../componentes/Naipe";
 import { Reconectando } from "../componentes/Reconectando";
 import { Resultado } from "../componentes/Resultado";
 import { SinMesa, useSinMesa } from "../componentes/SinMesa";
 import { sonidos } from "../efectos/sonidos";
-import { useDespues } from "../efectos/useDespues";
-import { vibrar } from "../efectos/vibrar";
-import { useAnchoVentana } from "../efectos/ventana";
+import { useBarajando } from "../efectos/useBarajando";
+import { usePremio } from "../efectos/usePremio";
+import { ORDENADOR_PX, useAnchoVentana } from "../efectos/ventana";
 import { cuentaAtras } from "../formato";
 import { useAhoraServidor } from "../red/reloj";
 import { useSesion } from "../red/sesion";
+import { useEnvioUnico } from "../red/useEnvioUnico";
 import { useFichasAlDia } from "../red/useFichasAlDia";
 import { useMesa } from "../red/useMesa";
+import { useSalirDeMesa } from "../red/useSalirDeMesa";
+import { useSentado } from "../red/useSentado";
 import { PanelApuestas, PanelEnCarrera, PanelGanador, textoEstado } from "./carrera/apuestas";
 import { ESCENA_VACIA } from "./carrera/escena";
 import { FRANJA_HORIZONTAL, FRANJA_VERTICAL, geometria, variablesDe } from "./carrera/geometria";
@@ -29,15 +30,6 @@ import { useEscena } from "./carrera/useEscena";
 import { useGeometria } from "./carrera/useGeometria";
 import { MesaLlena } from "./MesaLlena";
 
-/** A partir de este ancho, la pista es horizontal y la mesa tiene su tapete; por debajo, la pista vertical del móvil. */
-const ORDENADOR_PX = 900;
-/** Lo que se queda el cartel «¡Ganas +N!». */
-const CARTEL_MS = 2_000;
-/** Las fichas que vuelan tardan esto en empezar a llegar al contador: entonces empieza a contar. */
-const LLEGADA_FICHAS_MS = 450;
-/** Lo que dura el aviso «Barajando». */
-const BARAJADO_MS = 1_600;
-
 const SIN_CASILLAS: Record<Palo, number> = { H: 0, D: 0, C: 0, S: 0 };
 const SIN_TRAMOS: null[] = Array.from({ length: CARRERA.TRAMOS }, () => null);
 
@@ -45,9 +37,7 @@ const SIN_TRAMOS: null[] = Array.from({ length: CARRERA.TRAMOS }, () => null);
 export function MesaCarrera({ codigo }: { codigo: string }) {
   const { jugador, refrescar } = useSesion();
   const { vista, lote, enviar, error, conectado } = useMesa<VistaCarrera, AccionCarrera>("mesa-carrera", codigo);
-  const [, navegar] = useLocation();
   const ordenador = useAnchoVentana() >= ORDENADOR_PX;
-  const despues = useDespues();
 
   const mazo = useRef<HTMLDivElement>(null);
   const pista = useRef<HTMLDivElement>(null);
@@ -62,16 +52,11 @@ export function MesaCarrera({ codigo }: { codigo: string }) {
 
   const [elegido, setElegido] = useState<Palo | null>(null);
   const [montante, setMontante] = useState(0);
-  const [premio, setPremio] = useState<Premio | null>(null);
   const [resultado, setResultado] = useState<{ ronda: number; neto: number } | null>(null);
-  const [barajando, setBarajando] = useState(false);
-  const [confirmando, setConfirmando] = useState(false);
-  const premios = useRef(0);
+  const { premio, celebrar } = usePremio();
+  const barajando = useBarajando(lote);
 
-  // Las caras de las cartas se piden al entrar, para tenerlas antes de la primera carta.
-  useEffect(() => {
-    cargarBaraja().catch(() => {});
-  }, []);
+  usePrecargarBaraja();
 
   // Las fichas se vuelven a leer al (re)conectar y al empezar cada ronda, aunque el pago no traiga evento.
   useFichasAlDia(conectado, vista?.ronda);
@@ -93,13 +78,6 @@ export function MesaCarrera({ codigo }: { codigo: string }) {
     if (antes !== null) void refrescar();
   }, [firma, refrescar]);
 
-  // El barajado a mitad de carrera sacude el mazo un momento.
-  useEffect(() => {
-    if (!lote.some((e) => e.tipo === "barajado")) return;
-    setBarajando(true);
-    despues(BARAJADO_MS, () => setBarajando(false));
-  }, [lote]);
-
   // Tus pagos, cuando la escena los enseña (tras el ganador): el premio, el resultado y las fichas al día.
   const idPagos = escena?.pagos?.id ?? 0;
   useEffect(() => {
@@ -108,42 +86,22 @@ export function MesaCarrera({ codigo }: { codigo: string }) {
     const neto = pagos.netos.get(jugador.id);
     if (neto === undefined) return;
     setResultado({ ronda: escena.ronda, neto });
-    if (neto > 0) {
-      premios.current += 1;
-      refDesde.current = (escena.ganador && cabeceras.current[escena.ganador]) || null;
-      setPremio({ neto, id: premios.current });
-      sonidos.reproducir("victoria");
-      vibrar(80);
-      despues(CARTEL_MS, () => setPremio(null));
-      despues(LLEGADA_FICHAS_MS, () => void refrescar());
-    } else {
-      void refrescar();
-    }
+    // Las fichas del premio salen de la cabecera del caballo ganador.
+    refDesde.current = (neto > 0 && escena.ganador && cabeceras.current[escena.ganador]) || null;
+    celebrar(neto);
   }, [idPagos]);
 
-  // Tras apostar, el botón espera a que cambien TUS apuestas (o a un error, o a un cambio de conexión): una novedad de otro
-  // jugador no lo reactiva, así que un doble toque no manda dos apuestas.
-  const [enviadoCon, setEnviadoCon] = useState<string | null>(null);
-  useEffect(() => {
-    if (error !== null) setEnviadoCon(null);
-  }, [error]);
-  useEffect(() => {
-    setEnviadoCon(null);
-  }, [conectado]);
-  const esperando = enviadoCon !== null && enviadoCon === firma;
+  // Tras apostar, el botón espera a que cambien TUS apuestas (ronda + apuestas): una novedad de otro jugador no lo reactiva.
+  const { esperando, marcarEnviado } = useEnvioUnico(firma, error, conectado);
+
+  const sentado = useSentado(vista?.sentados);
+  const apuestaEnJuego = misApuestas.length > 0 && fase !== "resultado";
+  const salida = useSalirDeMesa({ codigo, enviar, apuestaEnJuego });
 
   const sinMesa = useSinMesa(vista !== null);
   const ahora = useAhoraServidor(vista !== null && vista.finFase !== null && vista.fase !== "carrera");
 
   if (error === "mesa_llena") return <MesaLlena codigo={codigo} juego="carrera" jugadores={CARRERA.MAX_JUGADORES} />;
-
-  const yoApodo = jugador?.apodo.toLowerCase();
-  const sentado = vista?.sentados.some((a) => a.toLowerCase() === yoApodo) ?? false;
-  const apuestaEnJuego = misApuestas.length > 0 && fase !== "resultado";
-  const salirDeLaMesa = () => {
-    enviar({ t: "salir" });
-    navegar(`~/p/${codigo}`);
-  };
 
   // Lo que se ve de la carrera va un poco por detrás del mensaje (el ganador se anuncia cuando llega a la meta): la fase
   // que se enseña es la de la escena, no la de la vista.
@@ -157,7 +115,7 @@ export function MesaCarrera({ codigo }: { codigo: string }) {
     if (elegido === null || vista === null) return;
     sonidos.reproducir("fichas");
     enviar({ t: "apostar", caballo: elegido, cantidad: montante });
-    setEnviadoCon(firma);
+    marcarEnviado();
   };
 
   const miNeto =
@@ -191,7 +149,7 @@ export function MesaCarrera({ codigo }: { codigo: string }) {
   return (
     <main className={`marco-mesa carrera${ordenador ? " carrera--ordenador" : ""}`}>
       <Reconectando conectado={conectado || vista === null} />
-      <BarraMesa titulo="Carrera" onVolver={() => (apuestaEnJuego ? setConfirmando(true) : salirDeLaMesa())} refFichas={refFichas} />
+      <BarraMesa titulo="Carrera" onVolver={salida.alVolver} refFichas={refFichas} />
 
       <div className={`carrera-mesa aparece${ajustando ? " carrera-mesa--ajustando" : ""}`} style={estiloMesa}>
         <Pista ref={pista} escena={e} elegido={elegido} eligible={puedeElegir} onElegir={setElegido} caballoAncho={escena !== null && g !== null ? g.caballoAncho : null} />
@@ -217,16 +175,7 @@ export function MesaCarrera({ codigo }: { codigo: string }) {
       <FichasVolando disparo={premio?.id ?? 0} desde={refDesde} hasta={refFichas} />
       <AvisoMesa error={error} />
 
-      {confirmando && (
-        <Confirmar
-          titulo="¿Salir de la mesa?"
-          texto="Si sales ahora pierdes tu apuesta"
-          aceptar="Salir"
-          cancelar="Seguir jugando"
-          onAceptar={salirDeLaMesa}
-          onCancelar={() => setConfirmando(false)}
-        />
-      )}
+      {salida.dialogo}
     </main>
   );
 }

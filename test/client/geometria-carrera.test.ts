@@ -13,7 +13,7 @@ describe("geometria de la pista", () => {
   it.each(casos)("$nombre: el caballo cabe en su carril y la carrera entera cabe en la pista", ({ largo, ancho, horizontal }) => {
     const g = geometria(largo, ancho, horizontal);
     const carril = ancho / 4;
-    expect(horizontal ? g.caballoAlto : g.caballoAncho).toBeLessThanOrEqual(horizontal ? carril : carril);
+    expect(horizontal ? g.caballoAlto : g.caballoAncho).toBeLessThanOrEqual(carril);
     // La punta del caballo en la meta (casilla 8) queda donde empieza la franja de meta, y no pasa del final.
     const punta = g.salida + g.caballoLargo + CARRERA.META * g.paso;
     expect(punta).toBeCloseTo(largo - g.meta, 5);

@@ -2,7 +2,7 @@ import { expect, type Locator, type Page, test } from "@playwright/test";
 import type { RespuestaSesion } from "../src/shared/api";
 import type { Palo } from "../src/shared/cartas";
 import type { VistaCarrera } from "../src/shared/juegos/carrera";
-import { abrirPartida, apodoUnico, carta as c, conSesion, entrarSimulada, mensajeEstado, registrar } from "./ayudas";
+import { abrirPartida, apodoUnico, carta as c, conSesion, entrarSimulada, fichasDeApi, mensajeEstado, registrar } from "./ayudas";
 
 // La mesa anima sin parar: las capturas continuas de la traza saturan la máquina con varios trabajadores (ver blackjack.spec.ts).
 test.use({ trace: { mode: "retain-on-failure", screenshots: false, snapshots: true, sources: true } });
@@ -92,16 +92,7 @@ const premio = (pagina: Page): Locator => pagina.getByText(/^¡Ganas \+\d+!$/);
 const tramosDeLaPista = (pagina: Page): Locator => pagina.getByRole("group", { name: "Tramos de la pista" }).getByRole("img");
 const ficha = (pagina: Page, valor: number): Locator => pagina.getByRole("button", { name: `Añadir ${valor}`, exact: true });
 
-/** Las fichas que devuelve `/api/yo`, fijadas al pedir (una petición en vuelo no ve el cambio siguiente). */
-async function fichasDe(pagina: Page, inicial: number): Promise<{ poner(n: number): void }> {
-  let fichas = inicial;
-  await pagina.route("**/api/yo", async (ruta) => {
-    const valor = fichas;
-    const respuesta = await ruta.fetch();
-    await ruta.fulfill({ response: respuesta, json: { ...(await respuesta.json()), fichas: valor } });
-  });
-  return { poner: (n) => (fichas = n) };
-}
+const fichasDe = fichasDeApi;
 
 /** Lo que ha recorrido un caballo desde su salida, en píxeles (el desplazamiento de su `transform` ahora mismo). */
 const recorrido = (pagina: Page, palo: Palo): Promise<number> =>
@@ -148,6 +139,70 @@ async function mirar(pagina: Page, ms: number): Promise<void> {
     requestAnimationFrame(paso);
   }, ms);
 }
+
+interface Repeticion {
+  /** La casilla de un caballo en ese momento (o «?»). */
+  casilla: string;
+  /** Lo que se está moviendo en la pista, la franja de tramos y el mazo en ese momento. */
+  animaciones: string[];
+}
+
+/**
+ * Vigila la mesa: cada vez que cambia algo (un caballo, un tramo, una carta, el ganador) anota las animaciones en marcha dentro de la
+ * pista, la franja de los tramos y el mazo con su última carta, salvo las terminadas y el latido permanente del halo del ganador. Si tras volver de una
+ * desconexión sale algo, la mesa está repitiendo lo que pasó (o lo pone de nuevo en escena).
+ */
+async function vigilarRepeticiones(pagina: Page): Promise<void> {
+  await pagina.evaluate(() => {
+    const w = window as unknown as { __repeticiones: unknown[] };
+    w.__repeticiones = [];
+    const nombre = (a: Animation) => (a as CSSAnimation).animationName ?? (a as CSSTransition).transitionProperty ?? a.constructor.name;
+    const mirar = () => {
+      const animaciones = [...document.querySelectorAll(".carrera-pista, .carrera-franja, .carrera-esquina")]
+        .flatMap((el) => el.getAnimations({ subtree: true }))
+        // Una animación ya terminada que se queda aplicada (relleno) no se mueve: no cuenta.
+        .filter((a) => a.playState !== "finished")
+        .map((a) => ((a as CSSAnimation).animationName === "carrera-latido" ? null : `${a.constructor.name}:${nombre(a)}`))
+        .filter((n): n is string => n !== null);
+      const caballo = document.querySelector<HTMLElement>("[data-caballo]");
+      w.__repeticiones.push({ casilla: caballo?.dataset.casilla ?? "?", animaciones });
+    };
+    new MutationObserver(mirar).observe(document.querySelector(".carrera-mesa")!, { subtree: true, childList: true, attributes: true, attributeFilter: ["data-casilla", "class"] });
+  });
+}
+
+const repeticionesVistas = (pagina: Page): Promise<Repeticion[]> => pagina.evaluate(() => (window as unknown as { __repeticiones: Repeticion[] }).__repeticiones);
+
+interface Foto {
+  /** Lo recorrido por el caballo de corazones. */
+  d: number;
+  aviso: boolean;
+  premio: boolean;
+  chispas: number;
+}
+
+/** Mira durante `ms` el caballo de corazones y si ya se ve el aviso del ganador, el cartel del premio o los destellos. */
+async function mirarGanador(pagina: Page, ms: number): Promise<void> {
+  await pagina.evaluate((duracion) => {
+    const w = window as unknown as { __fotos: unknown[] };
+    w.__fotos = [];
+    const inicio = performance.now();
+    const caballo = document.querySelector<HTMLElement>('[data-caballo="H"]')!;
+    const paso = () => {
+      const m = new DOMMatrix(getComputedStyle(caballo).transform);
+      w.__fotos.push({
+        d: Math.hypot(m.m41, m.m42),
+        aviso: document.querySelector(".carrera-ganador") !== null,
+        premio: document.querySelector(".cartel-premio") !== null,
+        chispas: document.querySelectorAll(".destellos__chispa").length,
+      });
+      if (performance.now() - inicio < duracion) requestAnimationFrame(paso);
+    };
+    requestAnimationFrame(paso);
+  }, ms);
+}
+
+const fotos = (pagina: Page): Promise<Foto[]> => pagina.evaluate(() => (window as unknown as { __fotos: Foto[] }).__fotos);
 
 const muestras = (pagina: Page): Promise<Muestra[]> => pagina.evaluate(() => (window as unknown as { __muestras: Muestra[] }).__muestras);
 
@@ -433,17 +488,9 @@ test.describe("movimiento de la pista (mesa simulada)", () => {
     await expect.poll(() => mesa.conexiones()).toBeGreaterThan(0);
     await page.waitForTimeout(500);
 
-    // Quien mira en cada instante en que cambia la pista: si algo se desliza o se gira en ese momento, es que se repite.
-    await page.evaluate(() => {
-      const w = window as unknown as { __repeticiones: { casilla: string; animaciones: number }[] };
-      w.__repeticiones = [];
-      const mirar = () => {
-        for (const el of document.querySelectorAll<HTMLElement>("[data-caballo], .carrera-tramo .naipe__giro")) {
-          w.__repeticiones.push({ casilla: el.dataset.casilla ?? "tramo", animaciones: el.getAnimations().length });
-        }
-      };
-      new MutationObserver(mirar).observe(document.querySelector(".carrera-mesa")!, { subtree: true, childList: true, attributes: true, attributeFilter: ["data-casilla"] });
-    });
+    // Quien mira en cada instante en que cambia la pista: si algo se mueve en ese momento (un caballo que se desliza, un tramo que
+    // se coloca o se gira, una carta que vuela, unos destellos), es que se repite.
+    await vigilarRepeticiones(page);
     // Se cae la conexión; al volver la mesa manda la foto de ahora, con varios pasos de más y sin eventos.
     mesa.alConectar(estado(carrera(pos(5, 4, 4, 3), ["5H", "6D", "7C"], { ultimaCarta: c("KS") })));
     await mesa.cerrar(1001);
@@ -451,9 +498,9 @@ test.describe("movimiento de la pista (mesa simulada)", () => {
     await expect(caballo(page, "S")).toHaveAttribute("data-casilla", "3");
     await expect(page.getByRole("img", { name: "7 de tréboles" })).toBeVisible();
     await expect(page.locator(".carrera-linea--encendida")).toHaveCount(3);
-    const repeticiones = await page.evaluate(() => (window as unknown as { __repeticiones: { casilla: string; animaciones: number }[] }).__repeticiones);
+    const repeticiones = await repeticionesVistas(page);
     expect(repeticiones.some((r) => r.casilla === "5")).toBe(true);
-    expect(repeticiones.filter((r) => r.animaciones > 0)).toEqual([]);
+    expect(repeticiones.flatMap((r) => r.animaciones)).toEqual([]);
     // Y ya en su sitio: el caballo está justo en su casilla, no de camino.
     const casilla = await paso(page);
     expect(await recorrido(page, "H")).toBeCloseTo(5 * casilla, 0);
@@ -505,6 +552,15 @@ test.describe("movimiento de la pista (mesa simulada)", () => {
     await expect(caballo(page, "H")).toHaveAttribute("data-casilla", "8");
     await expect(premio(page)).toHaveText("¡Ganas +150!");
     await expect(page.getByText("Ganas 150", { exact: true })).toBeVisible();
+    // La cuenta va pegada a su frase («Nueva carrera en 0:04») y el resultado al final de la línea, nunca entre las dos.
+    const fila = page.locator(".estado-mesa__fila");
+    const piezas = fila.locator(":scope > *");
+    expect(await piezas.allInnerTexts()).toEqual(["Nueva carrera en", expect.stringMatching(/^\d:\d\d$/), "Ganas 150"]);
+    const [frase, cuenta, detalle] = await Promise.all([0, 1, 2].map((i) => piezas.nth(i).boundingBox()));
+    expect(cuenta!.x - (frase!.x + frase!.width)).toBeLessThan(20);
+    expect(detalle!.x).toBeGreaterThan(cuenta!.x + cuenta!.width);
+    // El cartel del premio lleva su sombra detrás: las líneas de la pista no lo tachan.
+    expect(await page.locator(".cartel-premio__texto").evaluate((el) => getComputedStyle(el, "::before").backgroundImage)).toContain("radial-gradient");
     await expect(page.locator(".fichas-volando")).toBeAttached();
     await expect(contador(page)).toHaveText("Tienes 1.150 fichas");
     // El cartel se va solo, pero el aviso del ganador se queda hasta la carrera siguiente.
@@ -667,5 +723,148 @@ test.describe("movimiento de la pista (mesa simulada)", () => {
     await expect(premio(page)).toBeVisible();
     expect(await page.evaluate(() => (window as unknown as { __vibraciones: number[] }).__vibraciones)).toEqual([80]);
     expect((await osciladores()) - inicio).toBeGreaterThan(8);
+  });
+
+  test("al volver la conexión con la carrera ya liquidada tras haber festejado otra, no hay destellos ni se vuelven a colocar los tramos", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrar(page, request);
+    const yo = sesion.jugador.id;
+    await fichasDe(page, 950);
+    const enMarcha = vista(sesion, { fase: "carrera", posiciones: pos(7, 3, 2, 4), tramos: tramos("5H", "6D", "7C", "8S"), ultimaCarta: c("2D"), misApuestas: [{ caballo: "H", cantidad: 50 }] });
+    mesa.alConectar(estado(enMarcha));
+    await page.goto(`/p/${codigo}/carrera`);
+    await expect(caballo(page, "H")).toHaveAttribute("data-casilla", "7");
+    // Se festeja una carrera en esta pantalla (destellos del ganador)…
+    mesa.enviar(
+      estado({ ...enMarcha, fase: "resultado", finFase: Date.now() + 5_000, posiciones: pos(8, 3, 2, 4), ultimaCarta: c("9H"), ganador: "H" }, [
+        { tipo: "caballo_avanza", palo: "H", carta: c("9H") },
+        { tipo: "ganador", palo: "H" },
+        { tipo: "pago", jugadorId: yo, neto: 150 },
+      ]),
+    );
+    await expect(premio(page)).toBeVisible();
+    // …y empieza la siguiente.
+    mesa.enviar(estado(vista(sesion, { ronda: 2 })));
+    await expect(page.getByText("Elige un caballo y apuesta")).toBeVisible();
+    await expect(page.locator(".destellos__chispa")).toHaveCount(0, { timeout: 5_000 });
+    await expect(premio(page)).toBeHidden({ timeout: 5_000 });
+    await expect.poll(() => page.locator(".carrera-tramo").evaluateAll((els) => els.flatMap((el) => el.getAnimations().map((a) => a.playState)).filter((p) => p === "running").length), { timeout: 5_000 }).toBe(0);
+    await vigilarRepeticiones(page);
+
+    // Se cae la conexión y la carrera (la de la ronda 2) acaba mientras tanto: al volver, la mesa manda la foto del resultado, sin eventos.
+    mesa.alConectar(
+      estado(vista(sesion, { ronda: 2, fase: "resultado", finFase: Date.now() + 4_000, posiciones: pos(3, 8, 2, 4), ganador: "D", ultimaCarta: c("JD"), tramos: tramos("5H", "6D", "7C", "8S", "9H", "4D", "3C") })),
+    );
+    await mesa.cerrar(1001);
+    await expect(ganadorDe(page, "diamantes")).toBeVisible({ timeout: 15_000 });
+    await expect(caballo(page, "D")).toHaveAttribute("data-casilla", "8");
+    await expect(page.getByRole("img", { name: "3 de tréboles" })).toBeVisible();
+    // Esperar a que se asiente por si algo arranca un poco después del cambio.
+    await page.waitForTimeout(800);
+    const repeticiones = await repeticionesVistas(page);
+    expect(repeticiones.length).toBeGreaterThan(0);
+    expect(repeticiones.flatMap((r) => r.animaciones)).toEqual([]);
+    expect(await page.locator(".destellos__chispa").count()).toBe(0);
+  });
+
+  test("un mensaje sin ningún paso nuevo (alguien se sienta) a mitad de un paso con giro no corta el avance ni adelanta el giro", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrar(page, request);
+    const antes = vista(sesion, { fase: "carrera", posiciones: pos(0, 1, 1, 1), misApuestas: [{ caballo: "H", cantidad: 50 }], finFase: Date.now() + 800 });
+    mesa.alConectar(estado(antes));
+    await page.goto(`/p/${codigo}/carrera`);
+    await expect(caballo(page, "H")).toHaveAttribute("data-casilla", "0");
+    await pistaQuieta(page);
+    const casilla = await paso(page);
+
+    await mirar(page, 1500);
+    const despues = { ...antes, posiciones: pos(0, 1, 1, 1), tramos: tramos("5H"), ultimaCarta: c("4H") };
+    mesa.enviar(estado(despues, [{ tipo: "caballo_avanza", palo: "H", carta: c("4H") }, { tipo: "tramo_girado", indice: 0, palo: "H" }]));
+    // Cien milisegundos después, otro jugador se sienta: la mesa manda la foto de siempre, sin eventos.
+    await page.waitForTimeout(100);
+    mesa.enviar(estado({ ...despues, sentados: [sesion.jugador.apodo, "Otro"] }));
+    await expect(page.getByRole("img", { name: "5 de corazones" })).toBeVisible();
+    await page.waitForTimeout(1300);
+    const frames = await muestras(page);
+
+    // El caballo llega de verdad a la casilla 1 antes de volver, y el tramo se gira después de empezar a avanzar y antes de volver.
+    const maximo = Math.max(...frames.map((m) => m.d.H));
+    expect(maximo).toBeGreaterThan(0.9 * casilla);
+    const iMax = frames.findIndex((m) => m.d.H >= maximo - 0.5);
+    const iGiro = frames.findIndex((m) => m.tramo === "5 de corazones");
+    const iVuelta = frames.findIndex((m, i) => i > iMax && m.d.H < maximo - 2);
+    expect(iGiro).toBeGreaterThan(0);
+    expect(frames[iGiro].d.H).toBeGreaterThan(0.2 * casilla);
+    expect(iVuelta).toBeGreaterThan(iGiro);
+    expect(frames.at(-1)?.d.H).toBeCloseTo(0, 0);
+    // Sin tirones: nunca baja antes del máximo.
+    for (let i = 1; i <= iMax; i++) expect(frames[i].d.H).toBeGreaterThanOrEqual(frames[i - 1].d.H - 0.5);
+  });
+
+  test("un mensaje sin ningún paso nuevo durante el último paso no adelanta el aviso del ganador, el premio ni los destellos a la llegada a la meta", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrar(page, request);
+    const yo = sesion.jugador.id;
+    await fichasDe(page, 950);
+    const enMarcha = vista(sesion, { fase: "carrera", finFase: Date.now() + 800, posiciones: pos(7, 3, 2, 4), tramos: tramos("5H", "6D", "7C", "8S"), ultimaCarta: c("2D"), misApuestas: [{ caballo: "H", cantidad: 50 }] });
+    mesa.alConectar(estado(enMarcha));
+    await page.goto(`/p/${codigo}/carrera`);
+    await expect(caballo(page, "H")).toHaveAttribute("data-casilla", "7");
+    await page.waitForLoadState("networkidle");
+    await pistaQuieta(page);
+    const casilla = await paso(page);
+
+    await mirarGanador(page, 3000);
+    const final = { ...enMarcha, fase: "resultado" as const, finFase: Date.now() + 5_000, posiciones: pos(8, 3, 2, 4), ultimaCarta: c("9H"), ganador: "H" as const };
+    mesa.enviar(
+      estado(final, [
+        { tipo: "caballo_avanza", palo: "H", carta: c("9H") },
+        { tipo: "ganador", palo: "H" },
+        { tipo: "pago", jugadorId: yo, neto: 150 },
+      ]),
+    );
+    // Mientras el caballo aún corre hacia la meta, un jugador se sienta y otro vuelve a conectar: la mesa manda la foto sin eventos.
+    await page.waitForTimeout(100);
+    mesa.enviar(estado({ ...final, sentados: [sesion.jugador.apodo, "Otro"] }));
+    await page.waitForTimeout(60);
+    mesa.enviar(estado({ ...final, sentados: [sesion.jugador.apodo, "Otro", "Otra"] }));
+    await expect(premio(page)).toBeVisible();
+    await page.waitForTimeout(1500);
+    const lista = await fotos(page);
+
+    // Hasta que el caballo no ha llegado a la meta, no hay aviso, ni cartel, ni destellos…
+    const llegada = 8 * casilla;
+    const adelantadas = lista.filter((f) => (f.aviso || f.premio || f.chispas > 0) && f.d < llegada - 1);
+    expect(adelantadas).toEqual([]);
+    // …y después sí los hay (el aviso y el cartel no se pierden por el camino).
+    expect(lista.some((f) => f.aviso && f.d >= llegada - 1)).toBe(true);
+    expect(lista.some((f) => f.premio && f.d >= llegada - 1)).toBe(true);
+    await expect(contador(page)).toHaveText("Tienes 950 fichas");
+  });
+
+  test("con movimiento reducido, ganar sale con fundidos: sin fichas volando ni destellos, y el halo del ganador no late", async ({ page, request }) => {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    const { sesion, codigo, mesa } = await entrar(page, request);
+    const yo = sesion.jugador.id;
+    await fichasDe(page, 950);
+    const enMarcha = vista(sesion, { fase: "carrera", posiciones: pos(7, 3, 2, 4), tramos: tramos("5H", "6D", "7C", "8S"), ultimaCarta: c("2D"), misApuestas: [{ caballo: "H", cantidad: 50 }] });
+    mesa.alConectar(estado(enMarcha));
+    await page.goto(`/p/${codigo}/carrera`);
+    await expect(caballo(page, "H")).toHaveAttribute("data-casilla", "7");
+    mesa.enviar(
+      estado({ ...enMarcha, fase: "resultado", finFase: Date.now() + 5_000, posiciones: pos(8, 3, 2, 4), ultimaCarta: c("9H"), ganador: "H" }, [
+        { tipo: "caballo_avanza", palo: "H", carta: c("9H") },
+        { tipo: "ganador", palo: "H" },
+        { tipo: "pago", jugadorId: yo, neto: 150 },
+      ]),
+    );
+    // El aviso y el cartel salen igual (con un fundido); lo demás, quieto.
+    await expect(ganadorDe(page, "corazones")).toBeVisible();
+    await expect(premio(page)).toHaveText("¡Ganas +150!");
+    await expect(page.getByText("Ganas 150", { exact: true })).toBeVisible();
+    await page.waitForTimeout(400);
+    expect(await page.locator(".fichas-volando").count()).toBe(0);
+    expect(await page.locator(".destellos__chispa").count()).toBe(0);
+    await expect(caballo(page, "H")).toHaveClass(/carrera-caballo--ganador/);
+    expect(await page.locator('[data-caballo="H"] .carrera-caballo__brillo').evaluate((el) => getComputedStyle(el).animationName)).toBe("none");
+    expect(await page.locator("[data-caballo]").evaluateAll((els) => els.flatMap((el) => el.getAnimations().map((a) => a.constructor.name)))).toEqual([]);
+    await expect(contador(page)).toHaveText("Tienes 950 fichas");
   });
 });

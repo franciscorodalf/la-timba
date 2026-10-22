@@ -15,6 +15,9 @@ import type { VistaCarrera } from "../../src/shared/juegos/carrera";
 const c = (texto: string): Carta => ({ palo: texto.at(-1) as Palo, valor: texto.slice(0, -1) as Carta["valor"] });
 const pos = (H: number, D: number, C: number, S: number): Record<Palo, number> => ({ H, D, C, S });
 
+/** Las siete cartas de los tramos, todas giradas (`n` = cuántas se ven). */
+const tramosDe = (n: number): VistaCarrera["tramos"] => Array.from({ length: 7 }, (_, i) => (i < n ? c("5H") : null));
+
 function vista(resto: Partial<VistaCarrera> = {}): VistaCarrera {
   return {
     ronda: 4,
@@ -34,7 +37,7 @@ function vista(resto: Partial<VistaCarrera> = {}): VistaCarrera {
 describe("escenaDeVista", () => {
   it("la foto de una vista: casillas, tramos girados, última carta y ganador; sin pagos ni festejo", () => {
     const e = escenaDeVista(vista({ posiciones: pos(3, 2, 4, 1), tramos: [c("5H"), c("KD"), null, null, null, null, null], ultimaCarta: c("2S"), ganador: null }));
-    expect(e).toMatchObject({ ronda: 4, posiciones: pos(3, 2, 4, 1), girados: 2, ganador: null, festejo: 0, pagos: null, epoca: 0, origen: null });
+    expect(e).toMatchObject({ ronda: 4, posiciones: pos(3, 2, 4, 1), girados: 2, ganador: null, festejo: 0, festejoDe: null, reparto: true, pagos: null, epoca: 0, origen: null });
     expect(e.cartas).toEqual([{ id: e.n, carta: c("2S") }]);
   });
 
@@ -157,6 +160,7 @@ describe("planDeLote", () => {
     const iGanador = pasos.findIndex((p) => p.ganador === "D");
     expect(plan.marcos[iGanador].en).toBe(GANADOR_MS);
     expect(pasos[iGanador].festejo).toBe(previa.festejo + 1);
+    expect(pasos[iGanador].festejoDe).toBe("D");
     expect(pasos[iGanador].pagos).toBeNull();
     const iPagos = pasos.findIndex((p) => p.pagos !== null);
     expect(iPagos).toBeGreaterThan(iGanador);
@@ -182,6 +186,20 @@ describe("planDeLote", () => {
     expect(plan.sonidos).toEqual([]);
   });
 
+  it("al volver de una desconexión no se vuelven a colocar los tramos ni hay destellos aunque se hubiera festejado otra carrera", () => {
+    // Antes de caerse la conexión se había festejado una victoria (el contador sigue en la escena).
+    const previa = { ...escenaDeVista(vista({ fase: "apuestas", ronda: 6 })), festejo: 3, festejoDe: "H" as const, reparto: false };
+    const v = vista({ fase: "resultado", ronda: 6, posiciones: pos(3, 8, 2, 4), ganador: "D", ultimaCarta: c("JD"), tramos: tramosDe(7) });
+    const plan = planDeLote(previa, [], v);
+    expect(plan.marcos).toHaveLength(1);
+    const e = aplicarMarco(previa, plan.marcos[0]);
+    // Ya con el ganador a la vista, pero sin nadie a quien festejar: los destellos solo salen en el instante de ganar.
+    expect(e.ganador).toBe("D");
+    expect(e.festejoDe).toBeNull();
+    expect(e.festejo).toBe(3);
+    expect(e.reparto).toBe(false);
+  });
+
   it("un lote sin carrera ni cambios (otro jugador apuesta) no toca la escena", () => {
     const previa = escenaDeVista(vista({ fase: "apuestas", posiciones: pos(0, 0, 0, 0) }));
     expect(planDeLote(previa, [], vista({ fase: "apuestas", totalesPorCaballo: pos(50, 0, 0, 0) })).marcos).toEqual([]);
@@ -193,7 +211,7 @@ describe("planDeLote", () => {
     expect(plan.marcos).toHaveLength(1);
     expect(plan.marcos[0].salto).toBeFalsy();
     const e = aplicarMarco(previa, plan.marcos[0]);
-    expect(e).toMatchObject({ ronda: 5, posiciones: pos(0, 0, 0, 0), girados: 0, cartas: [], ganador: null, pagos: null, epoca: previa.epoca });
+    expect(e).toMatchObject({ ronda: 5, posiciones: pos(0, 0, 0, 0), girados: 0, cartas: [], ganador: null, festejoDe: null, reparto: true, pagos: null, epoca: previa.epoca });
   });
 
   it("si lo que se animó no cuadra con la vista (se perdió un paso), al final las casillas son las de la vista", () => {

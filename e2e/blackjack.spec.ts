@@ -2,7 +2,7 @@ import { type Browser, type BrowserContext, expect, type Locator, type Page, tes
 import type { RespuestaSesion } from "../src/shared/api";
 import type { Carta } from "../src/shared/cartas";
 import type { VistaBJ } from "../src/shared/juegos/blackjack";
-import { abrirPartida, apodoUnico, carta, conSesion, entrarSimulada as baseEntrarSimulada, mensajeEstado, registrar } from "./ayudas";
+import { abrirPartida, apodoUnico, carta, conSesion, entrarSimulada as baseEntrarSimulada, fichasDeApi, mensajeEstado, registrar } from "./ayudas";
 
 // La mesa anima sin parar (la barra del temporizador se vacía durante 15 s): las capturas continuas de la traza, con
 // varios trabajadores en paralelo, saturan la máquina y retrasan los clics más que la ventana de decisiones. La traza se
@@ -133,10 +133,7 @@ test.describe("mesa simulada", () => {
 
   test("las fichas que no puedes pagar no se pueden pulsar", async ({ page, request }) => {
     const { sesion, codigo, mesa } = await entrarSimulada(page, request);
-    await page.route("**/api/yo", async (ruta) => {
-      const respuesta = await ruta.fetch();
-      await ruta.fulfill({ response: respuesta, json: { ...(await respuesta.json()), fichas: 60 } });
-    });
+    await fichasDeApi(page, 60);
     mesa.alConectar(estado(vista(sesion)));
     await page.goto(`/p/${codigo}/blackjack`);
 
@@ -196,13 +193,7 @@ test.describe("mesa simulada", () => {
   test("reparto, giro de la tapada y premio: «¡Ganas +50!», el resultado y el contador al día", async ({ page, request }) => {
     const { sesion, codigo, mesa } = await entrarSimulada(page, request);
     const yo = sesion.jugador.id;
-    let fichas = 950;
-    await page.route("**/api/yo", async (ruta) => {
-      // Las fichas de cuando se pide, no de cuando contesta el servidor: una petición en vuelo no ve el cambio siguiente.
-      const valor = fichas;
-      const respuesta = await ruta.fetch();
-      await ruta.fulfill({ response: respuesta, json: { ...(await respuesta.json()), fichas: valor } });
-    });
+    const fichas = await fichasDeApi(page, 950);
     const mano = (cartas: Carta[], total: number, estadoMano: VistaBJ["manos"][number]["estado"] = "jugando") => ({
       jugadorId: yo,
       apodo: sesion.jugador.apodo,
@@ -234,7 +225,7 @@ test.describe("mesa simulada", () => {
     await expect.poll(() => mesa.recibidas).toContainEqual({ t: "plantarse" });
 
     // La banca gira 10 de diamantes (16), pide un 9 y se pasa: gana el jugador.
-    fichas = 1050;
+    fichas.poner(1050);
     mesa.enviar(
       estado(
         vista(sesion, {
@@ -255,6 +246,11 @@ test.describe("mesa simulada", () => {
     await expect(page.getByText("¡Ganas +50!")).toBeVisible();
     await expect(resultado(page)).toHaveText("Ganas 50");
     await expect(contador(page)).toHaveText("Tienes 1.050 fichas");
+    // La cuenta atrás va pegada a su frase («Nueva ronda en 0:04»), no al otro extremo de la línea.
+    const piezas = page.locator(".estado-mesa__fila > *");
+    expect(await piezas.allInnerTexts()).toEqual(["Nueva ronda en", expect.stringMatching(/^\d:\d\d$/)]);
+    const [frase, cuenta] = await Promise.all([0, 1].map((i) => piezas.nth(i).boundingBox()));
+    expect(cuenta!.x - (frase!.x + frase!.width)).toBeLessThan(20);
   });
 
   test("«← Sala» con apuesta en juego pide confirmación y manda salir; sin apuesta sale sin preguntar", async ({ page, request }) => {
@@ -294,13 +290,7 @@ test.describe("mesa simulada", () => {
 
   test("el contador se pone al día al reconectar con la ronda ya liquidada (sin evento de pago) y al cambiar de ronda", async ({ page, request }) => {
     const { sesion, codigo, mesa } = await entrarSimulada(page, request);
-    let fichas = 950;
-    await page.route("**/api/yo", async (ruta) => {
-      // Las fichas de cuando se pide, no de cuando contesta el servidor: una petición en vuelo no ve el cambio siguiente.
-      const valor = fichas;
-      const respuesta = await ruta.fetch();
-      await ruta.fulfill({ response: respuesta, json: { ...(await respuesta.json()), fichas: valor } });
-    });
+    const fichas = await fichasDeApi(page, 950);
     const mano = { jugadorId: sesion.jugador.id, apodo: sesion.jugador.apodo, apuesta: 50, cartas: [c("10H"), c("9C")], estado: "plantado" as const, doblada: false, total: 19 };
     mesa.alConectar(estado(vista(sesion, { fase: "banca", finFase: Date.now() + 1_000, banca: [c("6S"), null], totalBanca: 6, manos: [mano] })));
     await page.goto(`/p/${codigo}/blackjack`);
@@ -308,7 +298,7 @@ test.describe("mesa simulada", () => {
     await page.waitForLoadState("networkidle");
 
     // La ronda se paga con la conexión caída: al volver, la mesa manda la foto ya en «resultado», sin eventos.
-    fichas = 1050;
+    fichas.poner(1050);
     mesa.alConectar(
       estado(vista(sesion, { fase: "resultado", finFase: Date.now() + 4_000, banca: [c("6S"), c("KD"), c("9C")], totalBanca: 25, manos: [mano] })),
     );
@@ -316,7 +306,7 @@ test.describe("mesa simulada", () => {
     await expect(contador(page)).toHaveText("Tienes 1.050 fichas", { timeout: 15_000 });
 
     // Un pago que llega tarde (reintento de la liquidación) no trae evento: la ronda siguiente vuelve a leer las fichas.
-    fichas = 1100;
+    fichas.poner(1100);
     mesa.enviar(estado(vista(sesion, { ronda: 2 })));
     await expect(contador(page)).toHaveText("Tienes 1.100 fichas");
   });

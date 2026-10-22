@@ -1,46 +1,41 @@
 import { AnimatePresence, motion } from "motion/react";
 import { type CSSProperties, type ReactNode, useEffect, useRef, useState } from "react";
-import { useLocation } from "wouter";
 import { type AccionBJ, BJ, type VistaBJ } from "../../shared/juegos/blackjack";
 import type { JugadorId } from "../../shared/juegos/tipos";
 import { AvisoMesa } from "../componentes/AvisoMesa";
 import { BarraMesa } from "../componentes/BarraMesa";
-import { Confirmar } from "../componentes/Confirmar";
 import { CartelPremio } from "../componentes/CartelPremio";
 import { EstadoMesa } from "../componentes/EstadoMesa";
 import { Ficha } from "../componentes/Ficha";
 import { FichasVolando } from "../componentes/FichasVolando";
 import { Mazo } from "../componentes/Mazo";
-import { cargarBaraja } from "../componentes/Naipe";
+import { usePrecargarBaraja } from "../componentes/Naipe";
 import { Reconectando } from "../componentes/Reconectando";
 import { Neto, Resultado } from "../componentes/Resultado";
 import { SinMesa, useSinMesa } from "../componentes/SinMesa";
 import { useMovimientoReducido } from "../efectos/movimiento";
-import { sonidos } from "../efectos/sonidos";
+import { useBarajando } from "../efectos/useBarajando";
 import { useDespues } from "../efectos/useDespues";
+import { usePremio } from "../efectos/usePremio";
 import { vibrar } from "../efectos/vibrar";
-import { useAltoVentana, useAnchoVentana } from "../efectos/ventana";
+import { sonidos } from "../efectos/sonidos";
+import { ORDENADOR_PX, useAltoVentana, useAnchoVentana } from "../efectos/ventana";
 import { cuentaAtras, miles } from "../formato";
 import { useAhoraServidor } from "../red/reloj";
 import { useSesion } from "../red/sesion";
+import { useEnvioUnico } from "../red/useEnvioUnico";
 import { useFichasAlDia } from "../red/useFichasAlDia";
 import { useMesa } from "../red/useMesa";
+import { useSalirDeMesa } from "../red/useSalirDeMesa";
+import { useSentado } from "../red/useSentado";
 import { MesaLlena } from "./MesaLlena";
 import { Apostar, Decidir, textoEstado } from "./blackjack/controles";
 import { claveCarta, totalVisible } from "./blackjack/guion";
 import { Apuesta, Leyenda, Mano, type ManoVista, SimboloMano, Total, tonoDe } from "./blackjack/piezas";
 import { aterrizada, girada, restante, useGuion } from "./blackjack/useGuion";
 
-/** A partir de este ancho, la mesa entera con los asientos en semicírculo; por debajo, la vista de móvil. */
-const ORDENADOR_PX = 900;
 /** Respiro entre la última carta de la ronda y el cartel del premio. */
 const PAUSA_PREMIO_MS = 250;
-/** Lo que se queda el cartel «¡Ganas +N!». */
-const CARTEL_MS = 2_000;
-/** Las fichas que vuelan tardan esto en empezar a llegar al contador: entonces empieza a contar. */
-const LLEGADA_FICHAS_MS = 450;
-/** Lo que dura el aviso «Barajando». */
-const BARAJADO_MS = 1_600;
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Medidas
@@ -85,7 +80,6 @@ interface Otro {
 export function MesaBlackjack({ codigo }: { codigo: string }) {
   const { jugador, refrescar } = useSesion();
   const { vista, lote, enviar, error, conectado } = useMesa<VistaBJ, AccionBJ>("mesa-blackjack", codigo);
-  const [, navegar] = useLocation();
   const medidas = useMedidas();
   const reducido = useMovimientoReducido();
 
@@ -95,18 +89,13 @@ export function MesaBlackjack({ codigo }: { codigo: string }) {
   const reloj = useGuion(lote, vista, mazo);
 
   const [resultados, setResultados] = useState<Resultados | null>(null);
-  const [premio, setPremio] = useState<{ neto: number; id: number } | null>(null);
-  const [barajando, setBarajando] = useState(false);
-  const [confirmando, setConfirmando] = useState(false);
-  const premios = useRef(0);
+  const { premio, celebrar } = usePremio();
+  const barajando = useBarajando(lote);
 
   // Temporizadores que no deben cortarse al llegar otro mensaje (el premio de esta ronda).
   const despues = useDespues();
 
-  // Las caras de las cartas se piden al entrar, para tenerlas antes del primer reparto.
-  useEffect(() => {
-    cargarBaraja().catch(() => {});
-  }, []);
+  usePrecargarBaraja();
 
   // Las fichas se vuelven a leer al (re)conectar y al empezar cada ronda, aunque el pago no traiga evento.
   useFichasAlDia(conectado, vista?.ronda);
@@ -127,10 +116,6 @@ export function MesaBlackjack({ codigo }: { codigo: string }) {
   // Lo que trae cada lote además de cartas: barajado y pagos. El premio se enseña cuando ya se ha visto la última carta.
   useEffect(() => {
     if (vista === null) return;
-    if (lote.some((e) => e.tipo === "barajado")) {
-      setBarajando(true);
-      despues(BARAJADO_MS, () => setBarajando(false));
-    }
     const pagos = lote.filter((e) => e.tipo === "pago").map((e) => ({ jugadorId: e.jugadorId as JugadorId, neto: e.neto as number }));
     if (pagos.length === 0) return;
     const ronda = vista.ronda;
@@ -141,53 +126,32 @@ export function MesaBlackjack({ codigo }: { codigo: string }) {
     despues(espera, () => {
       setResultados({ ronda, netos: new Map(pagos.map((p) => [p.jugadorId, p.neto])) });
       if (mio === undefined) return;
-      if (mio.neto > 0) {
-        premios.current += 1;
-        setPremio({ neto: mio.neto, id: premios.current });
-        sonidos.reproducir("victoria");
-        vibrar(80);
-        despues(CARTEL_MS, () => setPremio(null));
-        despues(LLEGADA_FICHAS_MS, () => void refrescar());
-      } else {
-        if (mio.neto < 0 && pasado) vibrar(200);
-        void refrescar();
-      }
+      if (mio.neto < 0 && pasado) vibrar(200);
+      celebrar(mio.neto);
     });
     // Solo al llegar un lote nuevo: la vista y el resto son los de ese momento.
   }, [lote]);
 
-  // Tras una acción tuya, los botones esperan a que cambie TU mano (cartas, estado o apuesta, en esta ronda): las novedades
-  // de otros jugadores no los reactivan, así que un doble toque no pide dos cartas. También se liberan con un error de la
-  // mesa (la acción no se hizo) y al caerse o volver la conexión (la respuesta pudo perderse).
+  // Tras una acción tuya, los botones esperan a que cambie TU mano (cartas, estado o apuesta, en esta ronda).
   const firmaMano = vista === null ? null : `${vista.ronda}:${miMano === undefined ? "-" : `${miMano.cartas.length}:${miMano.estado}:${miMano.apuesta}`}`;
-  const [enviadoCon, setEnviadoCon] = useState<string | null>(null);
-  useEffect(() => {
-    if (error !== null) setEnviadoCon(null);
-  }, [error]);
-  useEffect(() => {
-    setEnviadoCon(null);
-  }, [conectado]);
-  const esperando = enviadoCon !== null && enviadoCon === firmaMano;
+  const { esperando, marcarEnviado } = useEnvioUnico(firmaMano, error, conectado);
   const actuar = (accion: AccionBJ) => {
     enviar(accion);
-    setEnviadoCon(firmaMano);
+    marcarEnviado();
   };
 
   const apuestaEnJuego = miMano !== undefined && vista?.fase !== "resultado";
-  const salirDeLaMesa = () => {
-    enviar({ t: "salir" });
-    navegar(`~/p/${codigo}`);
-  };
+  const salida = useSalirDeMesa({ codigo, enviar, apuestaEnJuego });
 
   const ahora = useAhoraServidor(vista !== null && vista.finFase !== null && vista.fase !== "banca");
 
   const sinMesa = useSinMesa(vista !== null);
+  const sentado = useSentado(vista?.sentados);
 
   if (error === "mesa_llena") return <MesaLlena codigo={codigo} juego="blackjack" jugadores={BJ.MAX_JUGADORES} />;
 
   const ronda = vista?.ronda ?? 0;
   const yoApodo = jugador?.apodo.toLowerCase();
-  const sentado = vista?.sentados.some((a) => a.toLowerCase() === yoApodo) ?? false;
   const netos = resultados !== null && resultados.ronda === ronda ? resultados.netos : null;
   const miNeto =
     resultados !== null && yo !== null && (resultados.ronda === ronda || (resultados.ronda === ronda - 1 && miMano === undefined && (vista?.fase === "apuestas" || vista?.fase === "esperando")))
@@ -248,7 +212,7 @@ export function MesaBlackjack({ codigo }: { codigo: string }) {
   return (
     <main className={`marco-mesa bj${medidas.ordenador ? " bj--ordenador" : ""}${premio !== null ? " bj--premio" : ""}`}>
       <Reconectando conectado={conectado || vista === null} />
-      <BarraMesa titulo="Blackjack" onVolver={() => (apuestaEnJuego ? setConfirmando(true) : salirDeLaMesa())} refFichas={refFichas} />
+      <BarraMesa titulo="Blackjack" onVolver={salida.alVolver} refFichas={refFichas} />
 
       <div className="bj-mesa aparece">
         <section className="bj-banca" aria-label="Banca">
@@ -343,16 +307,7 @@ export function MesaBlackjack({ codigo }: { codigo: string }) {
       <FichasVolando disparo={premio?.id ?? 0} desde={refApuesta} hasta={refFichas} />
       <AvisoMesa error={error} />
 
-      {confirmando && (
-        <Confirmar
-          titulo="¿Salir de la mesa?"
-          texto="Si sales ahora pierdes tu apuesta"
-          aceptar="Salir"
-          cancelar="Seguir jugando"
-          onAceptar={salirDeLaMesa}
-          onCancelar={() => setConfirmando(false)}
-        />
-      )}
+      {salida.dialogo}
     </main>
   );
 }

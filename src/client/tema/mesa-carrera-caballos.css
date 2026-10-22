@@ -1,0 +1,262 @@
+/* Mesa de la carrera (2 de 4): los caballos, los destellos del ganador, los tramos y el mazo con la última carta. */
+
+/* ---------- Caballos ---------- */
+
+.carrera-caballo {
+  position: absolute;
+  left: 50%;
+  bottom: var(--salida);
+  width: var(--cab-ancho);
+  height: var(--cab-alto);
+  margin-left: calc(var(--cab-ancho) / -2);
+  transform: translateY(calc(var(--casilla) * var(--paso) * -1));
+  transition:
+    transform var(--avance) cubic-bezier(0.25, 0.85, 0.3, 1),
+    opacity 0.4s;
+  will-change: transform;
+}
+
+/* Al retroceder (tras girarse un tramo) el caballo vuelve despacio y sin rebote: se nota que va hacia atrás. */
+.carrera-caballo--atras {
+  transition:
+    transform var(--retroceso) cubic-bezier(0.45, 0, 0.3, 1),
+    opacity 0.4s;
+}
+
+/* Una pista nueva: todos vuelven a la salida de una vez, sin prisa. */
+.carrera-caballo--regreso {
+  transition:
+    transform 0.8s cubic-bezier(0.5, 0, 0.2, 1),
+    opacity 0.4s;
+}
+
+/* Cambiar el tamaño de la ventana recoloca los caballos de golpe, no los desliza. */
+.carrera-mesa--ajustando .carrera-caballo {
+  transition: none;
+}
+
+/* Los que no han ganado se oscurecen (una capa que se funde): la carta sigue opaca. */
+.carrera-caballo__sombra {
+  position: absolute;
+  inset: 0;
+  border-radius: calc(var(--cab-ancho) * 0.055);
+  background: #04200f;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.45s;
+}
+
+.carrera-caballo--atenuado .carrera-caballo__sombra {
+  opacity: 0.4;
+}
+
+/* …y un poco más pequeños, para que destaque el ganador. */
+.carrera-caballo .naipe {
+  transition: transform 0.45s var(--curva);
+}
+
+.carrera-caballo--atenuado .naipe {
+  transform: scale(0.94);
+}
+
+.carrera-caballo--ganador {
+  z-index: 3;
+}
+
+.carrera-caballo__salto {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+/* La estela de un avance: una franja dorada detrás del caballo que se estira y se apaga. */
+.carrera-caballo__estela {
+  position: absolute;
+  left: 14%;
+  right: 14%;
+  top: 92%;
+  height: 78%;
+  border-radius: 0 0 40% 40%;
+  background: linear-gradient(180deg, rgba(245, 215, 110, 0.55), rgba(245, 215, 110, 0));
+  transform-origin: 50% 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Un halo del tamaño de la carta: rojo un instante al retroceder; dorado, y se queda, en el ganador. */
+.carrera-caballo__aura,
+.carrera-caballo__brillo {
+  position: absolute;
+  inset: 0;
+  border-radius: calc(var(--cab-ancho) * 0.06);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.carrera-caballo__aura {
+  box-shadow:
+    0 0 0 3px rgba(255, 82, 104, 0.95),
+    0 0 20px 8px rgba(255, 60, 86, 0.85);
+}
+
+.carrera-caballo__brillo {
+  box-shadow:
+    0 0 0 2px rgba(245, 215, 110, 0.95),
+    0 0 26px 10px rgba(212, 175, 55, 0.7);
+  transition: opacity 0.4s;
+}
+
+.carrera-caballo--ganador .carrera-caballo__brillo {
+  opacity: 1;
+  animation: carrera-latido 1.1s ease-in-out infinite alternate;
+}
+
+@keyframes carrera-latido {
+  from {
+    opacity: 0.55;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* El punto de donde salen los destellos: el centro del ganador en la meta, en el carril de cada caballo. */
+.carrera-festejos {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  pointer-events: none;
+}
+
+.carrera-festejo {
+  position: relative;
+}
+
+.carrera-festejo .destellos {
+  top: calc(var(--meta) + var(--cab-largo) / 2);
+}
+
+/* ---------- Tramos ---------- */
+
+.carrera-franja {
+  grid-area: franja;
+  position: relative;
+}
+
+.carrera-franja__tramos {
+  position: absolute;
+  inset: 0;
+}
+
+/* Cada tramo cuelga de la línea de su casilla; los de más abajo van encima, para que se vea la esquina de cada carta. */
+.carrera-tramo {
+  position: absolute;
+  left: 50%;
+  bottom: calc(var(--salida) + var(--cab-largo) + var(--k) * var(--paso) - var(--tramo-alto) / 2);
+  width: var(--tramo-ancho);
+  margin-left: calc(var(--tramo-ancho) / -2);
+}
+
+/* Los tramos se colocan de uno en uno al verse la pista por primera vez y en cada pista nueva; al volver de una desconexión aparecen ya puestos. */
+.carrera-franja__tramos--reparto .carrera-tramo {
+  animation: carrera-tramo-entra 0.42s var(--curva) both;
+  animation-delay: calc(var(--i) * 55ms);
+}
+
+@keyframes carrera-tramo-entra {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.carrera-tramo__brillo {
+  position: absolute;
+  inset: 0;
+  border-radius: calc(var(--tramo-ancho) * 0.06);
+  box-shadow:
+    0 0 0 2px rgba(245, 215, 110, 0.95),
+    0 0 20px 7px rgba(212, 175, 55, 0.75);
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* ---------- Mazo y última carta ---------- */
+
+.carrera-esquina {
+  grid-area: esquina;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+
+.carrera-esquina__mazo {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.carrera-esquina__barajando {
+  position: absolute;
+  top: 100%;
+  margin-top: 3px;
+  font-size: 0.5625rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--oro);
+  white-space: nowrap;
+}
+
+.carrera-ultima {
+  position: relative;
+  width: var(--ancho);
+  height: calc(var(--ancho) * 1.4);
+}
+
+.carrera-ultima__carta {
+  position: absolute;
+  inset: 0;
+  transform: rotate(2deg);
+  transition: transform 0.3s var(--curva);
+}
+
+.carrera-ultima__carta--vieja {
+  transform: translate(-4px, 3px) rotate(-8deg);
+}
+
+/* Movimiento reducido: los caballos saltan a su casilla; los tramos y las cartas solo se funden; sin halo que late. */
+@media (prefers-reduced-motion: reduce) {
+  .carrera-caballo,
+  .carrera-caballo--atras,
+  .carrera-caballo--regreso {
+    transition: opacity 0.3s;
+  }
+
+  .carrera-caballo .naipe {
+    transition: none;
+  }
+
+  .carrera-caballo--ganador .carrera-caballo__brillo {
+    animation: none;
+  }
+
+  .carrera-franja__tramos--reparto .carrera-tramo {
+    animation-name: carrera-aparece;
+    animation-duration: 0.3s;
+    animation-delay: 0ms;
+  }
+
+  .carrera-ultima__carta,
+  .carrera-ultima__carta--vieja {
+    transition: none;
+  }
+}

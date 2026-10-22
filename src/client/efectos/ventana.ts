@@ -1,5 +1,8 @@
 import { useSyncExternalStore } from "react";
 
+/** A partir de este ancho, las mesas usan su vista de ordenador (todo el tapete); por debajo, la vista de móvil. */
+export const ORDENADOR_PX = 900;
+
 function suscribir(avisar: () => void): () => void {
   window.addEventListener("resize", avisar);
   return () => window.removeEventListener("resize", avisar);

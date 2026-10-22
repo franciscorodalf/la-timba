@@ -27,6 +27,9 @@ import "./tema/aviso-mesa.css";
 import "./tema/resultado.css";
 import "./tema/mesa-blackjack.css";
 import "./tema/mesa-carrera.css";
+import "./tema/mesa-carrera-caballos.css";
+import "./tema/mesa-carrera-apuestas.css";
+import "./tema/mesa-carrera-ordenador.css";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

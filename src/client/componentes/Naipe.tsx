@@ -40,6 +40,13 @@ function useBaraja(): Baraja | null {
   return cargada;
 }
 
+/** Pide las caras de las cartas al entrar en una mesa, para tenerlas antes de la primera carta. */
+export function usePrecargarBaraja(): void {
+  useEffect(() => {
+    cargarBaraja().catch(() => {});
+  }, []);
+}
+
 const PALOS: Record<Palo, { nombre: string; simbolo: string; rojo: boolean }> = {
   H: { nombre: "corazones", simbolo: "♥︎", rojo: true },
   D: { nombre: "diamantes", simbolo: "♦︎", rojo: true },

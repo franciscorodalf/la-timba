@@ -12,13 +12,27 @@
 }
 
 .cartel-premio__texto {
+  position: relative;
+  isolation: isolate;
   font-family: var(--fuente-titulo);
   font-weight: 800;
   font-size: clamp(2.125rem, 9vw, 3rem);
   line-height: 1.1;
-  color: var(--oro);
+  color: var(--oro-claro);
   white-space: nowrap;
   text-shadow:
-    0 2px 0 var(--madera-1),
-    0 0 24px rgba(212, 175, 55, 0.8);
+    0 2px 0 rgba(48, 29, 8, 0.95),
+    0 0 2px rgba(2, 18, 9, 0.9),
+    0 0 20px rgba(212, 175, 55, 0.5);
+}
+
+/* Una sombra suave detrás del texto: oscurece lo que haya debajo (las líneas de la pista, el tapete) para que el cartel se lea
+   limpio en cualquier mesa. Va dentro del cartel: solo se anima su `opacity` y su `transform`. */
+.cartel-premio__texto::before {
+  content: "";
+  position: absolute;
+  inset: -0.32em -0.9em;
+  z-index: -1;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(2, 24, 12, 0.86), rgba(2, 24, 12, 0.62) 55%, rgba(2, 24, 12, 0));
 }

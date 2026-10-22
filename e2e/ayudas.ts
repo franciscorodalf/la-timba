@@ -89,3 +89,21 @@ export async function entrarSimulada<V>(pagina: Page, request: APIRequestContext
   const mesa = await simularMesa<V>(pagina, party);
   return { sesion, codigo, mesa };
 }
+
+/**
+ * Las fichas que devuelve `/api/yo`, a elegir: se fijan al pedir (una petición en vuelo no ve el cambio siguiente). Si la prueba
+ * acaba con una petición en vuelo, la página se cierra y el fallo de esa petición no se cuenta como error de la ejecución.
+ */
+export async function fichasDeApi(pagina: Page, inicial: number): Promise<{ poner(n: number): void }> {
+  let fichas = inicial;
+  await pagina.route("**/api/yo", async (ruta) => {
+    const valor = fichas;
+    try {
+      const respuesta = await ruta.fetch();
+      await ruta.fulfill({ response: respuesta, json: { ...(await respuesta.json()), fichas: valor } });
+    } catch {
+      // La página se ha cerrado con la petición a medias: nada que contestar.
+    }
+  });
+  return { poner: (n) => (fichas = n) };
+}
