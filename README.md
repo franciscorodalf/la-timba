@@ -1,6 +1,6 @@
 # La Timba
 
-Una web para jugar a las cartas con amigos: **Blackjack** y una **carrera de caballos** con la baraja francesa, en un tapete de casino clásico. Alguien crea una partida, los demás entran con un código, un QR o un enlace, y todos juegan con las mismas fichas y un ranking compartido. Funciona en el móvil y en el ordenador, no necesita instalar nada y se aloja gratis en Cloudflare.
+Una web para jugar a las cartas con amigos: **Blackjack** y una **carrera de caballos** con la baraja francesa, en un tapete de casino clásico. Alguien crea una partida, los demás entran con un código, un QR o un enlace, y cada uno juega con sus propias fichas (las mismas en todas las partidas) y un ranking compartido. Funciona en el móvil y en el ordenador, no necesita instalar nada y se aloja gratis en Cloudflare.
 
 > **Demo: pendiente de desplegar**
 
@@ -13,26 +13,31 @@ Una web para jugar a las cartas con amigos: **Blackjack** y una **carrera de cab
 
 ## Cómo se juega
 
-1. **Entra** con un apodo y un PIN de 4 cifras. Si el apodo no existe, se crea tu perfil con **1.000 fichas**.
+1. **Entra** con un apodo y un PIN de 4 cifras. Si el apodo no existe, la web pregunta «¿Crear el perfil?» y, al aceptar, te da **1.000 fichas**.
 2. **Crea una partida** (te da un código de 4 caracteres, un QR y un enlace) o **únete** con el de un amigo.
-3. En la **sala** ves quién está conectado, qué hay en cada mesa y quién va ganando esta noche. Entra en la mesa que quieras y vuelve cuando quieras: la sala y las mesas comparten conexión.
+3. En la **sala** ves quién está conectado, qué hay en cada mesa y quién va ganando esta noche. Entra en la mesa que quieras y vuelve cuando quieras: la conexión con la sala se mantiene abierta mientras juegas (cada mesa abre además la suya). Ojo: salir de una mesa a propósito con una apuesta en juego la pierde.
 4. **Blackjack.** Seis barajas, hasta 6 jugadores. Apuestas durante 15 s (de 10 a 500 fichas), cada uno recibe dos cartas y decides en 15 s: *Pedir*, *Plantarse* o *Doblar*. La banca pide hasta 17 y se planta en cualquier 17 o más. Ganar paga 1:1, blackjack natural 3:2 y un empate devuelve la apuesta.
 5. **Carrera de caballos.** Los cuatro ases son los caballos. Apuesta durante 20 s a uno o a varios (de 10 a 500 por caballo, hasta 12 jugadores). Se levanta una carta cada 800 ms y avanza el caballo de su palo; cuando todos pasan un tramo de la pista se gira su carta y el caballo de ese palo retrocede. Gana el primero que llega a la meta y paga ×4 (apuesta incluida).
 6. Si te quedas **sin fichas**, el perfil te ofrece un **rescate** de 200 (cuenta como una quiebra en tus estadísticas).
 
 ## Características
 
-- **Dos juegos** con reglas completas, temporizadores y reconexión: cierra la pestaña a mitad de mano y al volver sigues en tu mesa, con tu mano.
+- **Dos juegos** con reglas completas, temporizadores y reconexión: si se corta la conexión o cierras la pestaña a mitad de ronda, al volver (dentro de esa misma ronda) sigues en tu mesa con tu mano. En blackjack, mientras estás desconectado tu mano se planta sola, y quien sigue desconectado cuando acaba la ronda deja la mesa.
 - **Partidas con código, QR y enlace**; la sala se cierra sola tras 30 minutos sin nadie.
-- **Fichas globales**: tu saldo es el mismo en todas las partidas y mesas.
+- **Fichas globales**: cada jugador tiene su propio saldo, el mismo en todas las partidas y mesas.
 - **Ranking global** (fichas, ganancias, % de victorias, mayor premio, mejor racha y quiebras) y **ranking de cada noche**, además de un perfil con estadísticas por juego.
-- **Animaciones cuidadas** con Motion: reparto desde el mazo, cartas que se giran en 3D, caballos con estela, fichas que vuelan al contador. Solo se animan `transform` y `opacity`, y con `prefers-reduced-motion` todo pasa a fundidos.
+- **Animaciones cuidadas** con Motion: reparto desde el mazo, cartas que se giran en 3D, caballos con estela, fichas que vuelan al contador. Los movimientos solo usan `transform` y `opacity` (las transiciones de color de botones y pestañas son aparte) y, con `prefers-reduced-motion`, pasan a fundidos.
 - **Sonido sintetizado** (cartas, fichas, victoria) con silencio recordado, y vibración corta al ganar donde el navegador la permita.
 - **Hecha para el móvil**: botones de al menos 44 px, tu mano grande abajo, y en un móvil tumbado las mesas piden girarlo en vez de ofrecer un tapete que obligue a desplazarse. En el ordenador, la mesa completa con los asientos en semicírculo.
 - **Coste 0 €**: solo el plan gratuito de Cloudflare, sin tarjeta.
 
 <p align="center">
-  <img src="docs/capturas/blackjack-escritorio.png" alt="Mesa de blackjack en el ordenador: cuatro jugadores en semicírculo frente a la banca" width="48%">
+  <img src="docs/capturas/sala-escritorio.png" alt="La sala en el ordenador: jugadores conectados, mesas y ranking de esta noche" width="31%">
+  <img src="docs/capturas/blackjack-escritorio.png" alt="Mesa de blackjack en el ordenador: cuatro jugadores en semicírculo frente a la banca" width="66%">
+</p>
+
+<p align="center">
+  <img src="docs/capturas/carrera-escritorio.png" alt="Mesa de la carrera en el ordenador, a mitad de carrera" width="48%">
   <img src="docs/capturas/carrera-ganador-escritorio.png" alt="Mesa de la carrera en el ordenador: gana el caballo de corazones y se cobra" width="48%">
 </p>
 
@@ -86,7 +91,7 @@ flowchart TB
 - **Fichas en dos fases e idempotentes.** Antes de cobrar una apuesta la mesa guarda su intención; luego pide el cobro a `Jugadores` con una clave de idempotencia, y la intención se borra en la misma escritura que guarda la jugada. Un cobro que queda a medias (la instancia cayó, `Jugadores` no contestó) se anula con su clave, y cada ronda se liquida una sola vez por su identificador. Resultado: las fichas siempre cuadran, aunque las alarmas lleguen tarde o los mensajes se repitan.
 - **Pensada para los límites del plan gratuito.** Durable Objects con SQLite, WebSockets con hibernación y temporizadores con **alarmas** del objeto (nada de `setInterval`), de modo que una mesa vacía no consume. Una mesa sin apuestas deja de programar alarmas tras tres ventanas, la sala se cierra a los 30 minutos sin conexiones, cada conexión tiene un tope de 20 mensajes por segundo (más de 60 y se cierra con el código 4008) y cualquier error inesperado responde 503 con «La Timba está descansando, vuelve mañana».
 - **PBKDF2 con 10.000 iteraciones.** El PIN se guarda con PBKDF2-SHA256 y sal de 16 bytes. Con 100.000 iteraciones una sola invocación supera los 10 ms de CPU del plan gratuito (error 1102), así que se usan 10.000 y se compensa por otro lado: 5 fallos bloquean el apodo 15 minutos. La sesión es un token HMAC-SHA256 firmado con `TOKEN_SECRET` que caduca a los 30 días.
-- **Fluidez medida.** Las animaciones usan solo `transform` y `opacity`; se perfiló una carrera completa con la CPU a un cuarto de velocidad (y a un sexto) con CDP y `PerformanceObserver` sin tareas largas, y los e2e comprueban que con movimiento reducido las cartas aparecen ya en su sitio.
+- **Fluidez medida.** Los movimientos solo usan `transform` y `opacity`. Se perfilaron carreras simuladas completas con la CPU a un cuarto de velocidad (CDP y `PerformanceObserver`, cada pasada con un servidor recién arrancado): en las últimas 11 no apareció ninguna tarea larga; antes solo hubo alguna suelta (la última, de 77 ms, justo al salir el cartel del ganador), lo que llevó a pedir su tipografía al abrir la mesa y no al ganar. A un sexto de velocidad sí se vieron cuadros de 51–64 ms al llegar el ganador. Los e2e comprueban además que con movimiento reducido las cartas aparecen ya en su sitio y que la mesa no se mueve bajo la mano.
 
 ## Tecnología
 
@@ -134,7 +139,7 @@ npm run deploy
 
 `npm run deploy` construye el cliente y el Worker (`vite build`) y los sube con `wrangler deploy`. La configuración está en [`wrangler.jsonc`](wrangler.jsonc): los cuatro Durable Objects con su migración `new_sqlite_classes` y la web como recursos estáticos con *fallback* de aplicación de una sola página, de modo que `/p/KXP4` abre la partida también al recargar. La URL queda como `https://la-timba.<tu-cuenta>.workers.dev`.
 
-Conviene vigilar el panel de Cloudflare (Workers y Durable Objects → Métricas): una noche típica de 8 jugadores durante 3 horas debería quedarse muy por debajo del límite diario gratuito.
+Conviene vigilar el uso desde el panel de Cloudflare: una noche típica de 8 jugadores durante 3 horas debería quedarse muy por debajo del límite diario gratuito.
 
 ## Estructura
 
