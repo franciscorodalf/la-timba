@@ -112,7 +112,10 @@ test.describe("con movimiento reducido", () => {
     const [, verbo, cantidad] = /^(Ganas|Pierdes) (\d+)$|^Empate$/.exec((await resultado(page).textContent()) ?? "") ?? [];
     const neto = verbo === "Ganas" ? Number(cantidad) : verbo === "Pierdes" ? -Number(cantidad) : 0;
     await expect(contador(page)).toHaveText(`Tienes ${String(1000 + neto).replace(/\B(?=(\d{3})+(?!\d))/g, ".")} fichas`);
-    await page.waitForTimeout(400); // la última carta cumple sus 300 ms
+    // La última carta cumple sus 300 ms.
+    await expect
+      .poll(() => page.evaluate(() => (window as unknown as { __seguimientos: Seguimiento[] }).__seguimientos.every((s) => s.despues !== null)), { timeout: 10_000 })
+      .toBe(true);
 
     const seguimientos = await page.evaluate(() => (window as unknown as { __seguimientos: Seguimiento[] }).__seguimientos);
     // Dos cartas del jugador y dos de la banca como mínimo.
