@@ -226,3 +226,34 @@ describe("vibrar", () => {
     expect(() => vibrar(80)).not.toThrow();
   });
 });
+
+describe("mesa tapada por el aviso de girar el móvil", () => {
+  const CONSULTA = "(pointer: coarse) and (orientation: landscape) and (max-height: 500px)";
+  /** Un `matchMedia` que solo da por cierta la consulta que se le diga (o ninguna). */
+  const pantalla = (cierta: string | null) => (consulta: string) => ({ matches: consulta === cierta });
+
+  it("mesaTapada es cierta solo con la misma consulta que enseña el aviso", async () => {
+    const { mesaTapada, MESA_TAPADA } = await import("../../src/client/efectos/ventana");
+    expect(MESA_TAPADA).toBe(CONSULTA);
+    vi.stubGlobal("matchMedia", pantalla(CONSULTA));
+    expect(mesaTapada()).toBe(true);
+    vi.stubGlobal("matchMedia", pantalla(null));
+    expect(mesaTapada()).toBe(false);
+    vi.stubGlobal("matchMedia", undefined);
+    expect(mesaTapada()).toBe(false);
+  });
+
+  it("vibrar no hace nada mientras la mesa está tapada, y vuelve a vibrar al destaparse", async () => {
+    const vibrate = vi.fn(() => true);
+    vi.stubGlobal("navigator", { vibrate, userActivation: { hasBeenActive: true } });
+    const { vibrar } = await import("../../src/client/efectos/vibrar");
+
+    vi.stubGlobal("matchMedia", pantalla(CONSULTA));
+    vibrar(80);
+    expect(vibrate).not.toHaveBeenCalled();
+
+    vi.stubGlobal("matchMedia", pantalla(null));
+    vibrar(80);
+    expect(vibrate).toHaveBeenCalledExactlyOnceWith(80);
+  });
+});

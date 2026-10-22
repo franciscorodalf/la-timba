@@ -3,6 +3,8 @@
 // primer toque en la página (los navegadores no dejan sonar antes) o con el sonido silenciado, simplemente no suena.
 // El audio se despierta con el primer toque o tecla en cualquier sitio de la página (ver el final del archivo).
 
+import { mesaTapada } from "./ventana";
+
 export type NombreSonido = "carta" | "fichas" | "victoria";
 
 const CLAVE = "timba.silencio";
@@ -192,9 +194,12 @@ if (typeof window !== "undefined") {
 }
 
 export const sonidos = {
-  /** Toca un sonido ya. Silenciado, sin Web Audio o antes del primer toque en la página, no hace nada (y no crea el audio). */
+  /**
+   * Toca un sonido ya. Silenciado, sin Web Audio, antes del primer toque en la página o mientras el aviso de girar el móvil tapa
+   * la mesa (no se vería nada y el botón de silencio también está tapado), no hace nada (y no crea el audio).
+   */
   reproducir(nombre: NombreSonido): void {
-    if (silenciado) return;
+    if (silenciado || mesaTapada()) return;
     const ctx = audio(false);
     if (ctx === null || salida === null) return;
     try {

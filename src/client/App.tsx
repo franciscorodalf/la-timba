@@ -44,8 +44,8 @@ function Pantallas() {
 }
 
 /**
- * Todo lo que cuelga de `/p/:codigo`: la sala y las mesas comparten el mismo socket de sala, que no se cierra al ir de una a
- * otra. Las rutas de dentro son relativas a `/p/:codigo`. El código se escribe en mayúsculas aunque el enlace venga en minúsculas.
+ * Todo lo que cuelga de `/p/:codigo`: el socket de la sala (`PartidaProvider`) se mantiene abierto al ir de la sala a una mesa y
+ * de una mesa a otra; cada mesa abre además el suyo. Las rutas de dentro son relativas a `/p/:codigo`. El código se escribe en mayúsculas aunque el enlace venga en minúsculas.
  */
 function LayoutPartida({ codigo }: { codigo: string }) {
   // El «Sala» del ranking y del perfil vuelve a la última partida visitada en esta pestaña.

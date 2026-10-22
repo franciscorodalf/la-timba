@@ -1,5 +1,6 @@
 /* «Gira el móvil para jugar»: pantalla completa sobre las mesas cuando el móvil está tumbado (puntero táctil, apaisado, 500 px de
-   alto o menos). Fuera de ese caso no existe. Lo demás de la mesa se esconde con `display: none` (sigue montado, con su socket). */
+   alto o menos). Fuera de ese caso no existe. Lo demás de la mesa se esconde con `display: none` (sigue montado, con su socket).
+   La misma consulta está en `efectos/ventana.ts` (`MESA_TAPADA`): con el aviso puesto, la mesa no suena ni vibra. */
 
 .girar-movil {
   display: none;

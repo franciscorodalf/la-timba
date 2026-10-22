@@ -20,11 +20,8 @@
 
 /* La barra se queda arriba al recorrer los 50 puestos. Fondo sólido (nada de transparencias: las filas pasan por debajo y no deben verse)
    y, mientras está pegada, justo debajo del área segura; la muesca pinta del mismo color esa franja de arriba (el notch), que mide
-   0 donde no hay. */
-.ranking {
-  --fondo-barra: #0a3a23;
-}
-
+   0 donde no hay. En una pantalla baja (un móvil tumbado) la barra no se queda fija: con ella y la barra de abajo apenas quedaría
+   sitio para la lista. */
 .ranking__barra {
   position: sticky;
   top: env(safe-area-inset-top, 0px);
@@ -32,7 +29,7 @@
   margin-inline: -8px;
   padding: 8px 8px 10px;
   border-bottom: 1px solid rgba(212, 175, 55, 0.3);
-  background-color: var(--fondo-barra);
+  background-color: var(--tapete-barra);
   box-shadow: 0 10px 14px -10px rgba(0, 0, 0, 0.6);
 }
 
@@ -42,7 +39,18 @@
   z-index: 10;
   height: env(safe-area-inset-top, 0px);
   pointer-events: none;
-  background-color: var(--fondo-barra);
+  background-color: var(--tapete-barra);
+}
+
+@media (max-height: 500px) {
+  .ranking__barra {
+    position: static;
+    box-shadow: none;
+  }
+
+  .ranking__muesca {
+    display: none;
+  }
 }
 
 .ranking-pestanas {
