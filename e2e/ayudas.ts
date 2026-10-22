@@ -101,8 +101,11 @@ export async function fichasDeApi(pagina: Page, inicial: number): Promise<{ pone
     try {
       const respuesta = await ruta.fetch();
       await ruta.fulfill({ response: respuesta, json: { ...(await respuesta.json()), fichas: valor } });
-    } catch {
-      // La página se ha cerrado con la petición a medias: nada que contestar.
+    } catch (error) {
+      // Solo si la prueba ya ha acabado (la página o el contexto se han cerrado con la petición a medias) no hay nada que contestar;
+      // cualquier otro fallo es real: se deja que salga en vez de dejar la petición colgada.
+      const cerrada = pagina.isClosed() || (error instanceof Error && /Target (page, context or browser|page|context|browser) has been closed/.test(error.message));
+      if (!cerrada) throw error;
     }
   });
   return { poner: (n) => (fichas = n) };
