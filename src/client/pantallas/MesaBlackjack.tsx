@@ -21,6 +21,7 @@ import { usePremio } from "../efectos/usePremio";
 import { vibrar } from "../efectos/vibrar";
 import { sonidos } from "../efectos/sonidos";
 import { ORDENADOR_PX, useAltoVentana, useAnchoVentana } from "../efectos/ventana";
+import { usePrecargarTipografia } from "../efectos/usePrecargarTipografia";
 import { cuentaAtras, miles } from "../formato";
 import { useAhoraServidor } from "../red/reloj";
 import { useSesion } from "../red/sesion";
@@ -97,6 +98,7 @@ export function MesaBlackjack({ codigo }: { codigo: string }) {
   const despues = useDespues();
 
   usePrecargarBaraja();
+  usePrecargarTipografia();
 
   // Las fichas se vuelven a leer al (re)conectar y al empezar cada ronda, aunque el pago no traiga evento.
   useFichasAlDia(conectado, vista?.ronda);

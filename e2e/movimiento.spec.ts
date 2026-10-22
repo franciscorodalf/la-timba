@@ -125,6 +125,33 @@ test.describe("con movimiento reducido", () => {
 });
 
 // ---------------------------------------------------------------------------------------------------------------------
+// Tipografía del cartel: Playfair Display 800 (¡Ganas +N!, el ganador de la carrera) se pide al abrir la mesa.
+// ---------------------------------------------------------------------------------------------------------------------
+
+test.describe("letras grandes del premio", () => {
+  // Sin esto el navegador descarga ese peso al ganar, a media animación: con la red lenta el cartel sale en la fuente de reserva y
+  // cambia de letra de golpe, y la primera vez que se pinta cuesta una tarea larga justo en el momento más cargado de la mesa.
+  for (const [mesa, party] of [["blackjack", "mesa-blackjack"], ["carrera", "mesa-carrera"]] as const) {
+    test(`la mesa de ${mesa} descarga Playfair Display 800 al abrirse, sin esperar a que haya un premio`, async ({ page, request }) => {
+      const { codigo, mesa: simulada } = await entrarSimulada<VistaBJ | VistaCarrera>(page, request, party);
+      await fichasDeApi(page, 1000);
+      simulada.alConectar(null); // la mesa no contesta: no hay ronda, ni premio, ni ganador
+      const pedidas: string[] = [];
+      page.on("request", (r) => {
+        if (/playfair-display-latin-800/.test(r.url())) pedidas.push(r.url());
+      });
+
+      await page.goto(`/p/${codigo}/${mesa}`);
+      await expect(page.getByRole("button", { name: "Volver a la sala" })).toBeVisible();
+
+      await expect.poll(() => pedidas.length, { message: "se pide la fuente del cartel" }).toBeGreaterThan(0);
+      // Y llega entera (no solo se pide): el navegador la da por cargada.
+      await expect.poll(() => page.evaluate(() => document.fonts.check('800 48px "Playfair Display"', "¡Ganas +150!"))).toBe(true);
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
 // Botones táctiles: todo lo que se pulsa mide al menos 44 px de alto en el móvil.
 // ---------------------------------------------------------------------------------------------------------------------
 

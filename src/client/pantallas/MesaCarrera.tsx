@@ -15,6 +15,7 @@ import { sonidos } from "../efectos/sonidos";
 import { useBarajando } from "../efectos/useBarajando";
 import { usePremio } from "../efectos/usePremio";
 import { ORDENADOR_PX, useAnchoVentana } from "../efectos/ventana";
+import { usePrecargarTipografia } from "../efectos/usePrecargarTipografia";
 import { cuentaAtras } from "../formato";
 import { useAhoraServidor } from "../red/reloj";
 import { useSesion } from "../red/sesion";
@@ -58,6 +59,7 @@ export function MesaCarrera({ codigo }: { codigo: string }) {
   const barajando = useBarajando(lote);
 
   usePrecargarBaraja();
+  usePrecargarTipografia();
 
   // Las fichas se vuelven a leer al (re)conectar y al empezar cada ronda, aunque el pago no traiga evento.
   useFichasAlDia(conectado, vista?.ronda);
