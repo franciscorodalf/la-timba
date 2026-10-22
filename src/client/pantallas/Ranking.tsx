@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { OrdenRanking } from "../../shared/api";
 import { retardo } from "../animacion";
 import { Aviso } from "../componentes/Aviso";
@@ -17,6 +17,7 @@ export function Ranking() {
   // «Sala» vuelve a la última partida visitada en esta pestaña; se lee una vez, al abrir la pantalla.
   const [partida] = useState(ultimaPartida);
   const leyenda = PESTANAS.find((p) => p.orden === orden)?.leyenda;
+  const panel = useRef<HTMLDivElement>(null);
 
   return (
     <main className="con-navegacion ranking">
@@ -26,17 +27,27 @@ export function Ranking() {
           <p className="ranking__lema">Quién manda en La Timba</p>
         </header>
 
-        <div className="aparece" style={retardo(80)}>
+        {/* La barra se queda arriba al recorrer la lista; la muesca tapa el área segura de arriba (el notch) mientras tanto. */}
+        <div className="ranking__muesca" aria-hidden="true" />
+        <div className="ranking__barra aparece" style={retardo(80)}>
           <BarraPestanas activa={orden} onElegir={setOrden} />
         </div>
 
-        <div className="ranking__panel" role="tabpanel" id={ID_PANEL} aria-labelledby={idPestana(orden)} tabIndex={0} aria-busy={ranking.estado === "cargando" || undefined}>
+        <div className="ranking__panel" ref={panel} role="tabpanel" id={ID_PANEL} aria-labelledby={idPestana(orden)} tabIndex={0} aria-busy={ranking.estado === "cargando" || undefined}>
           <p className="ranking__leyenda">{leyenda}</p>
           {ranking.estado === "cargando" && <EsqueletoRanking />}
           {ranking.estado === "error" && (
             <div className="ranking__error">
               <Aviso>{ranking.mensaje}</Aviso>
-              <Boton variante="secundario" ancho onClick={ranking.reintentar}>
+              <Boton
+                variante="secundario"
+                ancho
+                onClick={() => {
+                  // El botón se va al empezar a cargar: el foco se queda en el panel, que es lo que va a cambiar.
+                  panel.current?.focus({ preventScroll: true });
+                  ranking.reintentar();
+                }}
+              >
                 Reintentar
               </Boton>
             </div>

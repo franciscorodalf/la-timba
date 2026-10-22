@@ -57,6 +57,7 @@ function FilaPropia({ orden, yo }: { orden: OrdenRanking; yo: FilaRanking | null
 export function EsqueletoRanking() {
   return (
     <div className="ranking-esqueleto" role="status" aria-label="Cargando el ranking">
+      <span className="solo-lectores">Cargando…</span>
       {Array.from({ length: 8 }, (_, i) => (
         <div className="ranking-esqueleto__fila" key={i} />
       ))}
@@ -79,7 +80,8 @@ export function Filas({ orden, datos }: { orden: OrdenRanking; datos: RespuestaR
       {top.length === 0 ? (
         <p className="ranking-vacio">Todavía no hay nadie en este ranking.</p>
       ) : (
-        <ol className="ranking-lista" aria-label={`Ranking: ${etiqueta}`}>
+        // `role="list"`: Safari y VoiceOver dejan de tratar como lista la que no lleva viñetas (`list-style: none`).
+        <ol className="ranking-lista" role="list" aria-label={`Ranking: ${etiqueta}`}>
           {top.map((fila, i) => {
             const propia = enLaLista && fila.posicion === yo.posicion;
             const medalla = MEDALLAS[fila.posicion];

@@ -79,3 +79,27 @@ describe("última partida de la pestaña", () => {
     expect(ultimaPartida()).toBe("KXP4");
   });
 });
+
+describe("olvidar la última partida sea cual sea (al cerrar sesión)", () => {
+  it("borra la clave y la copia en memoria aunque no se sepa qué código era", async () => {
+    const sesion = almacen({ "timba.partida": "KXP4" });
+    vi.stubGlobal("sessionStorage", sesion);
+    const { olvidarUltimaPartida, recordarPartida, ultimaPartida } = await import("../../src/client/red/ultimaPartida");
+    recordarPartida("ZZ99");
+    expect(ultimaPartida()).toBe("ZZ99");
+
+    olvidarUltimaPartida();
+
+    expect(ultimaPartida()).toBeNull();
+    expect(sesion.datos.has("timba.partida")).toBe(false);
+  });
+
+  it("sin almacenamiento tampoco falla, y la copia en memoria se olvida", async () => {
+    vi.stubGlobal("sessionStorage", almacen({}, true));
+    const { olvidarUltimaPartida, recordarPartida, ultimaPartida } = await import("../../src/client/red/ultimaPartida");
+    recordarPartida("KXP4");
+
+    expect(() => olvidarUltimaPartida()).not.toThrow();
+    expect(ultimaPartida()).toBeNull();
+  });
+});

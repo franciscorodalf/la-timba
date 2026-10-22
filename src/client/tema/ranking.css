@@ -18,6 +18,33 @@
 
 /* ---------- Pestañas ---------- */
 
+/* La barra se queda arriba al recorrer los 50 puestos. Fondo sólido (nada de transparencias: las filas pasan por debajo y no deben verse)
+   y, mientras está pegada, justo debajo del área segura; la muesca pinta del mismo color esa franja de arriba (el notch), que mide
+   0 donde no hay. */
+.ranking {
+  --fondo-barra: #0a3a23;
+}
+
+.ranking__barra {
+  position: sticky;
+  top: env(safe-area-inset-top, 0px);
+  z-index: 10;
+  margin-inline: -8px;
+  padding: 8px 8px 10px;
+  border-bottom: 1px solid rgba(212, 175, 55, 0.3);
+  background-color: var(--fondo-barra);
+  box-shadow: 0 10px 14px -10px rgba(0, 0, 0, 0.6);
+}
+
+.ranking__muesca {
+  position: fixed;
+  inset: 0 0 auto;
+  z-index: 10;
+  height: env(safe-area-inset-top, 0px);
+  pointer-events: none;
+  background-color: var(--fondo-barra);
+}
+
 .ranking-pestanas {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

@@ -1,6 +1,6 @@
 import { type KeyboardEvent, useRef } from "react";
 import type { OrdenRanking } from "../../../shared/api";
-import { PESTANAS } from "./pestanas";
+import { destinoDeTecla, PESTANAS } from "./pestanas";
 
 export const idPestana = (orden: OrdenRanking): string => `ranking-pestana-${orden}`;
 export const ID_PANEL = "ranking-panel";
@@ -18,10 +18,11 @@ export function BarraPestanas({ activa, onElegir }: Props) {
   const botones = useRef(new Map<OrdenRanking, HTMLButtonElement>());
 
   function alTeclear(evento: KeyboardEvent<HTMLDivElement>) {
+    // Con Alt, Ctrl, Cmd o Mayús la tecla es de otro atajo (Alt+← es «atrás» en el navegador): no se toca.
+    if (evento.altKey || evento.ctrlKey || evento.metaKey || evento.shiftKey) return;
     const enfocada = PESTANAS.findIndex(({ orden }) => botones.current.get(orden) === document.activeElement);
     const desde = enfocada === -1 ? PESTANAS.findIndex(({ orden }) => orden === activa) : enfocada;
-    const n = PESTANAS.length;
-    const destino = { ArrowRight: (desde + 1) % n, ArrowLeft: (desde - 1 + n) % n, Home: 0, End: n - 1 }[evento.key];
+    const destino = destinoDeTecla(evento.key, desde, PESTANAS.length);
     if (destino === undefined) return;
     evento.preventDefault();
     const { orden } = PESTANAS[destino];

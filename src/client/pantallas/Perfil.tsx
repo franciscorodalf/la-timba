@@ -41,7 +41,7 @@ function Estadisticas({ perfil }: { perfil: DatosPerfil }) {
           Estadísticas
         </h2>
         <dl className="perfil-datos">
-          <Dato etiqueta="Partidas" valor={miles(perfil.partidas)} />
+          <Dato etiqueta="Rondas jugadas" valor={miles(perfil.partidas)} />
           <Dato etiqueta="Ganancias totales" valor={milesConSigno(perfil.gananciasTotales)} />
           <Dato etiqueta="Mayor premio" valor={miles(perfil.mayorPremio)} />
           <Dato etiqueta="Mejor racha" valor={String(perfil.mejorRacha)} />
@@ -63,7 +63,7 @@ function Estadisticas({ perfil }: { perfil: DatosPerfil }) {
                   {nombre}
                 </h3>
                 <dl className="perfil-datos perfil-datos--juego">
-                  <Dato etiqueta="Partidas" valor={miles(partidas)} />
+                  <Dato etiqueta="Rondas jugadas" valor={miles(partidas)} />
                   <Dato etiqueta="Victorias" valor={miles(victorias)} />
                   <Dato etiqueta="% victorias" valor={porcentajeVictorias(victorias, partidas)} />
                 </dl>
@@ -79,6 +79,7 @@ function Estadisticas({ perfil }: { perfil: DatosPerfil }) {
 function EsqueletoPerfil() {
   return (
     <div className="perfil-esqueleto" role="status" aria-label="Cargando tu perfil">
+      <span className="solo-lectores">Cargando…</span>
       <div className="perfil-esqueleto__bloque perfil-esqueleto__bloque--datos" />
       <div className="perfil-esqueleto__bloque perfil-esqueleto__bloque--juego" />
       <div className="perfil-esqueleto__bloque perfil-esqueleto__bloque--juego" />
@@ -99,6 +100,7 @@ export function Perfil() {
   const montado = useRef(true);
   const rescateEnCurso = useRef(false);
   const tarjetaFichas = useRef<HTMLElement>(null);
+  const zonaEstadisticas = useRef<HTMLDivElement>(null);
 
   const cargar = useCallback(async () => {
     try {
@@ -137,7 +139,8 @@ export function Perfil() {
     } catch (e) {
       const resultado = errorRescate(e);
       if (resultado.tipo === "tiene_fichas") {
-        // Ya había fichas (las ganaste en otra pestaña): se pone al día y el botón se va solo.
+        // Ya había fichas (las ganaste en otra pestaña): se pone al día y el botón se va solo, así que el foco pasa a la tarjeta.
+        tarjetaFichas.current?.focus({ preventScroll: true });
         await refrescar();
         void cargar();
       } else setAviso({ tipo: "error", texto: resultado.texto });
@@ -185,25 +188,29 @@ export function Perfil() {
           {aviso !== null && <Aviso tipo={aviso.tipo}>{aviso.texto}</Aviso>}
         </section>
 
-        {perfil !== null ? (
-          <Estadisticas perfil={perfil} />
-        ) : fallo !== null ? (
-          <div className="perfil-fallo">
-            <Aviso>{fallo}</Aviso>
-            <Boton
-              variante="secundario"
-              ancho
-              onClick={() => {
-                setFallo(null);
-                void cargar();
-              }}
-            >
-              Reintentar
-            </Boton>
-          </div>
-        ) : (
-          <EsqueletoPerfil />
-        )}
+        {/* Un sitio fijo al que llevar el foco cuando «Reintentar» desaparece al empezar a cargar. */}
+        <div className="perfil-zona" ref={zonaEstadisticas} tabIndex={-1}>
+          {perfil !== null ? (
+            <Estadisticas perfil={perfil} />
+          ) : fallo !== null ? (
+            <div className="perfil-fallo">
+              <Aviso>{fallo}</Aviso>
+              <Boton
+                variante="secundario"
+                ancho
+                onClick={() => {
+                  zonaEstadisticas.current?.focus({ preventScroll: true });
+                  setFallo(null);
+                  void cargar();
+                }}
+              >
+                Reintentar
+              </Boton>
+            </div>
+          ) : (
+            <EsqueletoPerfil />
+          )}
+        </div>
 
         <Boton variante="secundario" ancho onClick={cerrarSesion}>
           Cerrar sesión

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PESTANAS, textoSinPuesto, valorRanking } from "../../src/client/pantallas/ranking/pestanas";
+import { destinoDeTecla, PESTANAS, textoSinPuesto, valorRanking } from "../../src/client/pantallas/ranking/pestanas";
 import { milesConSigno, porcentajeVictorias } from "../../src/client/formato";
 import { ORDENES_RANKING, PARTIDAS_MINIMAS_VICTORIAS } from "../../src/shared/api";
 
@@ -72,5 +72,22 @@ describe("formato compartido con el perfil", () => {
     expect(porcentajeVictorias(3, 3)).toBe("100 %");
     expect(porcentajeVictorias(0, 5)).toBe("0 %");
     expect(porcentajeVictorias(0, 0)).toBe("—");
+  });
+});
+
+describe("destinoDeTecla (teclado de las pestañas)", () => {
+  it("las flechas dan la vuelta, Inicio y Fin van a los extremos", () => {
+    expect(destinoDeTecla("ArrowRight", 0, 6)).toBe(1);
+    expect(destinoDeTecla("ArrowRight", 5, 6)).toBe(0);
+    expect(destinoDeTecla("ArrowLeft", 3, 6)).toBe(2);
+    expect(destinoDeTecla("ArrowLeft", 0, 6)).toBe(5);
+    expect(destinoDeTecla("Home", 4, 6)).toBe(0);
+    expect(destinoDeTecla("End", 1, 6)).toBe(5);
+  });
+
+  it("cualquier otra tecla no lleva a ningún sitio, también los nombres que existen en todo objeto", () => {
+    for (const tecla of ["a", "Enter", "Tab", "ArrowUp", "constructor", "toString", "__proto__", "hasOwnProperty"]) {
+      expect(destinoDeTecla(tecla, 2, 6), tecla).toBeUndefined();
+    }
   });
 });

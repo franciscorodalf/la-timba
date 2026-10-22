@@ -70,6 +70,13 @@
 
 /* ---------- Estadísticas ---------- */
 
+/* Lo que cambia al cargar (esqueleto, error o estadísticas): un solo bloque al que llevar el foco. */
+.perfil-zona {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
 .perfil-datos {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

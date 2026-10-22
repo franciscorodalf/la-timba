@@ -42,3 +42,15 @@ export function textoSinPuesto(orden: OrdenRanking): string | null {
   if (orden === "premio") return "Gana una ronda para entrar en este ranking";
   return null;
 }
+
+const MOVIMIENTOS = new Map<string, (desde: number, n: number) => number>([
+  ["ArrowRight", (desde, n) => (desde + 1) % n],
+  ["ArrowLeft", (desde, n) => (desde - 1 + n) % n],
+  ["Home", () => 0],
+  ["End", (_, n) => n - 1],
+]);
+
+/** A qué pestaña (su posición) lleva la tecla desde la pestaña `desde` de `n`, dando la vuelta con las flechas; `undefined` si esa tecla no mueve. */
+export function destinoDeTecla(tecla: string, desde: number, n: number): number | undefined {
+  return MOVIMIENTOS.get(tecla)?.(desde, n);
+}

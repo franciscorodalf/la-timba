@@ -121,12 +121,12 @@ test.describe("Ranking", () => {
     await comprobarFilaPropia(page, copias, "quiebras", apodo, "0");
     expect(await sinDesplazamientoHorizontal(page)).toBe(true);
 
-    // El perfil no tiene partidas y, con fichas, no ofrece el rescate.
+    // El perfil no tiene rondas jugadas y, con fichas, no ofrece el rescate.
     await barra(page).getByRole("link", { name: "Perfil" }).click();
     await expect(page).toHaveURL("/perfil");
     await expect(page.getByRole("heading", { level: 1, name: apodo })).toBeVisible();
-    const partidas = page.getByRole("region", { name: "Estadísticas" }).locator(".perfil-dato", { hasText: "Partidas" });
-    await expect(partidas.locator("dd")).toHaveText("0");
+    const rondas = page.getByRole("region", { name: "Estadísticas" }).locator(".perfil-dato", { hasText: "Rondas jugadas" });
+    await expect(rondas.locator("dd")).toHaveText("0");
     await expect(page.getByRole("button", { name: /Pedir rescate/ })).toHaveCount(0);
   });
 
@@ -368,6 +368,91 @@ test.describe("Ranking", () => {
     expect(reducido.every((nombre) => nombre === "none")).toBe(true);
   });
 
+  test("las teclas con Alt, Ctrl, Cmd o Mayús no mueven las pestañas ni se tragan el atajo del navegador", async ({ page, request }) => {
+    await conSesion(page, await registrar(request, apodoUnico(), "1234"));
+    await simularRanking(page, (orden) => ({ top: [{ posicion: 1, apodo: `de_${orden}`, valor: 1 }], yo: null }));
+    await page.goto("/ranking");
+    await expect(lista(page, "fichas")).toBeVisible();
+    // Quién llega a escuchar la tecla sin que nadie la haya cancelado: es lo que pasa para que el navegador vuelva atrás con Alt+←.
+    await page.evaluate(() => {
+      const w = window as unknown as { __teclas: { tecla: string; cancelada: boolean }[] };
+      w.__teclas = [];
+      document.addEventListener("keydown", (e) => w.__teclas.push({ tecla: e.key, cancelada: e.defaultPrevented }));
+    });
+
+    await pestana(page, "fichas").focus();
+    for (const combinacion of ["Alt+ArrowRight", "Alt+ArrowLeft", "Control+ArrowRight", "Meta+ArrowLeft", "Shift+ArrowRight", "Alt+Home", "Control+End"]) {
+      await page.keyboard.press(combinacion);
+      await expect(pestana(page, "fichas"), combinacion).toHaveAttribute("aria-selected", "true");
+      await expect(pestana(page, "fichas"), combinacion).toBeFocused();
+    }
+    const teclas = await page.evaluate(() => (window as unknown as { __teclas: { tecla: string; cancelada: boolean }[] }).__teclas);
+    expect(teclas.filter((t) => t.tecla !== "Alt" && t.tecla !== "Control" && t.tecla !== "Meta" && t.tecla !== "Shift")).toHaveLength(7);
+    expect(teclas.filter((t) => t.cancelada)).toEqual([]);
+
+    // Sin modificadores siguen funcionando.
+    await page.keyboard.press("ArrowRight");
+    await expect(pestana(page, "ganancias")).toHaveAttribute("aria-selected", "true");
+  });
+
+  test("la barra de pestañas se queda arriba al recorrer la lista, con fondo sólido: las filas pasan por debajo sin verse", async ({ page, request }) => {
+    await conSesion(page, await registrar(request, apodoUnico(), "1234"));
+    await simularRanking(page, () => ({ top: jugadoresFalsos(50), yo: { posicion: 80, apodo: "yo_mismo", valor: 1000 } }));
+    await page.goto("/ranking");
+    await expect(lista(page, "fichas").getByRole("listitem")).toHaveCount(50);
+
+    await page.mouse.wheel(0, 2400);
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(1500);
+    for (const orden of ORDENES_RANKING) {
+      const caja = (await pestana(page, orden).boundingBox())!;
+      expect(caja.y, `${ETIQUETA[orden]} sigue a la vista arriba`).toBeGreaterThanOrEqual(0);
+      expect(caja.y + caja.height, `${ETIQUETA[orden]} sigue a la vista arriba`).toBeLessThan(130);
+    }
+    // Fondo opaco (sin transparencia): una fila que pasa por debajo no se ve a través de la barra.
+    const barraFija = page.locator(".ranking__barra");
+    const fondo = await barraFija.evaluate((el) => getComputedStyle(el).backgroundColor);
+    expect(fondo, "color de fondo sólido").toMatch(/^rgb\(\d+, \d+, \d+\)$/);
+    // Y en un punto de la barra, lo que hay encima del todo es la barra (no una fila de la lista).
+    const caja = (await barraFija.boundingBox())!;
+    expect(await page.evaluate(([x, y]) => document.elementFromPoint(x, y)?.closest(".ranking__barra") !== null, [caja.x + 2, caja.y + caja.height - 2])).toBe(true);
+  });
+
+  test("la lista es una lista para los lectores de pantalla aunque no lleve viñetas, y la carga se anuncia con texto", async ({ page, request }) => {
+    await conSesion(page, await registrar(request, apodoUnico(), "1234"));
+    const respuesta = aplazada();
+    await simularRanking(page, () => ({ espera: respuesta.espera, cuerpo: { top: jugadoresFalsos(3), yo: null } }));
+    await page.goto("/ranking");
+
+    // Safari y VoiceOver quitan la semántica de lista a las listas sin viñetas si no se la devuelve `role="list"`.
+    await expect(page.getByRole("status", { name: "Cargando el ranking" })).toContainText("Cargando…");
+    respuesta.soltar();
+    await expect(lista(page, "fichas").getByRole("listitem")).toHaveCount(3);
+    await expect(page.locator("ol.ranking-lista")).toHaveAttribute("role", "list");
+  });
+
+  test("«Reintentar» no deja el foco en el aire: al pulsarlo (con el teclado) el foco pasa al panel del ranking", async ({ page, request }) => {
+    await conSesion(page, await registrar(request, apodoUnico(), "1234"));
+    let caido = true;
+    const respuesta = aplazada();
+    await page.route(/\/api\/ranking\?/, async (ruta) => {
+      if (caido) return ruta.fulfill({ status: 503, json: { error: "descansando" } });
+      await respuesta.espera;
+      return ruta.fulfill({ json: { top: jugadoresFalsos(4), yo: null } });
+    });
+    await page.goto("/ranking");
+    await expect(page.getByRole("alert")).toHaveText("La Timba está descansando, vuelve mañana");
+
+    caido = false;
+    await page.getByRole("button", { name: "Reintentar" }).focus();
+    await page.keyboard.press("Enter");
+    // Mientras carga, el botón ya no está y el foco no se ha ido al cuerpo de la página.
+    await expect(page.getByRole("status", { name: "Cargando el ranking" })).toBeVisible();
+    await expect(page.getByRole("tabpanel")).toBeFocused();
+    respuesta.soltar();
+    await expect(lista(page, "fichas").getByRole("listitem")).toHaveCount(4);
+    await expect(page.getByRole("tabpanel")).toBeFocused();
+  });
+
   test("las pestañas y los enlaces miden al menos 44 px y nada se sale de la pantalla", async ({ page, request }) => {
     await conSesion(page, await registrar(request, apodoUnico(), "1234"));
     const apodo = apodoUnico();
@@ -486,11 +571,11 @@ test.describe("Perfil", () => {
 
     await expect(page.getByRole("heading", { level: 1, name: apodo })).toBeVisible();
     await expect(fichasDelPerfil(page)).toHaveText("1.000");
-    for (const etiqueta of ["Partidas", "Ganancias totales", "Mayor premio", "Mejor racha", "Racha actual", "Quiebras"]) {
+    for (const etiqueta of ["Rondas jugadas", "Ganancias totales", "Mayor premio", "Mejor racha", "Racha actual", "Quiebras"]) {
       await expect(dato(estadisticas(page), etiqueta), etiqueta).toHaveText("0");
     }
     for (const juego of ["Blackjack", "Carrera"] as const) {
-      await expect(dato(porJuego(page, juego), "Partidas")).toHaveText("0");
+      await expect(dato(porJuego(page, juego), "Rondas jugadas")).toHaveText("0");
       await expect(dato(porJuego(page, juego), "Victorias")).toHaveText("0");
       await expect(dato(porJuego(page, juego), "% victorias")).toHaveText("—");
     }
@@ -518,17 +603,17 @@ test.describe("Perfil", () => {
 
     await expect(fichasDelPerfil(page)).toHaveText("12.345");
     const general = estadisticas(page);
-    await expect(dato(general, "Partidas")).toHaveText("20");
+    await expect(dato(general, "Rondas jugadas")).toHaveText("20");
     await expect(dato(general, "Ganancias totales")).toHaveText("−1.250");
     await expect(dato(general, "Mayor premio")).toHaveText("5.400");
     await expect(dato(general, "Mejor racha")).toHaveText("9");
     await expect(dato(general, "Racha actual")).toHaveText("3");
     await expect(dato(general, "Quiebras")).toHaveText("2");
 
-    await expect(dato(porJuego(page, "Blackjack"), "Partidas")).toHaveText("12");
+    await expect(dato(porJuego(page, "Blackjack"), "Rondas jugadas")).toHaveText("12");
     await expect(dato(porJuego(page, "Blackjack"), "Victorias")).toHaveText("8");
     await expect(dato(porJuego(page, "Blackjack"), "% victorias")).toHaveText("67 %");
-    await expect(dato(porJuego(page, "Carrera"), "Partidas")).toHaveText("8");
+    await expect(dato(porJuego(page, "Carrera"), "Rondas jugadas")).toHaveText("8");
     await expect(dato(porJuego(page, "Carrera"), "Victorias")).toHaveText("1");
     await expect(dato(porJuego(page, "Carrera"), "% victorias")).toHaveText("13 %");
     await expect(botonRescate(page)).toHaveCount(0);
@@ -540,14 +625,14 @@ test.describe("Perfil", () => {
     let datos = perfilDe(sesion.jugador.apodo, { id: sesion.jugador.id, partidas: 3 });
     await simularPerfil(page, () => datos);
     await page.goto("/perfil");
-    await expect(dato(estadisticas(page), "Partidas")).toHaveText("3");
+    await expect(dato(estadisticas(page), "Rondas jugadas")).toHaveText("3");
 
     await barra(page).getByRole("link", { name: "Ranking" }).click();
     await expect(page).toHaveURL("/ranking");
     datos = { ...datos, partidas: 5, mayorPremio: 800 };
     await barra(page).getByRole("link", { name: "Perfil" }).click();
 
-    await expect(dato(estadisticas(page), "Partidas")).toHaveText("5");
+    await expect(dato(estadisticas(page), "Rondas jugadas")).toHaveText("5");
     await expect(dato(estadisticas(page), "Mayor premio")).toHaveText("800");
   });
 
@@ -570,7 +655,55 @@ test.describe("Perfil", () => {
 
     respuesta = "bien";
     await page.getByRole("button", { name: "Reintentar" }).click();
-    await expect(dato(estadisticas(page), "Partidas")).toHaveText("7");
+    await expect(dato(estadisticas(page), "Rondas jugadas")).toHaveText("7");
+  });
+
+  test("«Reintentar» no deja el foco en el aire: pasa a la zona de las estadísticas mientras carga y al llegar", async ({ page, request }) => {
+    const sesion = await registrar(request, apodoUnico(), "1234");
+    await conSesion(page, sesion);
+    const datos = perfilDe(sesion.jugador.apodo, { id: sesion.jugador.id, partidas: 7 });
+    let respuesta: "falla" | "bien" | "aplazada" = "bien";
+    const llegada = aplazada();
+    await page.route("**/api/yo", async (ruta) => {
+      if (respuesta === "falla") return ruta.fulfill({ status: 503, json: { error: "descansando" } });
+      if (respuesta === "aplazada") await llegada.espera;
+      return ruta.fulfill({ json: datos });
+    });
+    await page.route(/\/api\/ranking\?/, (ruta) => ruta.fulfill({ json: { top: jugadoresFalsos(3), yo: null } }));
+    await page.goto("/ranking");
+    await expect(lista(page, "fichas")).toBeVisible();
+    respuesta = "falla";
+    await barra(page).getByRole("link", { name: "Perfil" }).click();
+    await expect(page.getByRole("alert").filter({ hasText: "La Timba está descansando, vuelve mañana" })).toBeVisible();
+
+    respuesta = "aplazada";
+    await page.getByRole("button", { name: "Reintentar" }).focus();
+    await page.keyboard.press("Enter");
+    // Mientras carga, el botón ya no está y el foco no se ha ido al cuerpo de la página.
+    await expect(page.getByRole("status", { name: "Cargando tu perfil" })).toBeVisible();
+    await expect(page.locator(".perfil-zona")).toBeFocused();
+    llegada.soltar();
+    await expect(dato(estadisticas(page), "Rondas jugadas")).toHaveText("7");
+    await expect(page.locator(".perfil-zona")).toBeFocused();
+  });
+
+  test("el esqueleto de carga del perfil se anuncia con texto", async ({ page, request }) => {
+    const sesion = await registrar(request, apodoUnico(), "1234");
+    await conSesion(page, sesion);
+    const llegada = aplazada();
+    let aplazar = false;
+    await page.route("**/api/yo", async (ruta) => {
+      if (aplazar) await llegada.espera;
+      return ruta.fulfill({ json: perfilDe(sesion.jugador.apodo, { id: sesion.jugador.id }) });
+    });
+    await page.route(/\/api\/ranking\?/, (ruta) => ruta.fulfill({ json: { top: jugadoresFalsos(3), yo: null } }));
+    await page.goto("/ranking");
+    await expect(lista(page, "fichas")).toBeVisible();
+    aplazar = true;
+    await barra(page).getByRole("link", { name: "Perfil" }).click();
+    await expect(page.getByRole("status", { name: "Cargando tu perfil" })).toContainText("Cargando…");
+    llegada.soltar();
+    await expect(estadisticas(page)).toBeVisible();
   });
 
   test("«Cerrar sesión» vuelve a la entrada y borra el token", async ({ page, request }) => {
@@ -583,6 +716,38 @@ test.describe("Perfil", () => {
     expect(await page.evaluate(() => localStorage.getItem("timba.token"))).toBeNull();
     await expect(page).toHaveURL("/");
     await expect(barra(page)).toHaveCount(0);
+  });
+
+  test("al cerrar sesión se olvida la última partida de la pestaña: quien entre después no vuelve a la sala del anterior", async ({ page, request }) => {
+    const sesion = await registrar(request, apodoUnico(), "1234");
+    const codigo = await abrirPartida(request, sesion);
+    await conSesion(page, sesion);
+    await page.goto(`/p/${codigo}`);
+    await expect(page.getByRole("button", { name: new RegExp(`Invitar.*${codigo}`) })).toBeVisible();
+    expect(await page.evaluate(() => sessionStorage.getItem("timba.partida"))).toBe(codigo);
+
+    await barra(page).getByRole("link", { name: "Perfil" }).click();
+    await page.getByRole("button", { name: "Cerrar sesión" }).click();
+    await expect(page.getByRole("heading", { name: "Siéntate a la mesa" })).toBeVisible();
+
+    expect(await page.evaluate(() => sessionStorage.getItem("timba.partida"))).toBeNull();
+  });
+
+  test("si el servidor rechaza el token (sesión caducada) también se olvida la última partida", async ({ page, request }) => {
+    const sesion = await registrar(request, apodoUnico(), "1234");
+    const codigo = await abrirPartida(request, sesion);
+    await conSesion(page, sesion);
+    await page.goto(`/p/${codigo}`);
+    await expect(page.getByRole("button", { name: new RegExp(`Invitar.*${codigo}`) })).toBeVisible();
+    expect(await page.evaluate(() => sessionStorage.getItem("timba.partida"))).toBe(codigo);
+
+    await barra(page).getByRole("link", { name: "Ranking" }).click();
+    await expect(page.getByRole("heading", { level: 1, name: "Ranking" })).toBeVisible();
+    await page.route("**/api/yo", (ruta) => ruta.fulfill({ status: 401, json: { error: "no_autenticado" } }));
+    await barra(page).getByRole("link", { name: "Perfil" }).click();
+
+    await expect(page.getByRole("heading", { name: "Siéntate a la mesa" })).toBeVisible();
+    expect(await page.evaluate(() => sessionStorage.getItem("timba.partida"))).toBeNull();
   });
 
   test.describe("rescate", () => {
@@ -687,6 +852,8 @@ test.describe("Perfil", () => {
       await expect(botonRescate(page)).toHaveCount(0);
       await expect(page.getByRole("alert")).toHaveCount(0);
       expect(estado.rescates).toBe(1);
+      // El botón se ha ido con el foco dentro: el foco se queda en la tarjeta de las fichas, como cuando el rescate sale bien.
+      await expect(page.locator(".perfil-fichas")).toBeFocused();
     });
 
     test("un fallo del servidor usa el texto general", async ({ page, request }) => {

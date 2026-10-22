@@ -2,6 +2,7 @@ import { createContext, type ReactNode, useCallback, useContext, useEffect, useM
 import type { JugadorPublico } from "../../shared/api";
 import { alSesionInvalida, api, ErrorApi, mensajeError } from "./api";
 import { alCambiarToken, guardarToken, leerToken } from "./token";
+import { olvidarUltimaPartida } from "./ultimaPartida";
 
 export interface Sesion {
   token: string | null;
@@ -35,8 +36,10 @@ export function SesionProvider({ children }: { children: ReactNode }) {
     setFallo(null);
   }, []);
 
+  // También cubre los cierres por un 401 (token caducado): la partida de esta pestaña no sobrevive a la sesión.
   const salir = useCallback(() => {
     guardarToken(null);
+    olvidarUltimaPartida();
     setToken(null);
     setJugador(null);
     setFallo(null);

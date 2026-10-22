@@ -36,3 +36,13 @@ export function olvidarPartida(codigo: string): void {
     // Sin almacenamiento: ya está olvidada en memoria.
   }
 }
+
+/** Olvida la última partida sea cual sea (al cerrar sesión: quien entre después en esta pestaña no debe volver a la sala del anterior). */
+export function olvidarUltimaPartida(): void {
+  enMemoria = null;
+  try {
+    sessionStorage.removeItem(CLAVE);
+  } catch {
+    // Sin almacenamiento: ya está olvidada en memoria.
+  }
+}
