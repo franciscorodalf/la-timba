@@ -5,6 +5,7 @@ import { AvisoMesa } from "../componentes/AvisoMesa";
 import { BarraMesa } from "../componentes/BarraMesa";
 import { CartelPremio } from "../componentes/CartelPremio";
 import { EstadoMesa } from "../componentes/EstadoMesa";
+import { GirarMovil } from "../componentes/GirarMovil";
 import { FichasVolando } from "../componentes/FichasVolando";
 import { usePrecargarBaraja } from "../componentes/Naipe";
 import { Reconectando } from "../componentes/Reconectando";
@@ -176,6 +177,7 @@ export function MesaCarrera({ codigo }: { codigo: string }) {
       <AvisoMesa error={error} />
 
       {salida.dialogo}
+      <GirarMovil />
     </main>
   );
 }

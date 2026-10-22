@@ -6,6 +6,7 @@ import { AvisoMesa } from "../componentes/AvisoMesa";
 import { BarraMesa } from "../componentes/BarraMesa";
 import { CartelPremio } from "../componentes/CartelPremio";
 import { EstadoMesa } from "../componentes/EstadoMesa";
+import { GirarMovil } from "../componentes/GirarMovil";
 import { Ficha } from "../componentes/Ficha";
 import { FichasVolando } from "../componentes/FichasVolando";
 import { Mazo } from "../componentes/Mazo";
@@ -308,6 +309,7 @@ export function MesaBlackjack({ codigo }: { codigo: string }) {
       <AvisoMesa error={error} />
 
       {salida.dialogo}
+      <GirarMovil />
     </main>
   );
 }

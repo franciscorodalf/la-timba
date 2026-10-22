@@ -20,6 +20,7 @@ import "./tema/destellos.css";
 import "./tema/confirmar.css";
 import "./tema/barra-mesa.css";
 import "./tema/marco-mesa.css";
+import "./tema/girar-movil.css";
 import "./tema/estado-mesa.css";
 import "./tema/fichas-apuesta.css";
 import "./tema/fichas-volando.css";
