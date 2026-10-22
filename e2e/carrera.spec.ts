@@ -867,4 +867,54 @@ test.describe("movimiento de la pista (mesa simulada)", () => {
     expect(await page.locator("[data-caballo]").evaluateAll((els) => els.flatMap((el) => el.getAnimations().map((a) => a.constructor.name)))).toEqual([]);
     await expect(contador(page)).toHaveText("Tienes 950 fichas");
   });
+
+  test("un paso con ganador que llega justo antes del último fotograma del anterior sale detrás: el caballo no retrocede, el aviso y el cobro esperan a la meta y la pista acaba en la última vista", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrar(page, request);
+    const yo = sesion.jugador.id;
+    await fichasDe(page, 950);
+    // H está a una casilla de la meta; el tramo 2 está por girarse (todos los demás van por la 3).
+    const antes = vista(sesion, { fase: "carrera", posiciones: pos(7, 3, 3, 3), tramos: tramos("5H", "6D"), ultimaCarta: c("2D"), misApuestas: [{ caballo: "H", cantidad: 50 }], finFase: Date.now() + 800 });
+    mesa.alConectar(estado(antes));
+    await page.goto(`/p/${codigo}/carrera`);
+    await expect(caballo(page, "H")).toHaveAttribute("data-casilla", "7");
+    await page.waitForLoadState("networkidle");
+    await pistaQuieta(page);
+    const casilla = await paso(page);
+
+    await mirarGanador(page, 4500);
+    // Paso 1: sale un diamante (D 3→4), se gira el tramo 2 (un 7 de tréboles) y tréboles retrocede (3→2): su último fotograma, el
+    // retroceso, sale a los 480 ms de llegar.
+    const paso1 = { ...antes, posiciones: pos(7, 4, 2, 3), tramos: tramos("5H", "6D", "7C"), ultimaCarta: c("8D") };
+    mesa.enviar(estado(paso1, [{ tipo: "caballo_avanza", palo: "D", carta: c("8D") }, { tipo: "tramo_girado", indice: 2, palo: "C" }]));
+    // Paso 2, justo antes de ese último fotograma: gana H (7→8) y cobras.
+    await page.waitForTimeout(400);
+    const final = { ...paso1, fase: "resultado" as const, finFase: Date.now() + 5_000, posiciones: pos(8, 4, 2, 3), ultimaCarta: c("JH"), ganador: "H" as const };
+    mesa.enviar(
+      estado(final, [
+        { tipo: "caballo_avanza", palo: "H", carta: c("JH") },
+        { tipo: "ganador", palo: "H" },
+        { tipo: "pago", jugadorId: yo, neto: 150 },
+      ]),
+    );
+    await expect(premio(page)).toBeVisible({ timeout: 10_000 });
+    await page.waitForTimeout(2000);
+    const lista = await fotos(page);
+
+    // El caballo de corazones nunca retrocede…
+    for (let i = 1; i < lista.length; i++) expect(lista[i].d).toBeGreaterThanOrEqual(lista[i - 1].d - 0.5);
+    // …el aviso, el cartel y los destellos solo salen con él ya en la meta (sin esperas: a menos de 1 px)…
+    const llegada = 8 * casilla;
+    expect(lista.filter((f) => (f.aviso || f.premio || f.chispas > 0) && f.d < llegada - 1)).toEqual([]);
+    expect(lista.some((f) => f.aviso && f.d >= llegada - 1)).toBe(true);
+    expect(lista.some((f) => f.premio && f.d >= llegada - 1)).toBe(true);
+    // …y la pista acaba en la última vista: casillas, tramos (con su línea encendida) y ganador.
+    for (const [palo, n] of [["H", 8], ["D", 4], ["C", 2], ["S", 3]] as const) {
+      await expect(caballo(page, palo)).toHaveAttribute("data-casilla", String(n));
+      expect(await recorrido(page, palo)).toBeCloseTo(n * casilla, 0);
+    }
+    await expect(page.locator(".carrera-linea--encendida")).toHaveCount(3);
+    await expect(page.getByRole("img", { name: "7 de tréboles" })).toBeVisible();
+    await expect(ganadorDe(page, "corazones")).toBeVisible();
+    await expect(caballo(page, "H")).toHaveClass(/carrera-caballo--ganador/);
+  });
 });
