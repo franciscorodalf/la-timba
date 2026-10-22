@@ -1,5 +1,5 @@
 import { expect, type APIRequestContext, type Page, type WebSocketRoute } from "@playwright/test";
-import type { MensajeMesa, RespuestaSesion } from "../src/shared/api";
+import type { FilaRanking, MensajeMesa, RespuestaSesion } from "../src/shared/api";
 import type { Carta } from "../src/shared/cartas";
 import type { Evento } from "../src/shared/juegos/tipos";
 
@@ -109,4 +109,25 @@ export async function fichasDeApi(pagina: Page, inicial: number): Promise<{ pone
     }
   });
   return { poner: (n) => (fichas = n) };
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Lo que comparten las pruebas del ranking y del perfil.
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** La barra de navegación de abajo (Sala, Ranking, Perfil). */
+export const barra = (pagina: Page) => pagina.getByRole("navigation", { name: "Principal" });
+
+/** La página no se desplaza a los lados: nada se sale de la pantalla. */
+export const sinDesplazamientoHorizontal = (pagina: Page) => pagina.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth);
+
+/** `n` filas de ranking inventadas (`jugador1`…), de mayor a menor valor. */
+export const jugadoresFalsos = (n: number, valor: (i: number) => number = (i) => 5000 - i * 10): FilaRanking[] =>
+  Array.from({ length: n }, (_, i) => ({ posicion: i + 1, apodo: `jugador${i + 1}`, valor: valor(i) }));
+
+/** Una promesa que la prueba cumple cuando quiere. */
+export function aplazada(): { espera: Promise<void>; soltar(): void } {
+  let soltar!: () => void;
+  const espera = new Promise<void>((resolver) => (soltar = resolver));
+  return { espera, soltar };
 }
