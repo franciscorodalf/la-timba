@@ -17,7 +17,7 @@ Tiene dos propósitos a la vez:
 | Unirse es rápido | Crear partida y que 2 amigos entren por QR en menos de 30 s |
 | Se siente bien jugar | Animaciones a 60 fps en un móvil de gama media (sin tareas largas durante animaciones en el perfilador de Chrome) |
 | Las fichas siempre cuadran | Tests de integración: tras cualquier secuencia de rondas, fichas finales = iniciales + suma de netos |
-| Coste 0 € | Una noche típica (8 jugadores, 3 h) usa menos del 5 % del límite diario gratuito |
+| Coste 0 € | Una noche típica (8 jugadores, 3 h) usa como mucho el 25 % de cada límite diario gratuito (filas escritas, peticiones y filas leídas), medido por `test/server/presupuesto.test.ts`. Antes decía «menos del 5 %», imposible con un libro de fichas duradero: ≈ 2.800 apuestas por noche necesitan al menos una escritura cada una |
 | Demo de portfolio | Un visitante solo puede registrarse y jugar ambos juegos sin nadie más |
 | Reconexión | Cerrar y reabrir la pestaña te devuelve a tu mesa, con tu mano, en menos de 3 s |
 
