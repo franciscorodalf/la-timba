@@ -961,6 +961,11 @@ describe("costo, alarma y resumen", () => {
     expect(blackjack.resumen(e)).toEqual({ jugadores: ["ana", "beto"], fase: "decisiones", finFase: T0 + BJ.DECISIONES_MS });
     expect(blackjack.resumen(estado())).toEqual({ jugadores: [], fase: "esperando", finFase: null });
   });
+
+  it("en la banca el resumen no lleva cuenta atrás: dura un instante y la sala no la enseña", () => {
+    const e = enDecisiones({ fase: "banca", finFase: T0 + BJ.BANCA_MS });
+    expect(blackjack.resumen(e)).toEqual({ jugadores: ["ana"], fase: "banca", finFase: null });
+  });
 });
 
 describe("vista", () => {

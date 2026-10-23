@@ -22,7 +22,7 @@ import {
 
 type Estado = EstadoMesa<VistaCarrera>;
 
-const { mesa, estadoMesa, alarmaDe, reloj, vencer, nuevaMesa: nuevaMesaCon, sentarse } = ayudasMesa(env.MesaCarrera, "mesa-carrera");
+const { mesa, estadoMesa, alarmaDe, reloj, vencer, nuevaMesa: nuevaMesaCon, sentarse, vigilarEscrituras } = ayudasMesa(env.MesaCarrera, "mesa-carrera");
 
 /** Recibe mensajes `t` hasta el primero que cumpla `cumple` (por defecto, estados de carrera); los que llegan se añaden a `vistos`. */
 const hasta = <M = Estado>(conexion: Conexion, cumple: (m: M) => boolean, t = "estado", vistos: M[] = []) =>
@@ -236,22 +236,6 @@ describe("MesaCarrera: carrera y fichas", () => {
   });
 });
 
-/** Lo que la mesa escribe en su almacenamiento y las alarmas que programa mientras se mide. */
-async function vigilarEscrituras(codigo: string) {
-  const escrituras: string[] = [];
-  await runInDurableObject(mesa(codigo), (_m, state) => {
-    const almacen = state.storage as unknown as Record<string, (...a: unknown[]) => unknown>;
-    for (const nombre of ["put", "delete", "setAlarm", "deleteAlarm"]) {
-      const original = almacen[nombre].bind(state.storage);
-      almacen[nombre] = (...a: unknown[]) => {
-        escrituras.push(nombre);
-        return original(...a);
-      };
-    }
-  });
-  return escrituras;
-}
-
 describe("MesaCarrera: los pasos de la carrera", () => {
   it("llegan solos, uno cada 800 ms, con el reloj: sin escribir nada, sin alarmas y sin avisar a la sala", async () => {
     const {
@@ -377,7 +361,10 @@ describe("MesaCarrera: la sala", () => {
 
     enviar(conexion, apostar("H", 50));
     await hasta(conexion, (m) => m.vista.misApuestas.length === 1);
-    await correr(codigo);
+    await vencer(codigo);
+    // La apuesta no cambia el resumen: lo siguiente que ve la sala es la salida, sin cuenta atrás (no hay nada que contar).
+    expect(((await sala.recibir("sala")) as MensajeSala).mesas.carrera).toEqual({ jugadores: [ana.apodo], fase: "carrera", finFase: null });
+    await vencer(codigo);
     const liquidada = await hasta<MensajeSala>(sala, (m) => m.mesas.carrera.fase === "resultado", "sala");
     expect(liquidada.mesas.carrera).toEqual({ jugadores: [ana.apodo], fase: "resultado", finFase: FIN_CARRERA + CARRERA.RESULTADO_MS });
     expect(liquidada.mesas.blackjack).toEqual({ jugadores: [], fase: "esperando", finFase: null });

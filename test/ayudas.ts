@@ -184,16 +184,40 @@ export function ayudasMesa<M extends Mesa<any, any>>(ns: DurableObjectNamespace<
   }
 
   /**
-   * Prepara una mesa que aún no ha arrancado: reloj en `T` y, si se da, un estado inicial que se guarda en "estado", de
-   * donde lo carga la mesa al arrancar.
+   * Prepara una mesa que aún no ha arrancado: reloj en `T` y, si se da, un estado inicial que se guarda en el registro de
+   * la mesa ("mesa"), de donde lo carga al arrancar.
    */
   const preparar = (codigo: string, estado?: M["estado"]) =>
     runInDurableObject(mesa(codigo), async (m, state) => {
       m.ahora = () => T;
       if (estado === undefined) return;
       m.estado = estado;
-      await state.storage.put("estado", estado);
+      await state.storage.put("mesa", { estado, pendientes: [], cobro: null });
     });
+
+  /** El registro guardado de la mesa: `{ estado, pendientes, cobro }`. */
+  const guardado = (codigo: string) =>
+    runInDurableObject(mesa(codigo), (_m, state) => state.storage.get<{ estado: M["estado"]; pendientes: unknown[]; cobro: unknown }>("mesa"));
+
+  /**
+   * Apunta, mientras la mesa siga en memoria, lo que escribe en su almacenamiento: `put:<claves>`, `delete:<claves>`,
+   * `setAlarm` y `deleteAlarm`.
+   */
+  async function vigilarEscrituras(codigo: string): Promise<string[]> {
+    const escrituras: string[] = [];
+    await runInDurableObject(mesa(codigo), (_m, state) => {
+      const almacen = state.storage as unknown as Record<string, (...a: unknown[]) => unknown>;
+      for (const nombre of ["put", "delete", "setAlarm", "deleteAlarm"]) {
+        const original = almacen[nombre].bind(state.storage);
+        almacen[nombre] = (...a: unknown[]) => {
+          const claves = nombre.endsWith("Alarm") ? [] : typeof a[0] === "string" ? [a[0]] : Array.isArray(a[0]) ? a[0] : Object.keys(a[0] as object);
+          escrituras.push(claves.length === 0 ? nombre : `${nombre}:${claves.join(",")}`);
+          return original(...a);
+        };
+      }
+    });
+    return escrituras;
+  }
 
   /** Registra `n` jugadores, abre una partida del primero y prepara su mesa (ver `preparar`). */
   async function nuevaMesa(n: number, estado?: M["estado"]) {
@@ -205,5 +229,5 @@ export function ayudasMesa<M extends Mesa<any, any>>(ns: DurableObjectNamespace<
 
   const sentarse = (codigo: string, token: string) => abrir(`/parties/${ruta}/${codigo}`, token);
 
-  return { mesa, estadoMesa, alarmaDe, reloj, vencer, preparar, nuevaMesa, sentarse };
+  return { mesa, estadoMesa, guardado, alarmaDe, reloj, vencer, preparar, nuevaMesa, sentarse, vigilarEscrituras };
 }

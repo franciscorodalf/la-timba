@@ -412,7 +412,8 @@ export const carrera: Juego<EstadoCarrera, AccionCarrera> = {
 
   vista,
 
+  /** En plena carrera la sala no enseña cuenta atrás (`finFase` a `null`). */
   resumen(e): ResumenMesa {
-    return { jugadores: e.asientos.map((a) => a.apodo), fase: e.fase, finFase: e.finFase };
+    return { jugadores: e.asientos.map((a) => a.apodo), fase: e.fase, finFase: e.fase === "carrera" ? null : e.finFase };
   },
 };

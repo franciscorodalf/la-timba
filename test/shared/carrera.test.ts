@@ -1013,6 +1013,8 @@ describe("costo, alarma y resumen", () => {
 
   it("resumen lista los apodos sentados, la fase y el fin de fase", () => {
     expect(carrera.resumen(enApuestas())).toEqual({ jugadores: ["ana", "beto"], fase: "apuestas", finFase: T0 + CARRERA.APUESTAS_MS });
+    // en plena carrera, sin cuenta atrás: el resumen no cambia hasta la meta
+    expect(carrera.resumen(enCarrera())).toEqual({ jugadores: ["ana", "beto"], fase: "carrera", finFase: null });
     expect(carrera.resumen(estado())).toEqual({ jugadores: [], fase: "esperando", finFase: null });
   });
 });

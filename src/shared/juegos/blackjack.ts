@@ -447,7 +447,8 @@ export const blackjack: Juego<EstadoBJ, AccionBJ> = {
 
   vista,
 
+  /** La banca dura un instante y la sala no le enseña cuenta atrás (`finFase` a `null`). */
   resumen(e): ResumenMesa {
-    return { jugadores: e.asientos.map((a) => a.apodo), fase: e.fase, finFase: e.finFase };
+    return { jugadores: e.asientos.map((a) => a.apodo), fase: e.fase, finFase: e.fase === "banca" ? null : e.finFase };
   },
 };

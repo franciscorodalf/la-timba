@@ -24,10 +24,20 @@ import {
 
 type Estado = EstadoMesa<VistaBJ>;
 
-const { mesa, estadoMesa, alarmaDe, reloj, vencer, nuevaMesa: nuevaMesaCon, sentarse } = ayudasMesa(env.MesaBlackjack, "mesa-blackjack");
-const pendientesGuardados = (codigo: string) => runInDurableObject(mesa(codigo), (_m, state) => state.storage.get<unknown[]>("pendientes"));
-/** El cobro a medias que guarda la mesa mientras espera a Jugadores (`undefined` o `null` si no hay ninguno). */
-const cobroGuardado = (codigo: string) => runInDurableObject(mesa(codigo), (_m, state) => state.storage.get("cobro"));
+const {
+  mesa,
+  estadoMesa,
+  guardado,
+  alarmaDe,
+  reloj,
+  vencer,
+  nuevaMesa: nuevaMesaCon,
+  sentarse,
+  vigilarEscrituras,
+} = ayudasMesa(env.MesaBlackjack, "mesa-blackjack");
+const pendientesGuardados = async (codigo: string) => (await guardado(codigo))?.pendientes;
+/** El cobro a medias que guarda la mesa mientras espera a Jugadores (`null` si no hay ninguno). */
+const cobroGuardado = async (codigo: string) => (await guardado(codigo))?.cobro ?? null;
 
 const ponerFichas = (jugadorId: number, cantidad: number) =>
   runInDurableObject(jugadores(), (_j, state) => {
@@ -145,7 +155,8 @@ const cobraYFalla =
 async function dejarCobroAMedias(codigo: string, jugadorId: number, cantidad: number): Promise<void> {
   const cobro = { cobroId: crypto.randomUUID(), jugadorId, cantidad, rondaId: `${codigo}:blackjack:1` };
   expect(await jugadores().apostar(jugadorId, cantidad, cobro.rondaId, cobro.cobroId)).toBe("ok");
-  await runInDurableObject(mesa(codigo), (_m, state) => state.storage.put("cobro", cobro));
+  const registro = await guardado(codigo);
+  await runInDurableObject(mesa(codigo), (_m, state) => state.storage.put("mesa", { ...registro, cobro }));
   await evictDurableObject(mesa(codigo));
   await reloj(codigo, T);
 }
@@ -466,7 +477,6 @@ describe("MesaBlackjack: rondas y fichas", () => {
 
     enviar(conexion, { t: "pedir" });
     const pedido: Estado = await conexion.recibir();
-    expect(pedido.version).toBe(repartido.version + 1);
     expect(pedido.vista).toMatchObject({ ronda: 1, fase: "decisiones", banca: [c("9C"), null] });
     expect(pedido.vista.manos).toMatchObject([{ jugadorId: ana.id, apuesta: 50, cartas: cs("10S 2H 5C"), total: 17, estado: "jugando" }]);
     expect(await alarmaDe(codigo)).toBe(alarma);
@@ -618,6 +628,8 @@ describe("MesaBlackjack: Jugadores y la sala", () => {
     await hasta(conexion, (m) => m.vista.fase === "banca");
     const antes = await hasta<MensajeSala>(sala, (m) => m.mesas.blackjack.fase === "banca", "sala");
     expect(antes.rankingNoche).toEqual([]); // hasta liquidar, la sala no vuelve a pedir el ranking
+    // La banca dura un instante: la sala no enseña cuenta atrás.
+    expect(antes.mesas.blackjack).toEqual({ jugadores: [ana.apodo], fase: "banca", finFase: null });
 
     await vencer(codigo);
     const liquidada = await hasta<MensajeSala>(sala, (m) => m.mesas.blackjack.fase === "resultado", "sala");
@@ -777,6 +789,86 @@ describe("MesaBlackjack: Jugadores y la sala", () => {
   });
 });
 
+describe("MesaBlackjack: lo que se escribe y a quién se avisa", () => {
+  it("una apuesta escribe dos veces el registro de la mesa (intención y jugada), sin alarma y sin avisar a la sala", async () => {
+    const {
+      codigo,
+      js: [ana, beto],
+    } = await nuevaMesa(2);
+    const sala = await abrir(`/parties/partida/${codigo}`, ana.token);
+    const conexionA = await sentarse(codigo, ana.token);
+    const conexionB = await sentarse(codigo, beto.token);
+    await hasta<MensajeSala>(sala, (m) => m.mesas.blackjack.jugadores.length === 2, "sala");
+    await hasta(conexionA, (m) => m.vista.sentados.length === 2);
+
+    const escrituras = await vigilarEscrituras(codigo);
+    enviar(conexionA, { t: "apostar", cantidad: 50 });
+    await hasta(conexionA, (m) => m.vista.manos.length === 1);
+    expect(escrituras).toEqual(["put:mesa", "put:mesa"]);
+    // Además del registro, solo está el nombre que guarda partyserver la primera vez.
+    expect(await runInDurableObject(mesa(codigo), async (_m, state) => [...(await state.storage.list()).keys()])).toEqual(["__ps_name", "mesa"]);
+    expect(await cobroGuardado(codigo)).toBeNull();
+
+    // Ni la apuesta ni las decisiones cambian lo que enseña la sala: lo siguiente que recibe es el reparto.
+    enviar(conexionB, { t: "apostar", cantidad: 50 });
+    await hasta(conexionB, (m) => m.vista.manos.length === 2);
+    await vencer(codigo);
+    expect(((await sala.recibir("sala")) as MensajeSala).mesas.blackjack.fase).toBe("decisiones");
+    enviar(conexionA, { t: "plantarse" });
+    await hasta(conexionA, (m) => m.vista.manos[0].estado === "plantado");
+    enviar(conexionB, { t: "plantarse" });
+    await hasta(conexionB, (m) => m.vista.fase === "banca");
+    expect(((await sala.recibir("sala")) as MensajeSala).mesas.blackjack).toMatchObject({ fase: "banca", finFase: null });
+  });
+
+  it("la alarma solo se programa cuando cambia su hora", async () => {
+    const {
+      codigo,
+      js: [ana, beto],
+    } = await nuevaMesa(2, "2S 3S 9C 2H 3H 7D 4C");
+    const conexionA = await sentarse(codigo, ana.token);
+    const conexionB = await sentarse(codigo, beto.token);
+    enviar(conexionA, { t: "apostar", cantidad: 50 });
+    await hasta(conexionA, (m) => m.vista.manos.length === 1);
+    enviar(conexionB, { t: "apostar", cantidad: 50 });
+    await hasta(conexionA, (m) => m.vista.manos.length === 2);
+    await vencer(codigo);
+    await hasta(conexionA, (m) => m.vista.fase === "decisiones");
+
+    const escrituras = await vigilarEscrituras(codigo);
+    enviar(conexionA, { t: "pedir" }); // ana pide (2♠ 2♥ 4♣) y sigue jugando: la fase no cambia
+    await hasta(conexionA, (m) => m.vista.manos[0].cartas.length === 3);
+    expect(escrituras).toEqual(["put:mesa"]);
+    enviar(conexionA, { t: "plantarse" });
+    await hasta(conexionA, (m) => m.vista.manos[0].estado === "plantado");
+    expect(escrituras).toEqual(["put:mesa", "put:mesa"]);
+    enviar(conexionB, { t: "plantarse" }); // la última decisión: la banca juega en 1 s
+    await hasta(conexionA, (m) => m.vista.fase === "banca");
+    expect(escrituras).toEqual(["put:mesa", "put:mesa", "put:mesa", "setAlarm"]);
+    expect(await alarmaDe(codigo)).toBe(T + BJ.APUESTAS_MS + BJ.BANCA_MS);
+  });
+
+  it("tras salir de memoria sabe qué alarma tiene: un cambio que la deja igual no la vuelve a programar", async () => {
+    const {
+      codigo,
+      js: [ana, beto],
+    } = await nuevaMesa(2);
+    const conexionA = await sentarse(codigo, ana.token);
+    await conexionA.recibir();
+    expect(await alarmaDe(codigo)).toBe(T + BJ.APUESTAS_MS);
+    await evictDurableObject(mesa(codigo));
+    await reloj(codigo, T + 1_000);
+
+    const conexionB = await sentarse(codigo, beto.token); // despierta la mesa
+    await conexionB.recibir();
+    const escrituras = await vigilarEscrituras(codigo);
+    enviar(conexionB, { t: "apostar", cantidad: 50 });
+    await hasta(conexionB, (m) => m.vista.manos.length === 1);
+    expect(escrituras).toEqual(["put:mesa", "put:mesa"]);
+    expect(await alarmaDe(codigo)).toBe(T + BJ.APUESTAS_MS);
+  });
+});
+
 describe("MesaBlackjack: cobro en dos fases", () => {
   it("si Jugadores cobra pero la respuesta se pierde, se anula: fichas como estaban, sin fila pendiente y el rescate libre", async () => {
     const {
@@ -793,7 +885,7 @@ describe("MesaBlackjack: cobro en dos fases", () => {
     expect(await conexion.recibir()).toEqual({ t: "error", codigo: "no_disponible" });
     expect(await fichas(ana.id)).toBe(50);
     expect(await pendientesDe(codigo)).toBe(0);
-    expect(await cobroGuardado(codigo)).toBeUndefined();
+    expect(await cobroGuardado(codigo)).toBeNull();
     expect((await estadoMesa(codigo)).manos).toEqual([]);
 
     await arreglar();
@@ -813,7 +905,7 @@ describe("MesaBlackjack: cobro en dos fases", () => {
     enviar(conexion, { t: "apostar", cantidad: 50 });
     expect(await conexion.recibir()).toEqual({ t: "error", codigo: "no_disponible" });
     expect((await estadoMesa(codigo)).manos).toEqual([]);
-    expect(await cobroGuardado(codigo)).toBeUndefined();
+    expect(await cobroGuardado(codigo)).toBeNull();
     expect(await fichas(ana.id)).toBe(1000);
     await arreglar();
   });
@@ -832,7 +924,7 @@ describe("MesaBlackjack: cobro en dos fases", () => {
     expect(await conexion.recibir()).toEqual({ t: "error", codigo: "fase_incorrecta" });
     expect(await fichas(ana.id)).toBe(1000);
     expect(await pendientesDe(codigo)).toBe(0);
-    expect(await cobroGuardado(codigo)).toBeUndefined();
+    expect(await cobroGuardado(codigo)).toBeNull();
     expect((await estadoMesa(codigo)).manos).toEqual([]);
   });
 
@@ -847,7 +939,7 @@ describe("MesaBlackjack: cobro en dos fases", () => {
     expect(await runDurableObjectAlarm(mesa(codigo))).toBe(true);
     expect(await fichas(ana.id)).toBe(1000);
     expect(await pendientesDe(codigo)).toBe(0);
-    expect(await cobroGuardado(codigo)).toBeUndefined();
+    expect(await cobroGuardado(codigo)).toBeNull();
   });
 
   it("si tampoco se puede anular, el cobro se guarda, una alarma lo reintenta en ≤ 60 s y entretanto no se cobra otro", async () => {
@@ -887,7 +979,7 @@ describe("MesaBlackjack: cobro en dos fases", () => {
     expect(await runDurableObjectAlarm(mesa(codigo))).toBe(true);
     expect(await fichas(ana.id)).toBe(1000);
     expect(await pendientesDe(codigo)).toBe(0);
-    expect(await cobroGuardado(codigo)).toBeUndefined();
+    expect(await cobroGuardado(codigo)).toBeNull();
     expect(await alarmaDe(codigo)).toBeNull();
     expect((await estadoMesa(codigo)).manos).toEqual([]);
   });
@@ -943,7 +1035,7 @@ describe("MesaBlackjack: cobro en dos fases", () => {
     expect(await fichas(ana.id)).toBe(1050);
     expect(await pendientesDe(codigo)).toBe(0);
     expect(await pendientesGuardados(codigo)).toEqual([]);
-    expect(await cobroGuardado(codigo)).toBeUndefined();
+    expect(await cobroGuardado(codigo)).toBeNull();
     await arreglar();
   });
 

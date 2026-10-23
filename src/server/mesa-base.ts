@@ -5,10 +5,8 @@ import type { CodigoError, Evento, FilaLiquidacion, Juego, JugadorId, Paso } fro
 import type { Env } from "./index";
 import { type Jugadores, jugadoresGlobal } from "./jugadores";
 
-const CLAVE_ESTADO = "estado";
-const CLAVE_VERSION = "version";
-const CLAVE_PENDIENTES = "pendientes";
-const CLAVE_COBRO = "cobro";
+/** La única clave del almacenamiento: el registro de la mesa (`Registro`), que se escribe entero en cada cambio. */
+const CLAVE_MESA = "mesa";
 
 /** Mensajes por conexión en un mismo segundo: los que pasen de aquí se descartan con error… */
 const MENSAJES_POR_SEGUNDO = 20;
@@ -49,6 +47,13 @@ interface Cobro {
   rondaId: string;
 }
 
+/** Lo que la mesa guarda, en una sola clave: así cada cambio es una sola fila escrita. */
+interface Registro<E> {
+  estado: E;
+  pendientes: Liquidacion[];
+  cobro: Cobro | null;
+}
+
 type PasoOk<E> = Extract<Paso<E>, { ok: true }>;
 
 /** Para los manejadores de WebSocket: la cola ya registró el fallo y partyserver no debe ver un rechazo. */
@@ -78,14 +83,15 @@ function leerAccion<A extends { t: string }>(mensaje: WSMessage): A | null {
  * - Cada cambio se confirma (`confirmar`): se guarda, se paga en Jugadores si cerró una ronda, se envía a cada conexión
  *   su vista, se programa la alarma y se avisa a la sala.
  *
- * Hiberna: lo necesario vive en el almacenamiento (`estado`, `version`, `pendientes`, `cobro`) o en el estado de cada
- * conexión; los campos de la instancia son copias que `onStart` vuelve a cargar.
+ * Hiberna: lo necesario vive en el almacenamiento (el registro `{ estado, pendientes, cobro }` en una sola clave) o en el
+ * estado de cada conexión; los campos de la instancia son copias que `onStart` vuelve a cargar. Lo demás (la versión, la
+ * hora de la alarma, el último resumen de la sala, los avisos) vive en memoria y se rehace al despertar.
  */
 export abstract class Mesa<E extends { ronda: number }, A extends { t: string }> extends Server<Env> {
   static options = { hibernate: true };
 
   protected abstract juego: Juego<E, A>;
-  /** Persistido en el almacenamiento con la clave "estado". */
+  /** Persistido en el registro de la mesa. */
   estado!: E;
   /** Reloj de la mesa. Los tests lo sustituyen; al hibernar vuelve a `Date.now`. */
   ahora: () => number = () => Date.now();
@@ -96,12 +102,16 @@ export abstract class Mesa<E extends { ronda: number }, A extends { t: string }>
     return () => clearTimeout(id);
   };
 
-  /** Crece con cada cambio confirmado; persistido en "version". */
+  /** Crece con cada mensaje de estado. Solo en memoria: los clientes no la usan para nada más que validar el mensaje. */
   private version = 0;
-  /** Rondas cerradas aún sin pagar; persistidas en "pendientes" y reintentadas en cada cambio. */
+  /** Rondas cerradas aún sin pagar; persistidas en el registro y reintentadas en cada cambio. */
   private pendientes: Liquidacion[] = [];
-  /** Cobro en curso o a medias; persistido en "cobro". Como mucho uno: la cola atiende las acciones de una en una. */
+  /** Cobro en curso o a medias; persistido en el registro. Como mucho uno: la cola atiende las acciones de una en una. */
   private cobro: Cobro | null = null;
+  /** La hora de la alarma programada (`null` si no hay): solo se vuelve a programar si cambia. Se lee en `onStart`. */
+  private alarmaEn: number | null = null;
+  /** El último resumen que aceptó la sala (en JSON): no se le vuelve a mandar si no cambia. `null` al despertar. */
+  private resumenEnSala: string | null = null;
   private cola: Promise<void> = Promise.resolve();
   /** Mensajes de cada conexión (por id) en el segundo en curso del reloj de la mesa. Solo en memoria: hibernar lo reinicia. */
   private mensajes = new Map<string, { segundo: number; cuenta: number }>();
@@ -119,16 +129,13 @@ export abstract class Mesa<E extends { ronda: number }, A extends { t: string }>
   private aviso: { cuando: number; quitar: () => void } | null = null;
 
   async onStart(): Promise<void> {
-    const guardado = await this.ctx.storage.get([CLAVE_ESTADO, CLAVE_VERSION, CLAVE_PENDIENTES, CLAVE_COBRO]);
-    const estado = guardado.get(CLAVE_ESTADO) as E | undefined;
-    this.version = (guardado.get(CLAVE_VERSION) as number | undefined) ?? 0;
-    this.pendientes = (guardado.get(CLAVE_PENDIENTES) as Liquidacion[] | undefined) ?? [];
-    this.cobro = (guardado.get(CLAVE_COBRO) as Cobro | null | undefined) ?? null;
-    if (estado !== undefined) {
-      this.estado = estado;
+    const [guardado, alarma] = await Promise.all([this.ctx.storage.get<Registro<E>>(CLAVE_MESA), this.ctx.storage.getAlarm()]);
+    this.alarmaEn = alarma;
+    if (guardado !== undefined) {
+      ({ estado: this.estado, pendientes: this.pendientes, cobro: this.cobro } = guardado);
     } else {
       this.estado = this.juego.crear(this.ahora(), this.rng);
-      await this.ctx.storage.put(CLAVE_ESTADO, this.estado);
+      await this.guardar();
     }
     this.avisadoHasta = this.ahora();
     this.programarAviso(this.avisadoHasta);
@@ -192,6 +199,8 @@ export abstract class Mesa<E extends { ronda: number }, A extends { t: string }>
 
   /** Si la tarea falla, la promesa rechaza para que el runtime reintente la alarma (la cola sigue atendiendo). */
   onAlarm(): Promise<void> {
+    // La alarma que salta ya no está programada.
+    this.alarmaEn = null;
     return this.encolar(async () => {
       const ahora = this.ahora();
       await this.anularCobro();
@@ -235,8 +244,7 @@ export abstract class Mesa<E extends { ronda: number }, A extends { t: string }>
     if (!(await this.anularCobro())) return "no_disponible";
 
     const cobro: Cobro = { cobroId: crypto.randomUUID(), jugadorId, cantidad, rondaId: this.rondaId(ronda) };
-    this.cobro = cobro;
-    await this.ctx.storage.put(CLAVE_COBRO, cobro);
+    await this.guardar({ cobro });
     // Si la instancia cae a partir de aquí, una alarma (como tarde en `REINTENTO_MS`) anula el cobro.
     await this.programarAlarma(ahora);
 
@@ -274,8 +282,7 @@ export abstract class Mesa<E extends { ronda: number }, A extends { t: string }>
 
   /** Borra el cobro en curso (ya resuelto) y quita su alarma de reintento si no hace falta. */
   private async olvidarCobro(ahora: number): Promise<void> {
-    this.cobro = null;
-    await this.ctx.storage.delete(CLAVE_COBRO);
+    await this.guardar({ cobro: null });
     await this.programarAlarma(ahora);
   }
 
@@ -304,7 +311,6 @@ export abstract class Mesa<E extends { ronda: number }, A extends { t: string }>
       if (momento === null || momento > ahora) return;
       const eventos = this.juego.eventosEntre?.(this.estado, this.avisadoHasta, momento) ?? [];
       this.avisadoHasta = momento;
-      this.version += 1;
       this.difundir(eventos, momento, excluir);
     }
   }
@@ -341,17 +347,13 @@ export abstract class Mesa<E extends { ronda: number }, A extends { t: string }>
     ahora: number,
     { excluir, cerrarCobro = false }: { excluir?: string; cerrarCobro?: boolean } = {},
   ): Promise<void> {
-    this.estado = p.estado;
-    this.version += 1;
-    const guardar: Record<string, unknown> = { [CLAVE_ESTADO]: this.estado, [CLAVE_VERSION]: this.version };
+    const cambios: Partial<Registro<E>> = { estado: p.estado };
     if (p.liquidacion !== undefined) {
       const { ronda, filas } = p.liquidacion;
-      this.pendientes = [...this.pendientes, { rondaId: this.rondaId(ronda), filas, momento: ahora }];
-      guardar[CLAVE_PENDIENTES] = this.pendientes;
+      cambios.pendientes = [...this.pendientes, { rondaId: this.rondaId(ronda), filas, momento: ahora }];
     }
-    if (cerrarCobro) guardar[CLAVE_COBRO] = null;
-    await this.ctx.storage.put(guardar);
-    if (cerrarCobro) this.cobro = null;
+    if (cerrarCobro) cambios.cobro = null;
+    await this.guardar(cambios);
     const pagadas = await this.liquidarPendientes();
     await this.programarAlarma(ahora);
 
@@ -364,6 +366,7 @@ export abstract class Mesa<E extends { ronda: number }, A extends { t: string }>
 
   /** Envía a cada conexión (salvo a `excluir`) su vista en el instante `momento` con `eventos`. */
   private difundir(eventos: Evento[], momento: number, excluir?: string): void {
+    this.version += 1;
     for (const conn of this.getConnections<EstadoConexion>()) {
       if (conn.id !== excluir && conn.state !== null) this.enviar(conn, this.mensajeEstado(conn.state.jugadorId, eventos, momento));
     }
@@ -383,8 +386,7 @@ export abstract class Mesa<E extends { ronda: number }, A extends { t: string }>
       if (!(await this.liquidar(liquidacion))) restantes.push(liquidacion);
     }
     if (restantes.length === this.pendientes.length) return false;
-    this.pendientes = restantes;
-    await this.ctx.storage.put(CLAVE_PENDIENTES, restantes);
+    await this.guardar({ pendientes: restantes });
     return true;
   }
 
@@ -407,16 +409,27 @@ export abstract class Mesa<E extends { ronda: number }, A extends { t: string }>
     const delJuego = this.juego.proximaAlarma(this.estado);
     const reintento = this.pendientes.length > 0 || this.cobro !== null ? ahora + REINTENTO_MS : null;
     const cuando = delJuego === null ? reintento : reintento === null ? delJuego : Math.min(delJuego, reintento);
+    // Cada `setAlarm`/`deleteAlarm` es una fila escrita: si la hora no cambia, no se toca.
+    if (cuando === this.alarmaEn) return;
     if (cuando === null) await this.ctx.storage.deleteAlarm();
     else await this.ctx.storage.setAlarm(cuando);
+    this.alarmaEn = cuando;
   }
 
-  /** Avisa a la sala del estado visible de la mesa. Si la sala falla se registra y la mesa sigue. */
+  /**
+   * Avisa a la sala del estado visible de la mesa, solo si ha cambiado desde lo último que aceptó (o hay ranking que
+   * refrescar): cada aviso es una petición y una escritura en la sala. Si la sala falla se registra, la mesa sigue y el
+   * siguiente cambio lo vuelve a intentar.
+   */
   private async avisarSala(refrescarRanking: boolean): Promise<void> {
+    const resumen = this.juego.resumen(this.estado);
+    const clave = JSON.stringify(resumen);
+    if (clave === this.resumenEnSala && !refrescarRanking) return;
     try {
       // Stub directo: `getServerByName` escribiría en el almacenamiento de la sala en cada aviso.
       const sala = this.env.Partida.get(this.env.Partida.idFromName(this.name));
-      await sala.actualizarMesa(this.juego.id, this.juego.resumen(this.estado), refrescarRanking);
+      await sala.actualizarMesa(this.juego.id, resumen, refrescarRanking);
+      this.resumenEnSala = clave;
     } catch (e) {
       console.error(e);
     }
@@ -449,6 +462,16 @@ export abstract class Mesa<E extends { ronda: number }, A extends { t: string }>
     const turno = this.cola.then(tarea);
     this.cola = turno.catch((e) => console.error(e));
     return turno;
+  }
+
+  /**
+   * Guarda el registro de la mesa (una sola clave, una fila escrita) con `cambios` sobre lo que hay en memoria y, ya
+   * guardado, lo aplica en memoria: si la escritura falla, la memoria sigue igual que el almacenamiento.
+   */
+  private async guardar(cambios: Partial<Registro<E>> = {}): Promise<void> {
+    const registro: Registro<E> = { estado: this.estado, pendientes: this.pendientes, cobro: this.cobro, ...cambios };
+    await this.ctx.storage.put(CLAVE_MESA, registro);
+    ({ estado: this.estado, pendientes: this.pendientes, cobro: this.cobro } = registro);
   }
 
   private rondaId(ronda: number): string {
