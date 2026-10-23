@@ -451,7 +451,7 @@ describe("lo que escribe cada operación", () => {
     expect(await pendientesDe(j, id)).toBe(0);
   });
 
-  it("liquidar rechaza filas que no son enteros seguros y no toca nada: la ronda se puede liquidar después", async () => {
+  it("liquidar rechaza (filas_invalidas) filas que no son enteros seguros y no toca nada: la ronda se puede liquidar después", async () => {
     const j = nuevo();
     const id = await crear(j);
     expect(await j.apostar(id, 100, "r1", "c1")).toBe("ok");
@@ -465,7 +465,7 @@ describe("lo que escribe cada operación", () => {
     ];
     for (const fila of malas) {
       const l = { rondaId: "r1", juego: "blackjack" as const, codigoPartida: "ABCD", filas: [fila as unknown as FilaLiquidacion] };
-      await expect(j.liquidar(l, T0), JSON.stringify(fila)).rejects.toThrow();
+      expect(await j.liquidar(l, T0), JSON.stringify(fila)).toBe("filas_invalidas");
     }
     expect(await fichasDe(j, id)).toBe(900);
     expect(await pendientesDe(j, id)).toBe(1);

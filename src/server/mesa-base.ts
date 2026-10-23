@@ -422,7 +422,10 @@ export abstract class Mesa<E extends { ronda: number }, A extends { t: string }>
     let ultimoError: unknown;
     for (let intento = 0; intento < INTENTOS_LIQUIDAR; intento++) {
       try {
-        return await jugadoresGlobal(this.env).liquidar({ rondaId, juego: this.juego.id, codigoPartida: this.name, filas }, momento);
+        const netos = await jugadoresGlobal(this.env).liquidar({ rondaId, juego: this.juego.id, codigoPartida: this.name, filas }, momento);
+        if (netos !== "filas_invalidas") return netos;
+        ultimoError = new TypeError(`Jugadores rechaza las filas de la liquidación: ${JSON.stringify(filas)}`);
+        break;
       } catch (e) {
         ultimoError = e;
       }

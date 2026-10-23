@@ -334,18 +334,15 @@ export class Jugadores extends DurableObject<Env> {
    * Cierra una ronda: paga, anota resultados, rachas y estadísticas, y borra todas las apuestas pendientes de `rondaId`.
    * Idempotente por `rondaId` (y un `apostar` que llegue tarde para esa ronda devuelve "anulado"). Por jugador, una sola
    * actualización y su fila de resultados. Devuelve el neto de cada jugador con su apodo (para el ranking de la noche),
-   * también al repetirla. Lanza, sin tocar nada, si alguna fila no son enteros seguros (apuesta y pago ≥ 0).
+   * también al repetirla. Si alguna fila no son enteros seguros (apuesta y pago ≥ 0) no toca nada y devuelve
+   * "filas_invalidas": la ronda queda sin pagar.
    */
   async liquidar(
     l: { rondaId: string; juego: IdJuego; codigoPartida: string; filas: FilaLiquidacion[] },
     ahora: number,
-  ): Promise<FilaRankingPartida[]> {
-    for (const fila of l.filas) {
-      const { jugadorId, apuesta, pago } = fila;
-      if (![jugadorId, apuesta, pago].every(Number.isSafeInteger) || apuesta < 0 || pago < 0) {
-        throw new TypeError(`Fila de liquidación no válida en ${l.rondaId}: ${JSON.stringify(fila)}`);
-      }
-    }
+  ): Promise<FilaRankingPartida[] | "filas_invalidas"> {
+    const valida = ({ jugadorId, apuesta, pago }: FilaLiquidacion) => [jugadorId, apuesta, pago].every(Number.isSafeInteger) && apuesta >= 0 && pago >= 0;
+    if (!l.filas.every(valida)) return "filas_invalidas";
     return this.ctx.storage.transactionSync(() => {
       const nueva = this.sql.exec("INSERT INTO rondas_liquidadas (ronda_id) VALUES (?) ON CONFLICT DO NOTHING RETURNING ronda_id", l.rondaId).toArray();
       if (nueva.length === 0) {
