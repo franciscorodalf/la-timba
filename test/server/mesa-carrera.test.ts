@@ -1,4 +1,5 @@
 import { env } from "cloudflare:workers";
+import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { afterEach, describe, expect, it } from "vitest";
 import type { MensajeSala } from "../../src/shared/api";
 import type { Palo } from "../../src/shared/cartas";
@@ -21,7 +22,7 @@ import {
 
 type Estado = EstadoMesa<VistaCarrera>;
 
-const { estadoMesa, alarmaDe, vencer, nuevaMesa: nuevaMesaCon, sentarse } = ayudasMesa(env.MesaCarrera, "mesa-carrera");
+const { mesa, estadoMesa, alarmaDe, reloj, vencer, nuevaMesa: nuevaMesaCon, sentarse } = ayudasMesa(env.MesaCarrera, "mesa-carrera");
 
 /** Recibe mensajes `t` hasta el primero que cumpla `cumple` (por defecto, estados de carrera); los que llegan se añaden a `vistos`. */
 const hasta = <M = Estado>(conexion: Conexion, cumple: (m: M) => boolean, t = "estado", vistos: M[] = []) =>
@@ -38,8 +39,12 @@ const TRAMOS = "10C JC QC KC 10D JD QD";
 const MAZO = "2H 2S 3H 3S 4H 2D 5H 6H 7H 8H 9H";
 const CARTAS = cs(MAZO);
 const PASOS = CARTAS.length;
-/** Instante en que acaba la carrera (y empieza `resultado`), con el reloj de la mesa llevado siempre al fin de cada fase. */
-const FIN_CARRERA = T + CARRERA.APUESTAS_MS + PASOS * CARRERA.PASO_MS;
+/** Instante en que se cierran las apuestas (y sale la carrera), con el reloj de la mesa llevado al fin de la ventana. */
+const SALIDA = T + CARRERA.APUESTAS_MS;
+/** El instante del paso `n` (desde 1). */
+const PASO = (n: number) => SALIDA + n * CARRERA.PASO_MS;
+/** Instante en que acaba la carrera (y empieza `resultado`): el último paso, la meta. */
+const FIN_CARRERA = PASO(PASOS);
 
 const apostar = (caballo: Palo, cantidad: number): AccionCarrera => ({ t: "apostar", caballo, cantidad });
 const CEROS: Record<Palo, number> = { H: 0, D: 0, C: 0, S: 0 };
@@ -47,9 +52,10 @@ const CEROS: Record<Palo, number> = { H: 0, D: 0, C: 0, S: 0 };
 /** Registra `n` jugadores, abre una partida del primero y prepara su mesa con la pista y el mazo fijos de arriba. */
 const nuevaMesa = (n: number) => nuevaMesaCon(n, { ...carrera.crear(T, rngFijo(0.5)), tramos: cs(TRAMOS), mazo: CARTAS });
 
-/** Cierra las apuestas y deja que la carrera avance hasta la meta: una alarma por la ventana y otra por cada carta. */
+/** Cierra las apuestas y deja que la carrera llegue a la meta: dos alarmas, la de la ventana y la de la meta. */
 async function correr(codigo: string): Promise<void> {
-  for (let i = 0; i <= PASOS; i++) await vencer(codigo);
+  await vencer(codigo);
+  await vencer(codigo);
 }
 
 describe("MesaCarrera: carrera y fichas", () => {
@@ -87,13 +93,16 @@ describe("MesaCarrera: carrera y fichas", () => {
 
     await vencer(codigo); // se cierran las apuestas: empieza la carrera, sin carta todavía
     const salida: Estado = await conexion.recibir();
-    expect(salida.vista).toMatchObject({ fase: "carrera", finFase: T + CARRERA.APUESTAS_MS + CARRERA.PASO_MS, posiciones: CEROS, ultimaCarta: null });
+    expect(salida.vista).toMatchObject({ fase: "carrera", finFase: PASO(1), posiciones: CEROS, ultimaCarta: null });
     expect(salida.eventos).toEqual([]);
+    // La carrera ya está sorteada y la única alarma es la de la meta.
+    expect(await alarmaDe(codigo)).toBe(FIN_CARRERA);
+    expect(await pendientesDe(codigo)).toBe(2);
 
-    // Una carta por alarma; su caballo avanza una casilla.
+    // La alarma de la meta: llegan todos los pasos, uno por mensaje y en orden; el último liquida.
+    await vencer(codigo);
     const posiciones = { ...CEROS };
     for (const [i, carta] of CARTAS.entries()) {
-      await vencer(codigo);
       const paso: Estado = await conexion.recibir();
       posiciones[carta.palo] += 1;
       const ultimo = i === PASOS - 1;
@@ -106,7 +115,8 @@ describe("MesaCarrera: carrera y fichas", () => {
         ]);
         expect(paso.vista).toMatchObject({ ganador: "H", finFase: FIN_CARRERA + CARRERA.RESULTADO_MS });
       } else {
-        expect(await pendientesDe(codigo)).toBe(2); // hasta la meta, las dos apuestas siguen sin liquidar
+        expect(paso.eventos).toHaveLength(1);
+        expect(paso.vista).toMatchObject({ ganador: null, finFase: PASO(i + 2) });
       }
     }
     expect(posiciones).toEqual({ ...CEROS, H: 8, S: 2, D: 1 });
@@ -223,6 +233,131 @@ describe("MesaCarrera: carrera y fichas", () => {
     ]);
     expect(await fichas(ana.id)).toBe(490);
     expect(await pendientesDe(codigo)).toBe(3);
+  });
+});
+
+/** Lo que la mesa escribe en su almacenamiento y las alarmas que programa mientras se mide. */
+async function vigilarEscrituras(codigo: string) {
+  const escrituras: string[] = [];
+  await runInDurableObject(mesa(codigo), (_m, state) => {
+    const almacen = state.storage as unknown as Record<string, (...a: unknown[]) => unknown>;
+    for (const nombre of ["put", "delete", "setAlarm", "deleteAlarm"]) {
+      const original = almacen[nombre].bind(state.storage);
+      almacen[nombre] = (...a: unknown[]) => {
+        escrituras.push(nombre);
+        return original(...a);
+      };
+    }
+  });
+  return escrituras;
+}
+
+describe("MesaCarrera: los pasos de la carrera", () => {
+  it("llegan solos, uno cada 800 ms, con el reloj: sin escribir nada, sin alarmas y sin avisar a la sala", async () => {
+    const {
+      codigo,
+      js: [ana],
+    } = await nuevaMesa(1);
+    const sala = await abrir(`/parties/partida/${codigo}`, ana.token);
+    const conexion = await sentarse(codigo, ana.token);
+    enviar(conexion, apostar("H", 50));
+    await hasta(conexion, (m) => m.vista.misApuestas.length === 1);
+    await vencer(codigo);
+    await hasta(conexion, (m) => m.vista.fase === "carrera");
+    await hasta<MensajeSala>(sala, (m) => m.mesas.carrera.fase === "carrera", "sala");
+
+    // Desde aquí el reloj de la mesa corre de verdad, desde la salida.
+    const escrituras = await vigilarEscrituras(codigo);
+    await runInDurableObject(mesa(codigo), (m) => {
+      const inicio = Date.now();
+      m.ahora = () => SALIDA + (Date.now() - inicio);
+    });
+    const posiciones = { ...CEROS };
+    for (const [i, carta] of CARTAS.slice(0, 3).entries()) {
+      const paso: Estado = await conexion.recibir();
+      posiciones[carta.palo] += 1;
+      expect(paso.eventos).toEqual([{ tipo: "caballo_avanza", palo: carta.palo, carta }]);
+      expect(paso.vista).toMatchObject({ fase: "carrera", posiciones, ultimaCarta: carta, finFase: PASO(i + 2) });
+      expect(paso.ahora).toBeGreaterThanOrEqual(PASO(i + 1));
+    }
+    expect(escrituras).toEqual([]);
+    expect(await alarmaDe(codigo)).toBe(FIN_CARRERA);
+    expect(await pendientesDe(codigo)).toBe(1);
+
+    // La meta llega con su alarma, después de los pasos que aún falten: cada uno una vez, en orden.
+    const vistos: Estado[] = [];
+    await vencer(codigo);
+    await hasta(conexion, (m) => m.vista.fase === "resultado", "estado", vistos);
+    const avances = vistos.flatMap((m) => m.eventos).filter((e) => e.tipo === "caballo_avanza");
+    expect(avances).toEqual(CARTAS.slice(3).map((carta) => ({ tipo: "caballo_avanza", palo: carta.palo, carta })));
+    expect(vistos.at(-1)!.eventos).toContainEqual({ tipo: "ganador", palo: "H" });
+    expect(await fichas(ana.id)).toBe(1150);
+    // La sala no ha sabido nada de los pasos: lo siguiente que recibe es el resultado.
+    expect(((await sala.recibir("sala")) as MensajeSala).mesas.carrera.fase).toBe("resultado");
+  });
+
+  it("quien entra a mitad de carrera ve la pista a la hora de la mesa, sin eventos; los demás reciben antes los pasos vencidos", async () => {
+    const {
+      codigo,
+      js: [ana, beto],
+    } = await nuevaMesa(2);
+    const conexionA = await sentarse(codigo, ana.token);
+    enviar(conexionA, apostar("H", 50));
+    await hasta(conexionA, (m) => m.vista.misApuestas.length === 1);
+    await vencer(codigo);
+    await hasta(conexionA, (m) => m.vista.fase === "carrera");
+
+    await reloj(codigo, PASO(3) + 100);
+    const conexionB = await sentarse(codigo, beto.token);
+    const entrada: Estado = await conexionB.recibir();
+    expect(entrada.eventos).toEqual([]);
+    expect(entrada.vista).toMatchObject({ fase: "carrera", posiciones: { ...CEROS, H: 2, S: 1 }, ultimaCarta: CARTAS[2], finFase: PASO(4), misApuestas: [] });
+    for (const contiene3 of [CARTAS[3], ...cs(TRAMOS)]) expect(contiene(entrada, contiene3)).toBe(false);
+
+    const vistosA: Estado[] = [];
+    await hasta(conexionA, (m) => m.vista.sentados.length === 2, "estado", vistosA);
+    expect(vistosA.map((m) => m.eventos)).toEqual([
+      ...CARTAS.slice(0, 3).map((carta) => [{ tipo: "caballo_avanza", palo: carta.palo, carta }]),
+      [],
+    ]);
+  });
+
+  it("si la mesa sale de memoria a mitad de carrera sigue desde la hora: no repite pasos y la meta liquida igual", async () => {
+    const {
+      codigo,
+      js: [ana, beto],
+    } = await nuevaMesa(2);
+    // Con el reloj quieto, el temporizador de los pasos no dejaría salir de memoria a la mesa (como en producción mientras
+    // corre una carrera): aquí no se pone.
+    await runInDurableObject(mesa(codigo), (m) => {
+      m.temporizar = () => () => {};
+    });
+    const conexionA = await sentarse(codigo, ana.token);
+    enviar(conexionA, apostar("H", 50));
+    await hasta(conexionA, (m) => m.vista.misApuestas.length === 1);
+    await vencer(codigo);
+    await reloj(codigo, PASO(2));
+    // Beto entra en el paso 2: Ana recibe los pasos 1 y 2 antes que su llegada.
+    const conexionB = await sentarse(codigo, beto.token);
+    await hasta(conexionA, (m) => m.vista.sentados.length === 2);
+    await conexionB.recibir();
+
+    await evictDurableObject(mesa(codigo));
+    await reloj(codigo, PASO(5));
+    // Al despertar (Beto sale de la mesa) no se anuncian los pasos 3 a 5: se sigue desde ahora.
+    enviar(conexionB, { t: "salir" });
+    const tras: Estado = await hasta(conexionA, (m) => m.vista.sentados.length === 1);
+    expect(tras.eventos).toEqual([]);
+    expect(tras.vista).toMatchObject({ fase: "carrera", posiciones: { ...CEROS, H: 3, S: 2 }, ultimaCarta: CARTAS[4] });
+
+    const vistos: Estado[] = [];
+    await vencer(codigo);
+    await hasta(conexionA, (m) => m.vista.fase === "resultado", "estado", vistos);
+    expect(vistos.flatMap((m) => m.eventos).filter((e) => e.tipo === "caballo_avanza")).toEqual(
+      CARTAS.slice(5).map((carta) => ({ tipo: "caballo_avanza", palo: carta.palo, carta })),
+    );
+    expect(await fichas(ana.id)).toBe(1150);
+    expect(await pendientesDe(codigo)).toBe(0);
   });
 });
 

@@ -44,6 +44,15 @@ export interface Juego<E extends { ronda: number }, A extends { t: string }> {
   /** No-op (ok, sin eventos) si `ahora < finFase`. */
   tick(e: E, ahora: number, rng: Rng): Paso<E>;
   proximaAlarma(e: E): number | null;
-  vista(e: E, jugadorId: JugadorId | null): unknown;
+  /**
+   * Cambios de lo que se ve que trae el reloj sin cambiar el estado (los pasos de la carrera, ya sorteados): el primer
+   * instante posterior a `desde` en que cambia la vista, o `null` si no hay ninguno. Sin este método, la vista solo cambia
+   * con el estado.
+   */
+  proximoAviso?(e: E, desde: number): number | null;
+  /** Los eventos de esos cambios con `desde < instante ≤ hasta`, en orden. */
+  eventosEntre?(e: E, desde: number, hasta: number): Evento[];
+  /** Lo que ve `jugadorId` (o un espectador, con `null`) a la hora `ahora`. */
+  vista(e: E, jugadorId: JugadorId | null, ahora: number): unknown;
   resumen(e: E): ResumenMesa;
 }

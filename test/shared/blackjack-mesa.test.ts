@@ -892,7 +892,7 @@ describe("resultado y nueva ronda", () => {
     expect(error(blackjack.aplicar(dentro, 2, { t: "pedir" }, T0, rng))).toBe("accion_invalida");
     expect(error(blackjack.aplicar(dentro, 2, { t: "apostar", cantidad: 50 }, T0, rng))).toBe("fase_incorrecta");
     // la vista propia no tiene mano
-    const vista = blackjack.vista(dentro, 2) as VistaBJ;
+    const vista = blackjack.vista(dentro, 2, T0) as VistaBJ;
     expect(vista.yo).toBe(2);
     expect(vista.manos.some((m) => m.jugadorId === 2)).toBe(false);
     expect(vista.sentados).toEqual(["ana", "beto"]);
@@ -965,14 +965,14 @@ describe("costo, alarma y resumen", () => {
 
 describe("vista", () => {
   it("la vista oculta la carta tapada y el zapato", () => {
-    const v = blackjack.vista(enDecisiones(), 1) as VistaBJ;
+    const v = blackjack.vista(enDecisiones(), 1, T0) as VistaBJ;
     expect(v.banca[1]).toBeNull();
     expect(JSON.stringify(v)).not.toContain("zapato");
   });
 
   it("mientras la carta está tapada el total de la banca cuenta solo la visible", () => {
     const e = enDecisiones({ banca: cs("KD 6D") });
-    const v = blackjack.vista(e, 1) as VistaBJ;
+    const v = blackjack.vista(e, 1, T0) as VistaBJ;
     expect(v.banca).toEqual([c("KD"), null]);
     expect(v.totalBanca).toBe(10);
     // la carta tapada no se cuela por ningún otro campo
@@ -981,35 +981,35 @@ describe("vista", () => {
 
   it("en apuestas, con la banca todavía sin cartas, no hay total", () => {
     const e = estado({ fase: "apuestas", finFase: T0, asientos: [asiento(1, "ana")] });
-    const v = blackjack.vista(e, 1) as VistaBJ;
+    const v = blackjack.vista(e, 1, T0) as VistaBJ;
     expect(v.banca).toEqual([]);
     expect(v.totalBanca).toBeNull();
   });
 
   it("en banca (antes del tick que gira la carta) la carta tapada sigue oculta", () => {
-    const v = blackjack.vista(enDecisiones({ fase: "banca", finFase: T0, banca: cs("KD 6D") }), 1) as VistaBJ;
+    const v = blackjack.vista(enDecisiones({ fase: "banca", finFase: T0, banca: cs("KD 6D") }), 1, T0) as VistaBJ;
     expect(v.banca).toEqual([c("KD"), null]);
     expect(v.totalBanca).toBe(10);
     expect(JSON.stringify(v)).not.toContain(JSON.stringify(c("6D")));
   });
 
   it("desde resultado las cartas de la banca se ven enteras", () => {
-    const v = blackjack.vista(enDecisiones({ fase: "resultado", banca: cs("KD 6D 5S") }), 1) as VistaBJ;
+    const v = blackjack.vista(enDecisiones({ fase: "resultado", banca: cs("KD 6D 5S") }), 1, T0) as VistaBJ;
     expect(v.banca).toEqual(cs("KD 6D 5S"));
     expect(v.totalBanca).toBe(21);
   });
 
   it("la carta tapada se ve exactamente cuando el tick de banca la gira", () => {
     const antes = enDecisiones({ fase: "banca", finFase: T0, banca: cs("KD 6D"), manos: [mano(1, "ana", { cartas: cs("10S 9H"), estado: "plantado" })] });
-    expect((blackjack.vista(antes, 1) as VistaBJ).banca[1]).toBeNull();
+    expect((blackjack.vista(antes, 1, T0) as VistaBJ).banca[1]).toBeNull();
     const p = exito(blackjack.tick(antes, T0, rng));
     expect(p.eventos[0]).toEqual({ tipo: "carta_girada", carta: c("6D") });
-    expect((blackjack.vista(p.estado, 1) as VistaBJ).banca.slice(0, 2)).toEqual(cs("KD 6D"));
+    expect((blackjack.vista(p.estado, 1, T0) as VistaBJ).banca.slice(0, 2)).toEqual(cs("KD 6D"));
   });
 
   it("incluye las manos de todos con su total y sin el campo abandonada", () => {
     const e = dosEnDecisiones();
-    const v = blackjack.vista(e, 2) as VistaBJ;
+    const v = blackjack.vista(e, 2, T0) as VistaBJ;
     expect(v.yo).toBe(2);
     expect(v.ronda).toBe(1);
     expect(v.fase).toBe("decisiones");
@@ -1024,15 +1024,15 @@ describe("vista", () => {
 
   it("la vista de un espectador (null) tiene yo: null y las mismas manos", () => {
     const e = dosEnDecisiones();
-    const espectador = blackjack.vista(e, null) as VistaBJ;
+    const espectador = blackjack.vista(e, null, T0) as VistaBJ;
     expect(espectador.yo).toBeNull();
-    expect(espectador.manos).toEqual((blackjack.vista(e, 1) as VistaBJ).manos);
+    expect(espectador.manos).toEqual((blackjack.vista(e, 1, T0) as VistaBJ).manos);
     expect(espectador.banca[1]).toBeNull();
   });
 
   it("es JSON serializable y no comparte referencias con el estado", () => {
     const e = dosEnDecisiones();
-    const v = blackjack.vista(e, 1) as VistaBJ;
+    const v = blackjack.vista(e, 1, T0) as VistaBJ;
     expect(JSON.parse(JSON.stringify(v))).toEqual(v);
     v.manos[0].cartas.push(c("2S"));
     v.sentados.push("intruso");
@@ -1070,7 +1070,7 @@ describe("estado puro y serializable", () => {
     for (const [nombre, llamar] of llamadas) {
       expect(() => llamar(), nombre).not.toThrow();
     }
-    expect(() => blackjack.vista(congelar(dosEnDecisiones()), 1)).not.toThrow();
+    expect(() => blackjack.vista(congelar(dosEnDecisiones()), 1, T0)).not.toThrow();
     expect(() => blackjack.resumen(congelar(dosEnDecisiones()))).not.toThrow();
     expect(() => blackjack.costo(congelar(dosEnDecisiones()), 1, { t: "doblar" })).not.toThrow();
   });

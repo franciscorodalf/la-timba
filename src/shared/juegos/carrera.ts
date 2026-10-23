@@ -23,16 +23,31 @@ export const CARRERA = {
 //
 // Los caballos son los cuatro palos (los ases no están en la baraja). Cada carta que sale hace avanzar a su palo; en la
 // pista hay `TRAMOS` cartas tapadas y, cada vez que el caballo más rezagado pasa un tramo, se gira y su palo retrocede.
+//
+// La carrera entera se sortea al cerrarse las apuestas (`plan`): un paso cada `PASO_MS` hasta la meta. Desde ese momento
+// lo que se ve es función del plan y de la hora (`vista(e, jugador, ahora)` solo enseña los pasos ya vencidos) y el
+// estado no cambia hasta la meta: solo el `tick` del último paso (la alarma del fin de la carrera) declara el ganador y
+// liquida. Los pasos intermedios los anuncia la mesa con `proximoAviso` y `eventosEntre`, sin guardar nada.
 // ---------------------------------------------------------------------------
 
 export type AccionCarrera = { t: "apostar"; caballo: Palo; cantidad: number } | { t: "salir" };
 
 export type FaseCarrera = "esperando" | "apuestas" | "carrera" | "resultado";
 
+/** Un paso de la carrera ya sorteado: la carta que sale en `momento`, cómo queda la pista y sus eventos. */
+export interface PasoCarrera {
+  momento: number;
+  carta: Carta;
+  posiciones: Record<Palo, number>;
+  tramosGirados: number;
+  /** `caballo_avanza`, los `tramo_girado` que provoca y, si hizo falta, `barajado` antes de sacar la carta. */
+  eventos: Evento[];
+}
+
 export interface EstadoCarrera {
   ronda: number;
   fase: FaseCarrera;
-  /** Instante en que vence la fase actual; `null` en `esperando` (no hay alarma). */
+  /** Instante en que vence la fase actual (en `carrera`, el último paso: la meta); `null` en `esperando` (no hay alarma). */
   finFase: number | null;
   /** `mazo[0]` es la siguiente carta. Nunca sale del servidor. */
   mazo: Carta[];
@@ -42,6 +57,11 @@ export interface EstadoCarrera {
   tramos: Carta[];
   tramosGirados: number;
   posiciones: Record<Palo, number>;
+  /**
+   * La carrera sorteada, solo en la fase `carrera` (vacío en las demás). Nunca sale del servidor: lo que se ve son los
+   * pasos con `momento ≤ ahora`. Mientras corre, `posiciones`, `tramosGirados` y `ganador` siguen como al salir.
+   */
+  plan: PasoCarrera[];
   /** Una entrada por jugador y caballo, con la cantidad acumulada (≤ `MAX`). Se conservan en `resultado`. */
   apuestas: { jugadorId: JugadorId; caballo: Palo; cantidad: number }[];
   asientos: { jugadorId: JugadorId; apodo: string; conectado: boolean }[];
@@ -133,31 +153,55 @@ function liquidar(e: EstadoCarrera, eventos: Evento[]): Liquidacion {
   return { ronda: e.ronda, filas };
 }
 
-/** Un paso de la carrera: sale una carta, avanza su caballo y, si no hay ganador, se giran los tramos que toquen. */
-function pasoDeCarrera(e: EstadoCarrera, ahora: number, rng: Rng, eventos: Evento[]): Liquidacion | undefined {
-  const carta = robar(e, rng, eventos);
-  e.posiciones[carta.palo] += 1;
-  eventos.push({ tipo: "caballo_avanza", palo: carta.palo, carta: { ...carta } });
-  if (e.posiciones[carta.palo] >= CARRERA.META) {
-    e.ganador = carta.palo;
-    eventos.push({ tipo: "ganador", palo: carta.palo });
-    const liquidacion = liquidar(e, eventos);
-    e.fase = "resultado";
-    e.finFase = ahora + CARRERA.RESULTADO_MS;
-    return liquidacion;
+/**
+ * Sortea la carrera entera desde la pista actual: un paso cada `PASO_MS` desde `inicio` hasta que un caballo llega a la
+ * meta. Saca las cartas del mazo de `e` (a `descartes`, rebarajando si se agota); la pista de `e` no se toca.
+ * En cada paso sale una carta, avanza su caballo y, si no ha llegado a la meta, se giran los tramos que toquen.
+ */
+function sortearCarrera(e: EstadoCarrera, inicio: number, rng: Rng): PasoCarrera[] {
+  const posiciones = { ...e.posiciones };
+  let tramosGirados = e.tramosGirados;
+  const plan: PasoCarrera[] = [];
+  for (;;) {
+    const eventos: Evento[] = [];
+    const carta = robar(e, rng, eventos);
+    posiciones[carta.palo] += 1;
+    eventos.push({ tipo: "caballo_avanza", palo: carta.palo, carta: { ...carta } });
+    const meta = posiciones[carta.palo] >= CARRERA.META;
+    // El tramo `tramosGirados` se gira cuando el caballo más rezagado ya lo ha pasado; su palo retrocede una casilla.
+    // Girar un tramo puede dejar a otro caballo atrás, pero también puede dejar listo el tramo siguiente: se repite.
+    // En el paso que llega a la meta no se gira ninguno.
+    while (!meta && tramosGirados < CARRERA.TRAMOS && Math.min(...CABALLOS.map((p) => posiciones[p])) > tramosGirados) {
+      const indice = tramosGirados;
+      const palo = e.tramos[indice].palo;
+      tramosGirados += 1;
+      posiciones[palo] = Math.max(0, posiciones[palo] - 1);
+      eventos.push({ tipo: "tramo_girado", indice, palo });
+    }
+    plan.push({ momento: inicio + (plan.length + 1) * CARRERA.PASO_MS, carta: { ...carta }, posiciones: { ...posiciones }, tramosGirados, eventos });
+    if (meta) return plan;
   }
-  // El tramo `tramosGirados` se gira cuando el caballo más rezagado ya lo ha pasado; su palo retrocede una casilla.
-  // Girar un tramo puede dejar a otro caballo atrás, pero también puede dejar listo el tramo siguiente: se repite.
-  while (e.tramosGirados < CARRERA.TRAMOS && Math.min(...CABALLOS.map((p) => e.posiciones[p])) > e.tramosGirados) {
-    const indice = e.tramosGirados;
-    const palo = e.tramos[indice].palo;
-    e.tramosGirados += 1;
-    e.posiciones[palo] = Math.max(0, e.posiciones[palo] - 1);
-    eventos.push({ tipo: "tramo_girado", indice, palo });
-  }
-  e.finFase = ahora + CARRERA.PASO_MS;
-  return undefined;
 }
+
+/** La meta (el último paso del plan): la pista queda como en él, hay ganador, se liquida y empieza `resultado`. */
+function llegada(e: EstadoCarrera, ahora: number, eventos: Evento[]): Liquidacion {
+  const ultimo = e.plan[e.plan.length - 1];
+  e.posiciones = { ...ultimo.posiciones };
+  e.tramosGirados = ultimo.tramosGirados;
+  e.ganador = ultimo.carta.palo;
+  e.plan = [];
+  eventos.push(...ultimo.eventos, { tipo: "ganador", palo: ultimo.carta.palo });
+  const liquidacion = liquidar(e, eventos);
+  e.fase = "resultado";
+  e.finFase = ahora + CARRERA.RESULTADO_MS;
+  return liquidacion;
+}
+
+/** Pasos del plan que se anuncian por su cuenta: todos menos el último, que llega con el `tick` de la meta. */
+const pasosIntermedios = (e: EstadoCarrera): PasoCarrera[] => (e.fase === "carrera" ? e.plan.slice(0, -1) : []);
+
+/** Cuántos pasos de la carrera se ven a la hora `ahora` (el último, la meta, solo tras su `tick`). */
+const pasosVistos = (e: EstadoCarrera, ahora: number): number => pasosIntermedios(e).filter((p) => p.momento <= ahora).length;
 
 /** Cierra la ronda: limpia la mesa, retira a los desconectados, reparte una pista nueva y abre apuestas si queda alguien. */
 function nuevaRonda(e: EstadoCarrera, ahora: number, rng: Rng): void {
@@ -166,6 +210,7 @@ function nuevaRonda(e: EstadoCarrera, ahora: number, rng: Rng): void {
   e.abandonos = [];
   e.ventanasVacias = 0;
   e.asientos = e.asientos.filter((a) => a.conectado);
+  e.plan = [];
   nuevaPista(e, rng);
   if (e.asientos.length > 0) {
     e.fase = "apuestas";
@@ -243,10 +288,11 @@ function tick(e: EstadoCarrera, ahora: number, rng: Rng): Paso<EstadoCarrera> {
       return exito(e);
     case "apuestas":
       if (s.apuestas.length > 0) {
-        // Empieza la carrera: este tick no saca carta, el primer paso llega `PASO_MS` después.
+        // Empieza la carrera: se sortea entera. Este tick no saca carta; el primer paso llega `PASO_MS` después.
         s.ventanasVacias = 0;
         s.fase = "carrera";
-        s.finFase = ahora + CARRERA.PASO_MS;
+        s.plan = sortearCarrera(s, ahora, rng);
+        s.finFase = s.plan[s.plan.length - 1].momento;
       } else {
         // Nadie apostó. Se retiran los desconectados y, si no queda nadie o ya van varias ventanas vacías seguidas,
         // la mesa se duerme (sin alarma) hasta que alguien se siente o apueste; si no, otra ventana.
@@ -261,7 +307,7 @@ function tick(e: EstadoCarrera, ahora: number, rng: Rng): Paso<EstadoCarrera> {
       }
       return exito(s);
     case "carrera": {
-      const liquidacion = pasoDeCarrera(s, ahora, rng, eventos);
+      const liquidacion = llegada(s, ahora, eventos);
       return exito(s, eventos, liquidacion);
     }
     case "resultado":
@@ -270,17 +316,28 @@ function tick(e: EstadoCarrera, ahora: number, rng: Rng): Paso<EstadoCarrera> {
   }
 }
 
-function vista(e: EstadoCarrera, jugadorId: JugadorId | null): VistaCarrera {
+/** Lo que ve `jugadorId` a la hora `ahora`: en plena carrera, solo los pasos ya vencidos (ni una carta más ni el ganador). */
+function vista(e: EstadoCarrera, jugadorId: JugadorId | null, ahora: number): VistaCarrera {
   const totalesPorCaballo: Record<Palo, number> = { H: 0, D: 0, C: 0, S: 0 };
   for (const a of e.apuestas) totalesPorCaballo[a.caballo] += a.cantidad;
-  const ultima = e.descartes[e.descartes.length - 1];
+  let { posiciones, tramosGirados, finFase } = e;
+  let ultima: Carta | undefined = e.descartes[e.descartes.length - 1];
+  if (e.fase === "carrera") {
+    // El mazo y los descartes ya van por la meta: lo visible sale del plan.
+    const vistos = pasosVistos(e, ahora);
+    const paso = vistos > 0 ? e.plan[vistos - 1] : null;
+    posiciones = paso?.posiciones ?? e.posiciones;
+    tramosGirados = paso?.tramosGirados ?? e.tramosGirados;
+    ultima = paso?.carta;
+    finFase = e.plan[vistos].momento;
+  }
   return {
     ronda: e.ronda,
     fase: e.fase,
-    finFase: e.finFase,
-    posiciones: { ...e.posiciones },
+    finFase,
+    posiciones: { ...posiciones },
     // Los tramos sin girar no salen del servidor, y el mazo tampoco.
-    tramos: e.tramos.map((carta, i) => (i < e.tramosGirados ? { ...carta } : null)),
+    tramos: e.tramos.map((carta, i) => (i < tramosGirados ? { ...carta } : null)),
     ultimaCarta: ultima ? { ...ultima } : null,
     misApuestas: e.apuestas.filter((a) => a.jugadorId === jugadorId).map(({ caballo, cantidad }) => ({ caballo, cantidad })),
     totalesPorCaballo,
@@ -303,6 +360,7 @@ export const carrera: Juego<EstadoCarrera, AccionCarrera> = {
       tramos: [],
       tramosGirados: 0,
       posiciones: { H: 0, D: 0, C: 0, S: 0 },
+      plan: [],
       apuestas: [],
       asientos: [],
       abandonos: [],
@@ -337,8 +395,19 @@ export const carrera: Juego<EstadoCarrera, AccionCarrera> = {
 
   tick,
 
+  /** El fin de cada fase; en plena carrera, la meta (los pasos intermedios no necesitan alarma). */
   proximaAlarma(e) {
     return e.finFase;
+  },
+
+  proximoAviso(e, desde) {
+    return pasosIntermedios(e).find((p) => p.momento > desde)?.momento ?? null;
+  },
+
+  eventosEntre(e, desde, hasta) {
+    return pasosIntermedios(e)
+      .filter((p) => p.momento > desde && p.momento <= hasta)
+      .flatMap((p) => p.eventos.map((evento) => structuredClone(evento)));
   },
 
   vista,

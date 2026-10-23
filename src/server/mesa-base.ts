@@ -90,6 +90,11 @@ export abstract class Mesa<E extends { ronda: number }, A extends { t: string }>
   /** Reloj de la mesa. Los tests lo sustituyen; al hibernar vuelve a `Date.now`. */
   ahora: () => number = () => Date.now();
   rng: Rng = rngCripto();
+  /** Pone un temporizador en memoria (los avisos del reloj) y devuelve cómo quitarlo. Los tests lo sustituyen. */
+  temporizar: (tarea: () => void, ms: number) => () => void = (tarea, ms) => {
+    const id = setTimeout(tarea, ms);
+    return () => clearTimeout(id);
+  };
 
   /** Crece con cada cambio confirmado; persistido en "version". */
   private version = 0;
@@ -105,6 +110,13 @@ export abstract class Mesa<E extends { ronda: number }, A extends { t: string }>
    * no repite `desconectar`. Solo en memoria: tras hibernar, como mucho se repetiría un `desconectar` sin efecto.
    */
   private desconectados = new Set<JugadorId>();
+  /**
+   * Hasta qué instante se han enseñado ya los cambios que trae el reloj (`Juego.proximoAviso`). Solo en memoria: al
+   * despertar se sigue desde la hora (quien vuelva a conectar recibe la vista de ese momento).
+   */
+  private avisadoHasta = 0;
+  /** El temporizador del siguiente aviso: su instante y cómo quitarlo. */
+  private aviso: { cuando: number; quitar: () => void } | null = null;
 
   async onStart(): Promise<void> {
     const guardado = await this.ctx.storage.get([CLAVE_ESTADO, CLAVE_VERSION, CLAVE_PENDIENTES, CLAVE_COBRO]);
@@ -118,6 +130,8 @@ export abstract class Mesa<E extends { ronda: number }, A extends { t: string }>
       this.estado = this.juego.crear(this.ahora(), this.rng);
       await this.ctx.storage.put(CLAVE_ESTADO, this.estado);
     }
+    this.avisadoHasta = this.ahora();
+    this.programarAviso(this.avisadoHasta);
     // Un cobro guardado al arrancar es de una instancia que cayó antes de guardar su jugada: se anula lo primero, antes
     // que el evento que nos ha despertado (va delante en la cola y no hace esperar a `onStart`).
     if (this.cobro !== null) {
@@ -265,12 +279,56 @@ export abstract class Mesa<E extends { ronda: number }, A extends { t: string }>
     await this.programarAlarma(ahora);
   }
 
-  /** Aplica lo que el reloj ya ha decidido (`tick`) y lo confirma si cambió algo. Devuelve si cambió. */
+  /**
+   * Aplica lo que el reloj ya ha decidido: primero anuncia lo que ha vencido sin cambiar el estado (`avisar`) y después
+   * el `tick`, que se confirma si cambió algo. Devuelve si cambió.
+   */
   private async alDia(ahora: number, excluir?: string): Promise<boolean> {
+    this.avisar(ahora, excluir);
     const p = this.juego.tick(this.estado, ahora, this.rng);
-    if (!p.ok || p.estado === this.estado) return false;
+    if (!p.ok || p.estado === this.estado) {
+      this.programarAviso(ahora);
+      return false;
+    }
     await this.confirmar(p, ahora, { excluir });
     return true;
+  }
+
+  /**
+   * Envía, un mensaje por cada uno y en orden, los cambios que el reloj ha traído hasta `ahora` sin cambiar el estado
+   * (los pasos de la carrera): cada conexión recibe la vista de ese instante con sus eventos. No guarda nada.
+   */
+  private avisar(ahora: number, excluir?: string): void {
+    for (;;) {
+      const momento = this.juego.proximoAviso?.(this.estado, this.avisadoHasta) ?? null;
+      if (momento === null || momento > ahora) return;
+      const eventos = this.juego.eventosEntre?.(this.estado, this.avisadoHasta, momento) ?? [];
+      this.avisadoHasta = momento;
+      this.version += 1;
+      this.difundir(eventos, momento, excluir);
+    }
+  }
+
+  /**
+   * Deja programado el temporizador del siguiente aviso (o ninguno). Vive en memoria: si la instancia cae, la alarma
+   * del juego sigue en pie y, al despertar, se vuelve a programar desde la hora.
+   */
+  private programarAviso(ahora: number): void {
+    const cuando = this.juego.proximoAviso?.(this.estado, this.avisadoHasta) ?? null;
+    if (this.aviso?.cuando === cuando) return;
+    this.aviso?.quitar();
+    this.aviso = null;
+    if (cuando === null) return;
+    const quitar = this.temporizar(() => {
+      this.aviso = null;
+      this.encolar(async () => {
+        // Si el temporizador se adelanta al reloj de la mesa, no hay nada que anunciar y se vuelve a programar.
+        const ahora = this.ahora();
+        this.avisar(ahora);
+        this.programarAviso(ahora);
+      }).catch(ignorar);
+    }, Math.max(0, cuando - ahora));
+    this.aviso = { cuando, quitar };
   }
 
   /**
@@ -297,10 +355,18 @@ export abstract class Mesa<E extends { ronda: number }, A extends { t: string }>
     const pagadas = await this.liquidarPendientes();
     await this.programarAlarma(ahora);
 
-    for (const conn of this.getConnections<EstadoConexion>()) {
-      if (conn.id !== excluir && conn.state !== null) this.enviar(conn, this.mensajeEstado(conn.state.jugadorId, p.eventos));
-    }
+    // La vista nueva enseña todo lo vencido hasta `ahora`: los avisos siguen desde aquí.
+    this.avisadoHasta = Math.max(this.avisadoHasta, ahora);
+    this.difundir(p.eventos, ahora, excluir);
+    this.programarAviso(ahora);
     await this.avisarSala(pagadas);
+  }
+
+  /** Envía a cada conexión (salvo a `excluir`) su vista en el instante `momento` con `eventos`. */
+  private difundir(eventos: Evento[], momento: number, excluir?: string): void {
+    for (const conn of this.getConnections<EstadoConexion>()) {
+      if (conn.id !== excluir && conn.state !== null) this.enviar(conn, this.mensajeEstado(conn.state.jugadorId, eventos, momento));
+    }
   }
 
   /**
@@ -389,8 +455,9 @@ export abstract class Mesa<E extends { ronda: number }, A extends { t: string }>
     return `${this.name}:${this.juego.id}:${ronda}`;
   }
 
-  private mensajeEstado(jugadorId: JugadorId, eventos: Evento[]): MensajeMesa<unknown> {
-    return { t: "estado", version: this.version, ahora: this.ahora(), vista: this.juego.vista(this.estado, jugadorId), eventos };
+  /** El mensaje de estado para `jugadorId`: su vista en el instante `momento` (por defecto, ahora) y `eventos`. */
+  private mensajeEstado(jugadorId: JugadorId, eventos: Evento[], momento = this.ahora()): MensajeMesa<unknown> {
+    return { t: "estado", version: this.version, ahora: this.ahora(), vista: this.juego.vista(this.estado, jugadorId, momento), eventos };
   }
 
   private enviar(conn: Connection, mensaje: MensajeMesa<unknown>): void {
