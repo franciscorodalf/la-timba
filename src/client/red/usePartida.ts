@@ -18,6 +18,20 @@ export interface EstadoPartida {
 
 const ContextoPartida = createContext<EstadoPartida | null>(null);
 
+/** Cuánto vale, para `PartidaProvider`, saber que una partida existe porque se acaba de consultar o de crear. */
+const VIGENCIA_COMPROBADA_MS = 10_000;
+const comprobadas = new Map<string, number>();
+
+/**
+ * La pantalla que lleva a la partida `codigo` ya sabe que existe (la acaba de consultar o de crear): al entrar no se
+ * vuelve a preguntar. Vive en memoria y caduca enseguida, así que al recargar se pregunta como siempre.
+ */
+export function partidaComprobada(codigo: string): void {
+  comprobadas.set(codigo, Date.now());
+}
+
+const recienComprobada = (codigo: string): boolean => Date.now() - (comprobadas.get(codigo) ?? -Infinity) < VIGENCIA_COMPROBADA_MS;
+
 /** La sala de la partida en curso. Solo dentro de `<PartidaProvider>`. */
 export function usePartida(): EstadoPartida {
   const partida = useContext(ContextoPartida);
@@ -86,10 +100,12 @@ type Existencia = { estado: "comprobando" } | { estado: "existe" } | { estado: "
  */
 export function PartidaProvider({ codigo, children }: { codigo: string; children: ReactNode }) {
   const { refrescarFichas } = useSesion();
-  const [existencia, setExistencia] = useState<Existencia>({ estado: "comprobando" });
+  const [existencia, setExistencia] = useState<Existencia>(() => (recienComprobada(codigo) ? { estado: "existe" } : { estado: "comprobando" }));
   const [intento, setIntento] = useState(0);
 
   useEffect(() => {
+    // Se llega de comprobarla (o de crearla): no se pregunta otra vez. Un reintento sí pregunta.
+    if (intento === 0 && recienComprobada(codigo)) return;
     let vigente = true;
     setExistencia((anterior) => (anterior.estado === "comprobando" ? anterior : { estado: "comprobando" }));
     api.existePartida(codigo).then(

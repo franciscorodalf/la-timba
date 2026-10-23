@@ -7,6 +7,7 @@ import { Boton } from "../componentes/Boton";
 import { Campo } from "../componentes/Campo";
 import { Saludo } from "../componentes/Saludo";
 import { api, mensajeError } from "../red/api";
+import { partidaComprobada } from "../red/usePartida";
 import { useSesion } from "../red/sesion";
 
 const LONGITUD_CODIGO = 4;
@@ -34,6 +35,7 @@ export function Inicio() {
     setAvisoCrear(null);
     try {
       const { codigo: nuevo } = await api.crearPartida();
+      partidaComprobada(nuevo);
       navegar(`/p/${nuevo}`);
     } catch (e) {
       setAvisoCrear(mensajeError(e));
@@ -53,8 +55,10 @@ export function Inicio() {
     setUniendo(true);
     try {
       const { existe } = await api.existePartida(codigo);
-      if (existe) navegar(`/p/${codigo}`);
-      else {
+      if (existe) {
+        partidaComprobada(codigo);
+        navegar(`/p/${codigo}`);
+      } else {
         setAvisoUnirse("Esa partida no existe");
         setUniendo(false);
       }

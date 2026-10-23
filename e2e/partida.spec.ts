@@ -133,6 +133,32 @@ test.describe("Inicio", () => {
     await expect(page).toHaveURL("/");
   });
 
+  test("unirse con el código pregunta una sola vez si la partida existe; crearla, ninguna", async ({ page, request }) => {
+    const anfitrion = await registrar(request, apodoUnico(), "1234");
+    const codigo = await abrirPartida(request, anfitrion);
+    await conSesion(page, await registrar(request, apodoUnico(), "1234"));
+    const consultas: string[] = [];
+    page.on("request", (peticion) => {
+      const ruta = new URL(peticion.url()).pathname;
+      if (peticion.method() === "GET" && ruta.startsWith("/api/partidas/")) consultas.push(ruta);
+    });
+    await page.goto("/");
+
+    await page.getByLabel("Código").fill(codigo);
+    await page.getByRole("button", { name: "Unirse" }).click();
+    await expect(page.getByRole("button", { name: new RegExp(`Invitar.*${codigo}`) })).toBeVisible();
+    await expect(jugadoresEnLaSala(page).getByRole("listitem")).toHaveCount(1);
+    expect(consultas).toEqual([`/api/partidas/${codigo}`]);
+
+    // Una partida recién creada existe: tampoco se pregunta.
+    await page.goto("/");
+    consultas.length = 0;
+    await page.getByRole("button", { name: "Crear partida" }).click();
+    await expect(page.getByRole("button", { name: /Invitar/ })).toBeVisible();
+    await expect(jugadoresEnLaSala(page).getByRole("listitem")).toHaveCount(1);
+    expect(consultas).toEqual([]);
+  });
+
   test("un código incompleto se corrige sin preguntar al servidor", async ({ page, request }) => {
     await conSesion(page, await registrar(request, apodoUnico(), "1234"));
     let consultas = 0;
