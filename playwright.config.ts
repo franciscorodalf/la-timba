@@ -5,9 +5,9 @@ export default defineConfig({
   timeout: 120_000,
   expect: { timeout: 10_000 },
   fullyParallel: true,
-  // Cuatro navegadores a la vez (cada prueba de la sala abre dos) saturaban el servidor de desarrollo y a veces un clic tardaba más
-  // que su plazo (se vio con `--repeat-each`, que pone la misma prueba en todos los trabajadores a la vez, también antes de la
-  // Task 17). Con el 40 % de los núcleos (3 en una máquina de 8) esas pruebas pasan siempre.
+  // Cuatro navegadores a la vez (cada prueba de la sala abre dos) saturan el servidor de desarrollo y a veces un clic tarda más
+  // que su plazo (se ve con `--repeat-each`, que pone la misma prueba en todos los trabajadores a la vez). Con el 40 % de los
+  // núcleos (3 en una máquina de 8) esas pruebas pasan de forma estable.
   workers: "40%",
   reporter: [["list"], ["html", { open: "never" }]],
   use: {

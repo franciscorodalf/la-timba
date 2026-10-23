@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ColaDeMarcos, type Reloj } from "../../src/client/pantallas/carrera/cola";
-import { aplicarMarco, type Escena, escenaDeVista, GANADOR_MS, GIRO_TRAMO_MS, type Marco, PAGOS_TRAS_GANADOR_MS, planDeLote, RETROCESO_MS } from "../../src/client/pantallas/carrera/escena";
+import { aplicarMarco, type Escena, GANADOR_MS, GIRO_TRAMO_MS, type Marco, PAGOS_TRAS_GANADOR_MS, planDeLote, RETROCESO_MS } from "../../src/client/pantallas/carrera/escena";
 import type { Carta, Palo } from "../../src/shared/cartas";
 import type { VistaCarrera } from "../../src/shared/juegos/carrera";
 
@@ -175,6 +175,3 @@ describe("ColaDeMarcos", () => {
     expect(q.vistas.length).toBe(2);
   });
 });
-
-// El mismo planeador y la misma escena que usa la pantalla: la escena de la que parte este archivo.
-void escenaDeVista;

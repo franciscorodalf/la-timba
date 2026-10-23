@@ -9,8 +9,8 @@ export default defineConfig({
   server: { watch: { ignored: ["**/playwright-report/**", "**/test-results/**"] } },
   // Declara de antemano las dependencias del cliente para que Vite no tenga que descubrir ninguna tarde (`@letele/playing-cards`
   // se importa en diferido, al abrir una mesa) y, si lo hiciera, volver a optimizar y recargar la página en mitad de una partida
-  // o de una prueba e2e con el servidor de desarrollo en frío. Es una precaución: no llegué a reproducir esa recarga con ni sin
-  // esta lista.
+  // o de una prueba e2e con el servidor de desarrollo en frío. Es una precaución: esa recarga no se ha reproducido ni con esta
+  // lista ni sin ella.
   optimizeDeps: {
     include: ["react", "react/jsx-runtime", "react/jsx-dev-runtime", "react-dom", "react-dom/client", "wouter", "motion/react", "partysocket/react", "qrcode.react", "@letele/playing-cards"],
   },
