@@ -71,7 +71,7 @@ test("tres jugadores (tres navegadores) apuestan 50, se plantan y cobran lo que 
     // Si la ronda ya ha pasado de las decisiones, el botón ya no está: no se espera a que vuelva.
     const decide = async (p: Page) => (await plantarse(p).isVisible()) && (await plantarse(p).isEnabled({ timeout: 1_000 }).catch(() => false));
     for (const p of paginas) await expect(plantarse(p).or(resultado(p))).toBeVisible();
-    const quienDecide = [];
+    const quienDecide: Page[] = [];
     for (const p of paginas) if (await decide(p)) quienDecide.push(p);
     const recargada = quienDecide.length === 0 ? null : paginas.find((p) => p !== quienDecide[0])!;
     if (recargada === null) {
@@ -85,7 +85,7 @@ test("tres jugadores (tres navegadores) apuestan 50, se plantan y cobran lo que 
     }
 
     // Se mira quién decide antes de que nadie actúe: en cuanto se planta el último que decidía, la ronda sigue sin esperar.
-    const deciden = [];
+    const deciden: boolean[] = [];
     for (const p of paginas) deciden.push(await decide(p));
     for (const [i, p] of paginas.entries()) if (deciden[i]) await plantarse(p).click();
 
