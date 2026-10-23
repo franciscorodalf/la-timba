@@ -233,6 +233,21 @@ describe("enrutado: frontera de confianza", () => {
     expect(new Set(ids).size).toBe(2);
   });
 
+  it("el token no llega a la sala ni a las mesas: no se guarda en la conexión (viajaría a cada hibernación)", async () => {
+    const { token, codigo } = await nuevaPartida();
+    await (await abrir(codigo, token)).recibir("sala");
+    await abrir(`${codigo}`, token, { sala: "mesa-carrera" });
+    const uris = [
+      ...(await runInDurableObject(sala(codigo), (partida) => [...partida.getConnections()].map((c) => c.uri))),
+      ...(await runInDurableObject(env.MesaCarrera.get(env.MesaCarrera.idFromName(codigo)), (mesa) => [...mesa.getConnections()].map((c) => c.uri))),
+    ];
+    expect(uris).toHaveLength(2);
+    for (const uri of uris) {
+      expect(uri).not.toContain(encodeURIComponent(token));
+      expect(new URL(uri!).searchParams.has("token")).toBe(false);
+    }
+  });
+
   it("lo que llega a la sala: código en mayúsculas, identidad del token, sin x-partykit-* ni _pk del cliente", async () => {
     const { token, jugador, codigo } = await nuevaPartida();
     let recibida: Request | undefined;
@@ -262,6 +277,7 @@ describe("enrutado: frontera de confianza", () => {
     const url = new URL(recibida!.url);
     expect(url.pathname).toBe(`/parties/partida/${codigo}`);
     expect(url.searchParams.has("_pk")).toBe(false);
+    expect(url.searchParams.has("token")).toBe(false);
     expect(recibida!.headers.get("x-jugador-id")).toBe(String(jugador.id));
     expect(recibida!.headers.get("x-apodo")).toBe(jugador.apodo);
     expect(recibida!.headers.get("upgrade")).toBe("websocket");

@@ -220,7 +220,8 @@ const CABECERAS_PARTYKIT = ["x-partykit-props", "x-partykit-room", "x-partykit-j
 /**
  * Deja pasar la conexión a la sala o la mesa si trae un token válido y la partida existe. La identidad del token viaja
  * a la sala en `x-jugador-id` y `x-apodo`: solo el Worker las pone (`set` descarta las que mande el cliente). Tampoco
- * pasan las cabeceras `x-partykit-*` ni `?_pk=` del cliente (con él elegiría el id de su conexión).
+ * pasan las cabeceras `x-partykit-*` ni `?_pk=` del cliente (con él elegiría el id de su conexión), ni el `?token=`: la
+ * identidad ya va en las cabeceras, y partyserver guarda la dirección de cada conexión en el Durable Object.
  */
 async function autorizarConexion(request: Request, codigo: string, env: Env): Promise<Request | Response> {
   const token = new URL(request.url).searchParams.get("token");
@@ -230,6 +231,7 @@ async function autorizarConexion(request: Request, codigo: string, env: Env): Pr
 
   const destino = new URL(request.url);
   destino.searchParams.delete("_pk");
+  destino.searchParams.delete("token");
   const cabeceras = new Headers(request.headers);
   for (const nombre of CABECERAS_PARTYKIT) cabeceras.delete(nombre);
   cabeceras.set("x-jugador-id", String(jugador.id));
