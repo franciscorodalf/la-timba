@@ -17,6 +17,8 @@ const MENSAJES_HASTA_CIERRE = 60;
 const INTENTOS_LIQUIDAR = 3;
 /** Con una ronda sin pagar o un cobro a medias, la mesa se despierta para reintentarlo aunque el juego no tenga nada que hacer. */
 const REINTENTO_MS = 60_000;
+/** Fallos inesperados seguidos (no se puede guardar, Jugadores no responde) a partir de los cuales se avisa de que La Timba descansa. */
+const FALLOS_PARA_DESCANSAR = 3;
 
 /** Cierre de una conexión que llega sin la identidad que inyecta el Worker. */
 const CIERRE_NO_AUTENTICADO = 4401;
@@ -115,6 +117,8 @@ export abstract class Mesa<E extends { ronda: number }, A extends { t: string }>
   private resumenEnSala: string | null = null;
   /** Rondas pagadas cuyos netos aún no ha recibido la sala (ranking de la noche). Solo en memoria. */
   private rondasPorAvisar: RondaLiquidada[] = [];
+  /** Tareas de una conexión seguidas que han fallado de forma inesperada. Solo en memoria. */
+  private fallosSeguidos = 0;
   private cola: Promise<void> = Promise.resolve();
   /** Mensajes de cada conexión (por id) en el segundo en curso del reloj de la mesa. Solo en memoria: hibernar lo reinicia. */
   private mensajes = new Map<string, { segundo: number; cuenta: number }>();
@@ -162,25 +166,44 @@ export abstract class Mesa<E extends { ronda: number }, A extends { t: string }>
     const yo: EstadoConexion = { jugadorId: Number(id), apodo };
     conn.setState(yo);
 
-    return this.encolar(async () => {
-      const ahora = this.ahora();
-      this.desconectados.delete(yo.jugadorId);
-      // Quien llega recibe la vista completa al final, sin los eventos de lo que pasó antes de llegar.
-      await this.alDia(ahora, conn.id);
-      const p = this.juego.sentar(this.estado, yo.jugadorId, yo.apodo, ahora);
-      if (!p.ok) {
-        this.enviar(conn, { t: "error", codigo: p.error });
-        conn.close(CIERRE_SIN_ASIENTO, p.error);
-        return;
-      }
-      if (p.estado !== this.estado) await this.confirmar(p, ahora, { excluir: conn.id });
-      this.enviar(conn, this.mensajeEstado(yo.jugadorId, []));
-    }).catch(ignorar);
+    return this.encolar(() => this.atenderA(conn, () => this.recibir(conn, yo))).catch(ignorar);
+  }
+
+  /** Quien llega: se pone al día la mesa, se le sienta (o se le cierra si no cabe) y recibe la vista completa. */
+  private async recibir(conn: Connection<EstadoConexion>, yo: EstadoConexion): Promise<void> {
+    const ahora = this.ahora();
+    this.desconectados.delete(yo.jugadorId);
+    // Quien llega recibe la vista completa al final, sin los eventos de lo que pasó antes de llegar.
+    await this.alDia(ahora, conn.id);
+    const p = this.juego.sentar(this.estado, yo.jugadorId, yo.apodo, ahora);
+    if (!p.ok) {
+      this.enviar(conn, { t: "error", codigo: p.error });
+      conn.close(CIERRE_SIN_ASIENTO, p.error);
+      return;
+    }
+    if (p.estado !== this.estado) await this.confirmar(p, ahora, { excluir: conn.id });
+    this.enviar(conn, this.mensajeEstado(yo.jugadorId, []));
   }
 
   onMessage(conn: Connection<EstadoConexion>, mensaje: WSMessage): Promise<void> | void {
     if (!this.dentroDelLimite(conn)) return;
-    return this.encolar(() => this.atender(conn, mensaje)).catch(ignorar);
+    return this.encolar(() => this.atenderA(conn, () => this.atender(conn, mensaje))).catch(ignorar);
+  }
+
+  /**
+   * Hace la tarea de una conexión. Si falla de forma inesperada (no se puede guardar porque se agotó la cuota, Jugadores
+   * no responde…), se lo dice a esa conexión en vez de dejarla esperando: `no_disponible` y, si los fallos siguen,
+   * `descansando`. La tarea sigue rechazando para que la cola lo registre.
+   */
+  private async atenderA(conn: Connection, tarea: () => Promise<void>): Promise<void> {
+    try {
+      await tarea();
+      this.fallosSeguidos = 0;
+    } catch (e) {
+      this.fallosSeguidos += 1;
+      this.enviarError(conn, this.fallosSeguidos >= FALLOS_PARA_DESCANSAR ? "descansando" : "no_disponible");
+      throw e;
+    }
   }
 
   onClose(conn: Connection<EstadoConexion>): Promise<void> | void {

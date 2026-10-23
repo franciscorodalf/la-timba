@@ -92,3 +92,35 @@ describe("api: sesión caducada", () => {
     expect(avisar).not.toHaveBeenCalled();
   });
 });
+
+describe("api: respuestas de error", () => {
+  it("un error sin cuerpo JSON (la página de Cloudflare al pasar del límite diario, sea cual sea el código) es «descansando»", async () => {
+    vi.stubGlobal("localStorage", { getItem: () => null });
+    const { api, mensajeError, MENSAJE_DESCANSANDO } = await import("../../src/client/red/api");
+    for (const status of [429, 503, 500, 403, 400]) {
+      vi.stubGlobal("fetch", async () => new Response("<html>Error 1027</html>", { status, headers: { "content-type": "text/html" } }));
+      const error = await api.crearPartida().catch((e: unknown) => e);
+      expect(error, String(status)).toMatchObject({ status, error: "descansando" });
+      expect(mensajeError(error)).toBe(MENSAJE_DESCANSANDO);
+    }
+  });
+
+  it("sin red no es «descansando»: tiene su propio texto", async () => {
+    vi.stubGlobal("localStorage", { getItem: () => null });
+    vi.stubGlobal("fetch", async () => {
+      throw new TypeError("Failed to fetch");
+    });
+    const { api, mensajeError, MENSAJE_DESCANSANDO } = await import("../../src/client/red/api");
+    const error = await api.ranking("fichas").catch((e: unknown) => e);
+    expect(error).toMatchObject({ status: 0 });
+    expect(mensajeError(error)).not.toBe(MENSAJE_DESCANSANDO);
+    expect(mensajeError(error)).toMatch(/conexión/);
+  });
+
+  it("un error JSON conocido sigue siendo el suyo", async () => {
+    vi.stubGlobal("localStorage", { getItem: () => null });
+    vi.stubGlobal("fetch", async () => Response.json({ error: "apodo_ocupado" }, { status: 409 }));
+    const { api } = await import("../../src/client/red/api");
+    await expect(api.registro("Ana", "1234")).rejects.toMatchObject({ status: 409, error: "apodo_ocupado" });
+  });
+});

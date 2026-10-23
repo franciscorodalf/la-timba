@@ -19,7 +19,7 @@ export class ErrorApi extends Error {
 /** El texto para el jugador cuando algo falla y la pantalla no tiene un mensaje más concreto. */
 export function mensajeError(e: unknown): string {
   if (e instanceof ErrorApi) {
-    if (e.status >= 500) return MENSAJE_DESCANSANDO;
+    if (e.status >= 500 || e.error === "descansando") return MENSAJE_DESCANSANDO;
     if (e.status === 0) return "No hay conexión con La Timba. Revisa tu red e inténtalo de nuevo";
   }
   return "Algo ha salido mal. Inténtalo de nuevo";
@@ -54,7 +54,10 @@ async function peticion<T>(metodo: "GET" | "POST", ruta: string, cuerpo?: unknow
   const datos: any = await respuesta.json().catch(() => null);
   if (!respuesta.ok) {
     if (token !== null && respuesta.status === 401 && datos?.error === "no_autenticado") alSesionInvalidaActual?.(token);
-    throw new ErrorApi(respuesta.status, typeof datos?.error === "string" ? datos.error : "desconocido", datos);
+    // Un error sin cuerpo JSON no es de La Timba: es Cloudflare (p. ej. su página al pasar del límite diario gratuito,
+    // sea cual sea el código), así que se trata como «descansando».
+    const error = datos === null ? "descansando" : typeof datos.error === "string" ? datos.error : "desconocido";
+    throw new ErrorApi(respuesta.status, error, datos);
   }
   return datos as T;
 }

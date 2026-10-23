@@ -1,10 +1,12 @@
 import { AnimatePresence, motion } from "motion/react";
 import type { CodigoError } from "../../shared/juegos/tipos";
+import { MENSAJE_DESCANSANDO } from "../red/api";
 import { Aviso } from "./Aviso";
 
 const TEXTO_ERROR: Partial<Record<CodigoError, string>> = {
   sin_fichas: "No tienes fichas suficientes",
   no_disponible: "No se pudo hacer la apuesta. Inténtalo de nuevo",
+  descansando: MENSAJE_DESCANSANDO,
 };
 
 /** Lo que se le dice al jugador de un error de la mesa. */

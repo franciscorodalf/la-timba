@@ -21,8 +21,10 @@ export type CodigoError =
   | "sin_fichas"
   | "demasiados_mensajes"
   | "mensaje_invalido"
-  /** El servidor de fichas (Jugadores) no respondió: la acción se descarta. */
-  | "no_disponible";
+  /** El servidor de fichas (Jugadores) no respondió, o la mesa no pudo guardar: la acción se descarta. */
+  | "no_disponible"
+  /** La mesa sigue sin poder atender (p. ej. se agotó el límite diario gratuito): «La Timba está descansando». */
+  | "descansando";
 export type Paso<E> =
   | { ok: true; estado: E; eventos: Evento[]; liquidacion?: { ronda: number; filas: FilaLiquidacion[] } }
   | { ok: false; error: CodigoError };

@@ -869,6 +869,67 @@ describe("MesaBlackjack: lo que se escribe y a quién se avisa", () => {
   });
 });
 
+/**
+ * Hace fallar las escrituras de la mesa (como al agotarse la cuota diaria de filas escritas) hasta `arreglar()`. Se
+ * restaura sola al acabar la prueba.
+ */
+async function romperAlmacen(codigo: string) {
+  const roto = { activo: true };
+  await runInDurableObject(mesa(codigo), (_m, state) => {
+    const almacen = state.storage as unknown as Record<string, (...a: unknown[]) => unknown>;
+    for (const nombre of ["put", "setAlarm"]) {
+      const original = almacen[nombre].bind(state.storage);
+      almacen[nombre] = (...a: unknown[]) => {
+        if (roto.activo) throw new Error("Exceeded allowed rows written in Durable Objects free tier.");
+        return original(...a);
+      };
+    }
+  });
+  return { arreglar: () => (roto.activo = false) };
+}
+
+describe("MesaBlackjack: fallos inesperados", () => {
+  it("si guardar falla, quien actúa recibe no_disponible (no se queda esperando) y, si sigue fallando, descansando", async () => {
+    const {
+      codigo,
+      js: [ana],
+    } = await nuevaMesa(1);
+    const conexion = await sentarse(codigo, ana.token);
+    await conexion.recibir();
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { arreglar } = await romperAlmacen(codigo);
+
+    enviar(conexion, { t: "apostar", cantidad: 50 });
+    expect(await conexion.recibir()).toEqual({ t: "error", codigo: "no_disponible" });
+    enviar(conexion, { t: "apostar", cantidad: 50 });
+    expect(await conexion.recibir()).toEqual({ t: "error", codigo: "no_disponible" });
+    enviar(conexion, { t: "apostar", cantidad: 50 });
+    expect(await conexion.recibir()).toEqual({ t: "error", codigo: "descansando" });
+    expect(log).toHaveBeenCalled();
+    // No se cobró nada: la intención no llegó a guardarse.
+    expect(await fichas(ana.id)).toBe(1000);
+    expect(await pendientesDe(codigo)).toBe(0);
+
+    arreglar();
+    enviar(conexion, { t: "apostar", cantidad: 50 });
+    expect(((await conexion.recibir()) as Estado).vista.manos).toHaveLength(1);
+    expect(await fichas(ana.id)).toBe(950);
+  });
+
+  it("si falla al sentarse, quien llega recibe no_disponible en vez de quedarse sin mesa", async () => {
+    const {
+      codigo,
+      js: [ana, beto],
+    } = await nuevaMesa(2);
+    await (await sentarse(codigo, ana.token)).recibir();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const { arreglar } = await romperAlmacen(codigo);
+    const conexionB = await sentarse(codigo, beto.token);
+    expect(await conexionB.recibir()).toEqual({ t: "error", codigo: "no_disponible" });
+    arreglar();
+  });
+});
+
 describe("MesaBlackjack: cobro en dos fases", () => {
   it("si Jugadores cobra pero la respuesta se pierde, se anula: fichas como estaban, sin fila pendiente y el rescate libre", async () => {
     const {
