@@ -36,19 +36,25 @@ async function netoMostrado(pagina: Page): Promise<number> {
   return verbo === "Ganas" ? Number(cantidad) : -Number(cantidad);
 }
 
-test("dos jugadores apuestan 50, se plantan y cobran lo que enseña la mesa; recargar a mitad de ronda devuelve la mano", async ({ page, browser, request }) => {
-  const sesionA = await registrar(request, apodoUnico(), "1234");
-  const sesionB = await registrar(request, apodoUnico(), "1234");
-  const codigo = await abrirPartida(request, sesionA);
-  await conSesion(page, sesionA);
-  const contextoB = await otroContexto(browser);
+test("tres jugadores (tres navegadores) apuestan 50, se plantan y cobran lo que enseña la mesa; recargar a mitad de ronda devuelve la mano", async ({
+  page,
+  browser,
+  request,
+}) => {
+  const sesiones = [await registrar(request, apodoUnico(), "1234"), await registrar(request, apodoUnico(), "1234"), await registrar(request, apodoUnico(), "1234")];
+  const codigo = await abrirPartida(request, sesiones[0]);
+  await conSesion(page, sesiones[0]);
+  const contextos = [await otroContexto(browser), await otroContexto(browser)];
   try {
-    const paginaB = await contextoB.newPage();
-    await conSesion(paginaB, sesionB);
-    const paginas = [page, paginaB];
+    const paginas = [page, await contextos[0].newPage(), await contextos[1].newPage()];
+    for (const [i, p] of paginas.entries()) if (i > 0) await conSesion(p, sesiones[i]);
 
     await Promise.all(paginas.map((p) => p.goto(`/p/${codigo}/blackjack`)));
     for (const p of paginas) await expect(contador(p)).toHaveText("Tienes 1.000 fichas");
+    // Los tres sentados antes de apostar: cada uno ve a los otros dos en la mesa.
+    for (const [i, p] of paginas.entries()) {
+      for (const [j, otra] of sesiones.entries()) if (j !== i) await expect(p.getByText(otra.jugador.apodo, { exact: true }).first()).toBeVisible();
+    }
 
     await Promise.all(paginas.map((p) => apostar(p, 50)));
     for (const p of paginas) await expect(contador(p)).toHaveText("Tienes 950 fichas");
@@ -60,15 +66,16 @@ test("dos jugadores apuestan 50, se plantan y cobran lo que enseña la mesa; rec
       await expect(p.getByRole("group", { name: "Banca" }).getByRole("img", { name: "Carta boca abajo" })).toHaveCount(1);
     }
 
-    // Se recarga a quien no sostiene la ronda: si el otro aún decide, la ronda sigue mientras tanto.
+    // Se recarga a alguien mientras otro aún decide: la ronda sigue en decisiones mientras tanto.
     const plantarse = (p: Page) => p.getByRole("button", { name: "Plantarse" });
     // Si la ronda ya ha pasado de las decisiones, el botón ya no está: no se espera a que vuelva.
     const decide = async (p: Page) => (await plantarse(p).isVisible()) && (await plantarse(p).isEnabled({ timeout: 1_000 }).catch(() => false));
     for (const p of paginas) await expect(plantarse(p).or(resultado(p))).toBeVisible();
-    const [aDecide, bDecide] = [await decide(page), await decide(paginaB)];
-    const recargada = aDecide ? paginaB : bDecide ? page : null;
+    const quienDecide = [];
+    for (const p of paginas) if (await decide(p)) quienDecide.push(p);
+    const recargada = quienDecide.length === 0 ? null : paginas.find((p) => p !== quienDecide[0])!;
     if (recargada === null) {
-      test.info().annotations.push({ type: "nota", description: "Los dos tienen blackjack: no hay decisiones durante las que recargar." });
+      test.info().annotations.push({ type: "nota", description: "Los tres tienen blackjack: no hay decisiones durante las que recargar." });
     } else {
       const antes = await tuMano(recargada).evaluateAll((cartas) => cartas.map((c) => c.getAttribute("aria-label")));
       await recargada.reload();
@@ -78,7 +85,8 @@ test("dos jugadores apuestan 50, se plantan y cobran lo que enseña la mesa; rec
     }
 
     // Se mira quién decide antes de que nadie actúe: en cuanto se planta el último que decidía, la ronda sigue sin esperar.
-    const deciden = [await decide(page), await decide(paginaB)];
+    const deciden = [];
+    for (const p of paginas) deciden.push(await decide(p));
     for (const [i, p] of paginas.entries()) if (deciden[i]) await plantarse(p).click();
 
     for (const p of paginas) {
@@ -87,7 +95,7 @@ test("dos jugadores apuestan 50, se plantan y cobran lo que enseña la mesa; rec
       await expect(contador(p)).toHaveText(`Tienes ${miles(1000 + neto)} fichas`);
     }
   } finally {
-    await contextoB.close();
+    for (const contexto of contextos) await contexto.close();
   }
 });
 
