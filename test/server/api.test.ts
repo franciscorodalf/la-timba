@@ -103,6 +103,26 @@ describe("POST /api/registro", () => {
   });
 });
 
+/** Una IP pública de documentación (TEST-NET-3) distinta en cada llamada: los límites del registro van por IP y en memoria. */
+let ipsUsadas = 0;
+const ipNueva = () => {
+  ipsUsadas += 1;
+  return `203.0.${Math.floor(ipsUsadas / 250)}.${(ipsUsadas % 250) + 1}`;
+};
+
+describe("POST /api/registro: límite por IP", () => {
+  it("429 demasiados_intentos al 4º registro desde la misma IP; desde otra IP se sigue pudiendo", async () => {
+    const ip = ipNueva();
+    const registrarDesde = (desde: string) =>
+      llamar("/api/registro", { metodo: "POST", cuerpo: { apodo: unico(), pin: "1234" }, cabeceras: { "CF-Connecting-IP": desde } });
+    for (let i = 0; i < 3; i++) expect((await registrarDesde(ip)).status).toBe(201);
+    const cuarto = await registrarDesde(ip);
+    expect(cuarto.status).toBe(429);
+    expect(cuarto.cuerpo).toEqual({ error: "demasiados_intentos" });
+    expect((await registrarDesde(ipNueva())).status).toBe(201);
+  });
+});
+
 describe("POST /api/entrar", () => {
   it("200 con token y jugador; el apodo se busca sin distinguir mayúsculas y vuelve tal como se registró", async () => {
     const apodo = unico();
@@ -269,14 +289,25 @@ describe("POST /api/partidas", () => {
   });
 
   it("los códigos salen del alfabeto y no se repiten entre partidas", async () => {
-    const { token } = await registrar(unico());
     const codigos = new Set<string>();
+    let token = "";
     for (let i = 0; i < 20; i++) {
+      // Cada jugador puede crear 5 por hora: un creador nuevo cada 5.
+      if (i % 5 === 0) token = (await registrar(unico())).token;
       const { cuerpo } = await llamar("/api/partidas", { metodo: "POST", token });
       expect(cuerpo.codigo).toMatch(/^[ABCDEFGHJKMNPQRSTUVWXYZ2-9]{4}$/);
       codigos.add(cuerpo.codigo);
     }
     expect(codigos.size).toBe(20);
+  });
+
+  it("429 demasiados_intentos a la 6ª partida del mismo creador en una hora; otro jugador sí puede", async () => {
+    const { token } = await registrar(unico());
+    for (let i = 0; i < 5; i++) expect((await llamar("/api/partidas", { metodo: "POST", token })).status).toBe(201);
+    const sexta = await llamar("/api/partidas", { metodo: "POST", token });
+    expect(sexta.status).toBe(429);
+    expect(sexta.cuerpo).toEqual({ error: "demasiados_intentos" });
+    expect((await llamar("/api/partidas", { metodo: "POST", token: (await registrar(unico())).token })).status).toBe(201);
   });
 
   it("401 no_autenticado sin token o con un token inválido", async () => {

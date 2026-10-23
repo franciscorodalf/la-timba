@@ -111,6 +111,55 @@ describe("registrar", () => {
   });
 });
 
+describe("límites en memoria contra el abuso", () => {
+  const MIN = 60_000;
+
+  it("registro: 3 por IP en una ventana deslizante de 10 min; los fallidos no cuentan", async () => {
+    const j = nuevo();
+    expect(await j.registrar("Uno", "1234", T0, "198.51.100.1")).toMatchObject({ ok: true });
+    expect(await j.registrar("uno", "1234", T0, "198.51.100.1")).toEqual({ ok: false, error: "apodo_ocupado" });
+    expect(await j.registrar("Dos", "1234", T0 + MIN, "198.51.100.1")).toMatchObject({ ok: true });
+    expect(await j.registrar("Tres", "1234", T0 + 2 * MIN, "198.51.100.1")).toMatchObject({ ok: true });
+    expect(await j.registrar("Cuatro", "1234", T0 + 3 * MIN, "198.51.100.1")).toEqual({ ok: false, error: "demasiados_intentos" });
+    // Otra IP no se ve afectada.
+    expect(await j.registrar("Cinco", "1234", T0 + 3 * MIN, "198.51.100.2")).toMatchObject({ ok: true });
+    // A los 10 min del primero queda un hueco; el siguiente, al vencer el segundo.
+    expect(await j.registrar("Cuatro", "1234", T0 + 10 * MIN, "198.51.100.1")).toMatchObject({ ok: true });
+    expect(await j.registrar("Seis", "1234", T0 + 10 * MIN, "198.51.100.1")).toEqual({ ok: false, error: "demasiados_intentos" });
+    expect(await j.registrar("Seis", "1234", T0 + 11 * MIN, "198.51.100.1")).toMatchObject({ ok: true });
+  });
+
+  it("registro: una ráfaga a la vez desde la misma IP tampoco pasa de 3", async () => {
+    const j = nuevo();
+    const resultados = await Promise.all(["Ana", "Beto", "Carla", "Dani", "Eva"].map((apodo) => j.registrar(apodo, "1234", T0, "198.51.100.9")));
+    expect(resultados.filter((r) => r.ok)).toHaveLength(3);
+    expect(resultados.filter((r) => !r.ok)).toEqual(Array(2).fill({ ok: false, error: "demasiados_intentos" }));
+  });
+
+  it("registro: como mucho 60 por hora entre todas las IP", async () => {
+    const j = nuevo();
+    for (let i = 0; i < 60; i++) expect(await j.registrar(`jugador${i}`, "1234", T0 + i * 1000, `198.51.100.${i + 10}`)).toMatchObject({ ok: true });
+    expect(await j.registrar("otro", "1234", T0 + 60_000, "198.51.100.200")).toEqual({ ok: false, error: "demasiados_intentos" });
+    expect(await j.registrar("otro", "1234", T0 + 60 * MIN, "198.51.100.200")).toMatchObject({ ok: true });
+  });
+
+  it("registro: sin IP pública (desarrollo y pruebas, donde no hay Cloudflare delante) no hay límite", async () => {
+    const j = nuevo();
+    for (const [i, ip] of [null, null, null, null, "127.0.0.1", "127.0.0.1", "127.0.0.1", "127.0.0.1", "::1"].entries()) {
+      expect(await j.registrar(`local${i}`, "1234", T0, ip)).toMatchObject({ ok: true });
+    }
+  });
+
+  it("partidas: 5 por creador en una hora; otro creador no se ve afectado", async () => {
+    const j = nuevo();
+    for (let i = 0; i < 5; i++) expect(await j.permitirPartida(1, T0 + i * MIN)).toBe(true);
+    expect(await j.permitirPartida(1, T0 + 10 * MIN)).toBe(false);
+    expect(await j.permitirPartida(2, T0 + 10 * MIN)).toBe(true);
+    expect(await j.permitirPartida(1, T0 + 60 * MIN)).toBe(true);
+    expect(await j.permitirPartida(1, T0 + 60 * MIN)).toBe(false);
+  });
+});
+
 describe("entrar", () => {
   it("no_existe; fallos 1-4 → pin con intentosRestantes 4,3,2,1; 5º fallo → bloqueado 15 min", async () => {
     const j = nuevo();

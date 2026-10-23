@@ -20,6 +20,7 @@ export class ErrorApi extends Error {
 export function mensajeError(e: unknown): string {
   if (e instanceof ErrorApi) {
     if (e.status >= 500 || e.error === "descansando") return MENSAJE_DESCANSANDO;
+    if (e.error === "demasiados_intentos") return "Demasiados intentos. Espera unos minutos";
     if (e.status === 0) return "No hay conexión con La Timba. Revisa tu red e inténtalo de nuevo";
   }
   return "Algo ha salido mal. Inténtalo de nuevo";

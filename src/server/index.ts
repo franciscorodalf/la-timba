@@ -113,8 +113,9 @@ const registro: Manejador = async (c) => {
   if (!apodoValido(apodo)) return error(400, "apodo_invalido");
   if (!pinValido(pin)) return error(400, "pin_invalido");
 
-  const r = await jugadoresGlobal(c.env).registrar(apodo, pin, Date.now());
-  if (!r.ok) return error(r.error === "apodo_ocupado" ? 409 : 400, r.error);
+  // La IP del cliente la pone Cloudflare: con ella Jugadores limita los registros (en local no hay y no se limita).
+  const r = await jugadoresGlobal(c.env).registrar(apodo, pin, Date.now(), c.request.headers.get("CF-Connecting-IP"));
+  if (!r.ok) return error(r.error === "apodo_ocupado" ? 409 : r.error === "demasiados_intentos" ? 429 : 400, r.error);
   return json(await sesion(c.env, r.jugador), 201);
 };
 
@@ -150,6 +151,7 @@ const fichas = conSesion(async (c, { id }) => {
 });
 
 const crearPartida = conSesion(async (c, { id }) => {
+  if (!(await jugadoresGlobal(c.env).permitirPartida(id, Date.now()))) return error(429, "demasiados_intentos");
   const codigo = await abrirPartida(c.env, id, Date.now());
   return codigo === null ? descansando() : json({ codigo }, 201);
 });

@@ -124,3 +124,13 @@ describe("api: respuestas de error", () => {
     await expect(api.registro("Ana", "1234")).rejects.toMatchObject({ status: 409, error: "apodo_ocupado" });
   });
 });
+
+describe("mensajeError: demasiados intentos", () => {
+  it("el registro o la partida que pasan del límite piden esperar unos minutos", async () => {
+    vi.stubGlobal("localStorage", { getItem: () => null });
+    vi.stubGlobal("fetch", async () => Response.json({ error: "demasiados_intentos" }, { status: 429 }));
+    const { api, mensajeError } = await import("../../src/client/red/api");
+    const error = await api.registro("Ana", "1234").catch((e: unknown) => e);
+    expect(mensajeError(error)).toBe("Demasiados intentos. Espera unos minutos");
+  });
+});

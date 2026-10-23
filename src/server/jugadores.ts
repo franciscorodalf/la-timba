@@ -9,6 +9,54 @@ const FICHAS_RESCATE = 200;
 const MAX_FALLOS = 5;
 const BLOQUEO_MS = 15 * 60 * 1000;
 const TAMANO_TOP = 50;
+const MIN_MS = 60 * 1000;
+/** Registros desde una misma IP en `VENTANA_REGISTROS_IP_MS`… */
+const REGISTROS_POR_IP = 3;
+const VENTANA_REGISTROS_IP_MS = 10 * MIN_MS;
+/** …y entre todas, en una hora (el tope por si alguien tiene muchas IP). */
+const REGISTROS_POR_HORA = 60;
+/** Partidas que un jugador puede crear en una hora. */
+const PARTIDAS_POR_HORA = 5;
+const HORA_MS = 60 * MIN_MS;
+
+/**
+ * Una IP sin nadie de fuera detrás: sin Cloudflare delante (desarrollo local y pruebas) no hay cabecera, o es la de este
+ * mismo equipo. En producción Cloudflare siempre pone la del cliente y nadie puede cambiarla.
+ */
+const ipLocal = (ip: string | null): boolean => ip === null || ip === "" || ip === "::1" || ip === "::ffff:127.0.0.1" || ip.startsWith("127.");
+
+/**
+ * Ventanas deslizantes en memoria contra el abuso: cuándo pasó cada cosa, por clave. No escriben nada; si la instancia
+ * sale de memoria se pierden, y eso es aceptable (vuelven a empezar de cero).
+ */
+class Ventanas {
+  private readonly marcas = new Map<string, number[]>();
+  constructor(
+    private readonly duracionMs: number,
+    private readonly maximo: number,
+  ) {}
+
+  /** Si cabe uno más en la ventana de `clave` a la hora `ahora`, lo apunta y devuelve cómo deshacerlo; si no, `null`. */
+  tomar(clave: string, ahora: number): (() => void) | null {
+    if (this.marcas.size > 10_000) this.olvidarViejas(ahora);
+    const vigentes = (this.marcas.get(clave) ?? []).filter((t) => t > ahora - this.duracionMs);
+    if (vigentes.length >= this.maximo) {
+      this.marcas.set(clave, vigentes);
+      return null;
+    }
+    vigentes.push(ahora);
+    this.marcas.set(clave, vigentes);
+    return () => {
+      const lista = this.marcas.get(clave) ?? [];
+      const i = lista.indexOf(ahora);
+      if (i >= 0) lista.splice(i, 1);
+    };
+  }
+
+  private olvidarViejas(ahora: number): void {
+    for (const [clave, lista] of this.marcas) if (lista.every((t) => t <= ahora - this.duracionMs)) this.marcas.delete(clave);
+  }
+}
 
 const ESQUEMA = [
   // Las estadísticas van en la fila de cada jugador y se ponen al día al liquidar: el perfil y los rankings leen una fila
@@ -147,6 +195,10 @@ export class Jugadores extends DurableObject<Env> {
    * que ningún fallo lo activara, y un acierto dentro de la ráfaga entraría pese al bloqueo. Nunca rechaza (ver `entrar`).
    */
   private colaEntrar: Promise<unknown> = Promise.resolve();
+  /** Límites del registro y de crear partidas: en memoria (una sola instancia global, así que son de todos). */
+  private readonly registrosPorIp = new Ventanas(VENTANA_REGISTROS_IP_MS, REGISTROS_POR_IP);
+  private readonly registrosPorHora = new Ventanas(HORA_MS, REGISTROS_POR_HORA);
+  private readonly partidasPorCreador = new Ventanas(HORA_MS, PARTIDAS_POR_HORA);
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -156,13 +208,30 @@ export class Jugadores extends DurableObject<Env> {
     });
   }
 
+  /**
+   * Crea un jugador. Desde una IP pública caben `REGISTROS_POR_IP` cada 10 min y, entre todas, `REGISTROS_POR_HORA`
+   * por hora; pasado el límite, "demasiados_intentos" sin derivar el PIN. Un registro que no llega a crear a nadie no cuenta.
+   */
   async registrar(
     apodo: string,
     pin: string,
     ahora: number,
-  ): Promise<{ ok: true; jugador: JugadorPublico } | { ok: false; error: "apodo_invalido" | "pin_invalido" | "apodo_ocupado" }> {
+    ip: string | null = null,
+  ): Promise<{ ok: true; jugador: JugadorPublico } | { ok: false; error: "apodo_invalido" | "pin_invalido" | "apodo_ocupado" | "demasiados_intentos" }> {
     if (!apodoValido(apodo)) return { ok: false, error: "apodo_invalido" };
     if (!pinValido(pin)) return { ok: false, error: "pin_invalido" };
+
+    // Se aparta el hueco antes del `await`: una ráfaga de registros a la vez no puede colarse entera.
+    const deshacer: (() => void)[] = [];
+    if (!ipLocal(ip)) {
+      const porIp = this.registrosPorIp.tomar(ip!, ahora);
+      const porHora = porIp === null ? null : this.registrosPorHora.tomar("todas", ahora);
+      if (porIp === null || porHora === null) {
+        porIp?.();
+        return { ok: false, error: "demasiados_intentos" };
+      }
+      deshacer.push(porIp, porHora);
+    }
 
     const { hash, sal } = await hashPin(pin);
     // Tras el `await` no hay más esperas: el INSERT decide de forma atómica quién se queda con el apodo (único sin mayúsculas).
@@ -175,7 +244,14 @@ export class Jugadores extends DurableObject<Env> {
         ahora,
       )
       .toArray()[0];
-    return fila === undefined ? { ok: false, error: "apodo_ocupado" } : { ok: true, jugador: fila };
+    if (fila !== undefined) return { ok: true, jugador: fila };
+    for (const devolver of deshacer) devolver();
+    return { ok: false, error: "apodo_ocupado" };
+  }
+
+  /** Si `jugadorId` puede crear otra partida (como mucho `PARTIDAS_POR_HORA` por hora); si puede, la cuenta. */
+  async permitirPartida(jugadorId: number, ahora: number): Promise<boolean> {
+    return this.partidasPorCreador.tomar(String(jugadorId), ahora) !== null;
   }
 
   /** Las entradas se ejecutan de una en una, en orden de llegada; un fallo inesperado de una no detiene a las siguientes. */
