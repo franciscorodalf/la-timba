@@ -29,14 +29,13 @@ const ESQUEMA = [
     momento INTEGER
   )`,
   // Varias filas por (ronda, jugador): la carrera cobra varias apuestas del mismo jugador en la misma ronda. Cada cobro
-  // lleva su clave de idempotencia (`cobro_id`), con la que se puede repetir o anular.
-  "CREATE TABLE IF NOT EXISTS apuestas_pendientes (ronda_id TEXT, jugador_id INTEGER, cantidad INTEGER, cobro_id TEXT UNIQUE)",
-  "CREATE TABLE IF NOT EXISTS rondas_liquidadas (ronda_id TEXT PRIMARY KEY)",
+  // lleva su clave de idempotencia (`cobro_id`), con la que se puede repetir o anular. Las tablas que se buscan por su
+  // clave van `WITHOUT ROWID`: cada fila es una sola fila escrita, sin un índice aparte.
+  "CREATE TABLE IF NOT EXISTS apuestas_pendientes (cobro_id TEXT PRIMARY KEY, ronda_id TEXT, jugador_id INTEGER, cantidad INTEGER) WITHOUT ROWID",
+  "CREATE TABLE IF NOT EXISTS rondas_liquidadas (ronda_id TEXT PRIMARY KEY) WITHOUT ROWID",
   // Cobros anulados: un `apostar` que llegue después con esa clave ya no cobra.
-  "CREATE TABLE IF NOT EXISTS cobros_anulados (cobro_id TEXT PRIMARY KEY)",
+  "CREATE TABLE IF NOT EXISTS cobros_anulados (cobro_id TEXT PRIMARY KEY) WITHOUT ROWID",
   "CREATE TABLE IF NOT EXISTS intentos (apodo TEXT PRIMARY KEY COLLATE NOCASE, fallos INTEGER, bloqueado_hasta INTEGER)",
-  "CREATE INDEX IF NOT EXISTS resultados_por_jugador ON resultados(jugador_id)",
-  "CREATE INDEX IF NOT EXISTS resultados_por_partida ON resultados(codigo_partida)",
 ];
 
 /** Una consulta por orden que devuelve (id, apodo, valor) solo de los jugadores que clasifican en él. */
@@ -203,6 +202,7 @@ export class Jugadores extends DurableObject<Env> {
   /**
    * Cobra `cantidad` y la deja pendiente hasta `liquidar`. Los límites de cada mesa los aplican las reglas del juego, no aquí.
    * `cobroId` hace el cobro idempotente: repetirlo devuelve "ok" sin cobrar otra vez, y si ya se anuló devuelve "anulado".
+   * También devuelve "anulado", sin cobrar, si la ronda ya se liquidó: ese cobro no se pagaría nunca.
    */
   async apostar(
     jugadorId: number,
@@ -215,16 +215,11 @@ export class Jugadores extends DurableObject<Env> {
     return this.ctx.storage.transactionSync(() => {
       if (this.sql.exec("SELECT 1 FROM apuestas_pendientes WHERE cobro_id = ?", cobroId).toArray().length > 0) return "ok";
       if (this.sql.exec("SELECT 1 FROM cobros_anulados WHERE cobro_id = ?", cobroId).toArray().length > 0) return "anulado";
+      if (this.sql.exec("SELECT 1 FROM rondas_liquidadas WHERE ronda_id = ?", rondaId).toArray().length > 0) return "anulado";
       const fila = this.sql.exec<{ fichas: number }>("SELECT fichas FROM jugadores WHERE id = ?", jugadorId).toArray()[0];
       if (fila === undefined || fila.fichas < cantidad) return "sin_fichas";
       this.sql.exec("UPDATE jugadores SET fichas = fichas - ? WHERE id = ?", cantidad, jugadorId);
-      this.sql.exec(
-        "INSERT INTO apuestas_pendientes (ronda_id, jugador_id, cantidad, cobro_id) VALUES (?, ?, ?, ?)",
-        rondaId,
-        jugadorId,
-        cantidad,
-        cobroId,
-      );
+      this.sql.exec("INSERT INTO apuestas_pendientes (cobro_id, ronda_id, jugador_id, cantidad) VALUES (?, ?, ?, ?)", cobroId, rondaId, jugadorId, cantidad);
       return "ok";
     });
   }
@@ -248,10 +243,17 @@ export class Jugadores extends DurableObject<Env> {
   }
 
   /**
-   * Cierra una ronda: paga, anota resultados y rachas, y borra todas las apuestas pendientes de `rondaId` (sus `cobro_id`
-   * pasan a anulados). Idempotente por `rondaId`.
+   * Cierra una ronda: paga, anota resultados y rachas, y borra todas las apuestas pendientes de `rondaId`. Idempotente por
+   * `rondaId` (y un `apostar` que llegue tarde para esa ronda devuelve "anulado"). Por jugador, una sola actualización y
+   * su fila de resultados. Lanza, sin tocar nada, si alguna fila no son enteros seguros (apuesta y pago ≥ 0).
    */
   async liquidar(l: { rondaId: string; juego: IdJuego; codigoPartida: string; filas: FilaLiquidacion[] }, ahora: number): Promise<void> {
+    for (const fila of l.filas) {
+      const { jugadorId, apuesta, pago } = fila;
+      if (![jugadorId, apuesta, pago].every(Number.isSafeInteger) || apuesta < 0 || pago < 0) {
+        throw new TypeError(`Fila de liquidación no válida en ${l.rondaId}: ${JSON.stringify(fila)}`);
+      }
+    }
     this.ctx.storage.transactionSync(() => {
       const nueva = this.sql.exec("INSERT INTO rondas_liquidadas (ronda_id) VALUES (?) ON CONFLICT DO NOTHING RETURNING ronda_id", l.rondaId).toArray();
       if (nueva.length === 0) return;
@@ -259,7 +261,18 @@ export class Jugadores extends DurableObject<Env> {
       for (const { jugadorId, apuesta, pago } of l.filas) {
         const neto = pago - apuesta;
         const resultado = neto > 0 ? "gana" : neto < 0 ? "pierde" : "empata";
-        this.sql.exec("UPDATE jugadores SET fichas = fichas + ? WHERE id = ?", pago, jugadorId);
+        // En un UPDATE de SQLite todas las expresiones ven los valores anteriores de la fila. Empatar no toca la racha.
+        this.sql.exec(
+          `UPDATE jugadores SET
+             fichas = fichas + ?,
+             racha_actual = CASE ? WHEN 'gana' THEN racha_actual + 1 WHEN 'pierde' THEN 0 ELSE racha_actual END,
+             mejor_racha = CASE ? WHEN 'gana' THEN MAX(mejor_racha, racha_actual + 1) ELSE mejor_racha END
+           WHERE id = ?`,
+          pago,
+          resultado,
+          resultado,
+          jugadorId,
+        );
         this.sql.exec(
           "INSERT INTO resultados (jugador_id, juego, codigo_partida, ronda_id, apuesta, neto, resultado, momento) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
           jugadorId,
@@ -271,18 +284,7 @@ export class Jugadores extends DurableObject<Env> {
           resultado,
           ahora,
         );
-        // En un UPDATE de SQLite todas las expresiones ven los valores anteriores de la fila.
-        if (resultado === "gana") {
-          this.sql.exec("UPDATE jugadores SET racha_actual = racha_actual + 1, mejor_racha = MAX(mejor_racha, racha_actual + 1) WHERE id = ?", jugadorId);
-        } else if (resultado === "pierde") {
-          this.sql.exec("UPDATE jugadores SET racha_actual = 0 WHERE id = ?", jugadorId);
-        }
       }
-      // Los cobros de la ronda quedan cerrados: repetir uno ya no cobra (devuelve "anulado").
-      this.sql.exec(
-        "INSERT OR IGNORE INTO cobros_anulados (cobro_id) SELECT cobro_id FROM apuestas_pendientes WHERE ronda_id = ? AND cobro_id IS NOT NULL",
-        l.rondaId,
-      );
       this.sql.exec("DELETE FROM apuestas_pendientes WHERE ronda_id = ?", l.rondaId);
     });
   }

@@ -1,7 +1,7 @@
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
-import type { IdJuego } from "../../src/shared/juegos/tipos";
+import type { FilaLiquidacion, IdJuego } from "../../src/shared/juegos/tipos";
 
 const T0 = 1_800_000_000_000;
 const QUINCE_MIN = 900_000;
@@ -29,6 +29,37 @@ const pendientesDe = (j: Stub, jugadorId: number) =>
   runInDurableObject(j, (_i, state) =>
     state.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM apuestas_pendientes WHERE jugador_id = ?", jugadorId).one().n,
   );
+
+/**
+ * Filas que escribe y lee en SQL lo que haga `accion` con la instancia `j` (las cuenta Cloudflare con
+ * `rowsWritten`/`rowsRead`: es lo que se factura).
+ */
+async function filas(j: Stub, accion: () => Promise<unknown>): Promise<{ escritas: number; leidas: number }> {
+  const cursores: SqlStorageCursor<Record<string, SqlStorageValue>>[] = [];
+  const restaurar = await runInDurableObject(j, (_i, state) => {
+    const sql = state.storage.sql as unknown as { exec: (...a: unknown[]) => SqlStorageCursor<Record<string, SqlStorageValue>> };
+    const original = sql.exec;
+    sql.exec = (...a: unknown[]) => {
+      const cursor = original.apply(state.storage.sql, a);
+      cursores.push(cursor);
+      return cursor;
+    };
+    return () =>
+      runInDurableObject(j, () => {
+        sql.exec = original;
+      });
+  });
+  try {
+    await accion();
+  } finally {
+    await restaurar();
+  }
+  return { escritas: cursores.reduce((n, c) => n + c.rowsWritten, 0), leidas: cursores.reduce((n, c) => n + c.rowsRead, 0) };
+}
+
+/** Cobros anulados guardados (los únicos que se apuntan son los de `anular`). */
+const anulados = (j: Stub) =>
+  runInDurableObject(j, (_i, state) => state.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM cobros_anulados").one().n);
 
 /** Apuesta `apuesta` y liquida con `pago` una ronda de un solo jugador. */
 async function jugar(
@@ -321,6 +352,75 @@ describe("apostar con cobroId y anular", () => {
     expect(await fichasDe(j, id)).toBe(900);
     expect(await j.apostar(id, 100, "r1", "c1")).toBe("anulado");
     expect(await fichasDe(j, id)).toBe(900);
+  });
+});
+
+describe("lo que escribe cada operación", () => {
+  it("apostar escribe dos filas: la apuesta pendiente y las fichas", async () => {
+    const j = nuevo();
+    const id = await crear(j);
+    expect(await filas(j, () => j.apostar(id, 100, "r1", "c1"))).toMatchObject({ escritas: 2 });
+  });
+
+  it("liquidar escribe una fila por apuesta pendiente que borra, dos por jugador (jugador y resultado) y la de la ronda", async () => {
+    const j = nuevo();
+    const a = await crear(j, "Ana");
+    const b = await crear(j, "Beto");
+    for (const [jugador, cobroId] of [[a, "c1"], [a, "c2"], [b, "c3"]] as const) expect(await j.apostar(jugador, 50, "r1", cobroId)).toBe("ok");
+    const liquidacion = {
+      rondaId: "r1",
+      juego: "carrera" as const,
+      codigoPartida: "ABCD",
+      filas: [
+        { jugadorId: a, apuesta: 100, pago: 200 },
+        { jugadorId: b, apuesta: 50, pago: 0 },
+      ],
+    };
+    expect(await filas(j, () => j.liquidar(liquidacion, T0))).toMatchObject({ escritas: 3 + 2 * 2 + 1 });
+    // Repetirla no escribe nada.
+    expect(await filas(j, () => j.liquidar(liquidacion, T0))).toMatchObject({ escritas: 0 });
+  });
+
+  it("liquidar no apunta los cobros como anulados: solo anular lo hace", async () => {
+    const j = nuevo();
+    const id = await crear(j);
+    expect(await j.apostar(id, 100, "r1", "c1")).toBe("ok");
+    await j.liquidar({ rondaId: "r1", juego: "blackjack", codigoPartida: "ABCD", filas: [{ jugadorId: id, apuesta: 100, pago: 0 }] }, T0);
+    expect(await anulados(j)).toBe(0);
+    await j.anular("c9");
+    expect(await anulados(j)).toBe(1);
+  });
+
+  it("apostar en una ronda ya liquidada devuelve anulado y no cobra, aunque el cobro sea nuevo", async () => {
+    const j = nuevo();
+    const id = await crear(j);
+    await jugar(j, id, 10, 0);
+    const rondaId = `ronda-${contadorRondas}`;
+    expect(await j.apostar(id, 100, rondaId, "nuevo")).toBe("anulado");
+    expect(await fichasDe(j, id)).toBe(990);
+    expect(await pendientesDe(j, id)).toBe(0);
+  });
+
+  it("liquidar rechaza filas que no son enteros seguros y no toca nada: la ronda se puede liquidar después", async () => {
+    const j = nuevo();
+    const id = await crear(j);
+    expect(await j.apostar(id, 100, "r1", "c1")).toBe("ok");
+    const malas = [
+      { jugadorId: id, apuesta: 100, pago: 1.5 },
+      { jugadorId: id, apuesta: Number.NaN, pago: 0 },
+      { jugadorId: id, apuesta: 100, pago: 2 ** 60 },
+      { jugadorId: id, apuesta: -100, pago: 0 },
+      { jugadorId: 1.5, apuesta: 100, pago: 0 },
+      { jugadorId: id, apuesta: "100", pago: 0 },
+    ];
+    for (const fila of malas) {
+      const l = { rondaId: "r1", juego: "blackjack" as const, codigoPartida: "ABCD", filas: [fila as unknown as FilaLiquidacion] };
+      await expect(j.liquidar(l, T0), JSON.stringify(fila)).rejects.toThrow();
+    }
+    expect(await fichasDe(j, id)).toBe(900);
+    expect(await pendientesDe(j, id)).toBe(1);
+    await j.liquidar({ rondaId: "r1", juego: "blackjack", codigoPartida: "ABCD", filas: [{ jugadorId: id, apuesta: 100, pago: 200 }] }, T0);
+    expect(await fichasDe(j, id)).toBe(1100);
   });
 });
 
