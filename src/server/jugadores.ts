@@ -11,6 +11,8 @@ const BLOQUEO_MS = 15 * 60 * 1000;
 const TAMANO_TOP = 50;
 
 const ESQUEMA = [
+  // Las estadísticas van en la fila de cada jugador y se ponen al día al liquidar: el perfil y los rankings leen una fila
+  // por jugador, nunca el historial de `resultados`.
   `CREATE TABLE IF NOT EXISTS jugadores (
     id INTEGER PRIMARY KEY,
     apodo TEXT UNIQUE COLLATE NOCASE,
@@ -19,8 +21,17 @@ const ESQUEMA = [
     quiebras INTEGER DEFAULT 0,
     racha_actual INTEGER DEFAULT 0,
     mejor_racha INTEGER DEFAULT 0,
+    partidas INTEGER DEFAULT 0,
+    victorias INTEGER DEFAULT 0,
+    ganancias INTEGER DEFAULT 0,
+    mayor_premio INTEGER DEFAULT 0,
+    partidas_blackjack INTEGER DEFAULT 0,
+    victorias_blackjack INTEGER DEFAULT 0,
+    partidas_carrera INTEGER DEFAULT 0,
+    victorias_carrera INTEGER DEFAULT 0,
     creado_en INTEGER
   )`,
+  // El historial: una fila por jugador y ronda. Nada lo lee durante el juego, así que no lleva índices.
   `CREATE TABLE IF NOT EXISTS resultados (
     id INTEGER PRIMARY KEY,
     jugador_id INTEGER, juego TEXT, codigo_partida TEXT, ronda_id TEXT,
@@ -38,20 +49,32 @@ const ESQUEMA = [
   "CREATE TABLE IF NOT EXISTS intentos (apodo TEXT PRIMARY KEY COLLATE NOCASE, fallos INTEGER, bloqueado_hasta INTEGER)",
 ];
 
-/** Una consulta por orden que devuelve (id, apodo, valor) solo de los jugadores que clasifican en él. */
+/** Una consulta por orden que devuelve (id, apodo, valor) solo de los jugadores que clasifican en él. Todas leen solo `jugadores`. */
 const ORIGEN_RANKING: Record<OrdenRanking, string> = {
   fichas: "SELECT id, apodo, fichas AS valor FROM jugadores",
-  ganancias:
-    "SELECT j.id, j.apodo, COALESCE(SUM(r.neto), 0) AS valor FROM jugadores j LEFT JOIN resultados r ON r.jugador_id = j.id GROUP BY j.id",
-  victorias: `SELECT j.id, j.apodo, CAST(ROUND(100.0 * SUM(r.resultado = 'gana') / COUNT(*)) AS INTEGER) AS valor
-    FROM jugadores j JOIN resultados r ON r.jugador_id = j.id GROUP BY j.id HAVING COUNT(*) >= ${PARTIDAS_MINIMAS_VICTORIAS}`,
-  premio:
-    "SELECT j.id, j.apodo, MAX(r.neto) AS valor FROM jugadores j JOIN resultados r ON r.jugador_id = j.id WHERE r.neto > 0 GROUP BY j.id",
+  ganancias: "SELECT id, apodo, ganancias AS valor FROM jugadores",
+  victorias: `SELECT id, apodo, CAST(ROUND(100.0 * victorias / partidas) AS INTEGER) AS valor FROM jugadores WHERE partidas >= ${PARTIDAS_MINIMAS_VICTORIAS}`,
+  // Solo quien ha ganado alguna ronda: el mayor premio es el mayor neto positivo.
+  premio: "SELECT id, apodo, mayor_premio AS valor FROM jugadores WHERE mayor_premio > 0",
   racha: "SELECT id, apodo, mejor_racha AS valor FROM jugadores",
   quiebras: "SELECT id, apodo, quiebras AS valor FROM jugadores",
 };
 
 type FilaJugador = { id: number; apodo: string; fichas: number };
+
+type FilaPerfil = FilaJugador & {
+  quiebras: number;
+  racha_actual: number;
+  mejor_racha: number;
+  partidas: number;
+  victorias: number;
+  ganancias: number;
+  mayor_premio: number;
+  partidas_blackjack: number;
+  victorias_blackjack: number;
+  partidas_carrera: number;
+  victorias_carrera: number;
+};
 
 type ResultadoEntrar =
   | { ok: true; jugador: JugadorPublico }
@@ -162,40 +185,29 @@ export class Jugadores extends DurableObject<Env> {
     return turno;
   }
 
+  /** Las fichas del jugador (una sola fila leída), o `null` si no existe. */
+  async fichas(jugadorId: number): Promise<number | null> {
+    return this.sql.exec<{ fichas: number }>("SELECT fichas FROM jugadores WHERE id = ?", jugadorId).toArray()[0]?.fichas ?? null;
+  }
+
+  /** El perfil con sus estadísticas: una sola fila leída, la del jugador. */
   async perfil(jugadorId: number): Promise<Perfil | null> {
-    const jugador = this.sql
-      .exec<FilaJugador & { quiebras: number; racha_actual: number; mejor_racha: number }>(
-        "SELECT id, apodo, fichas, quiebras, racha_actual, mejor_racha FROM jugadores WHERE id = ?",
-        jugadorId,
-      )
-      .toArray()[0];
-    if (jugador === undefined) return null;
-
-    const totales = this.sql
-      .exec<{ partidas: number; ganancias: number; premio: number }>(
-        "SELECT COUNT(*) AS partidas, COALESCE(SUM(neto), 0) AS ganancias, COALESCE(MAX(CASE WHEN neto > 0 THEN neto END), 0) AS premio FROM resultados WHERE jugador_id = ?",
-        jugadorId,
-      )
-      .one();
-
-    const porJuego: Perfil["porJuego"] = { blackjack: { partidas: 0, victorias: 0 }, carrera: { partidas: 0, victorias: 0 } };
-    const filas = this.sql.exec<{ juego: IdJuego; partidas: number; victorias: number }>(
-      "SELECT juego, COUNT(*) AS partidas, SUM(resultado = 'gana') AS victorias FROM resultados WHERE jugador_id = ? GROUP BY juego",
-      jugadorId,
-    );
-    for (const { juego, partidas, victorias } of filas) porJuego[juego] = { partidas, victorias };
-
+    const j = this.sql.exec<FilaPerfil>("SELECT * FROM jugadores WHERE id = ?", jugadorId).toArray()[0];
+    if (j === undefined) return null;
     return {
-      id: jugador.id,
-      apodo: jugador.apodo,
-      fichas: jugador.fichas,
-      quiebras: jugador.quiebras,
-      rachaActual: jugador.racha_actual,
-      mejorRacha: jugador.mejor_racha,
-      partidas: totales.partidas,
-      gananciasTotales: totales.ganancias,
-      mayorPremio: totales.premio,
-      porJuego,
+      id: j.id,
+      apodo: j.apodo,
+      fichas: j.fichas,
+      quiebras: j.quiebras,
+      rachaActual: j.racha_actual,
+      mejorRacha: j.mejor_racha,
+      partidas: j.partidas,
+      gananciasTotales: j.ganancias,
+      mayorPremio: j.mayor_premio,
+      porJuego: {
+        blackjack: { partidas: j.partidas_blackjack, victorias: j.victorias_blackjack },
+        carrera: { partidas: j.partidas_carrera, victorias: j.victorias_carrera },
+      },
     };
   }
 
@@ -243,36 +255,67 @@ export class Jugadores extends DurableObject<Env> {
   }
 
   /**
-   * Cierra una ronda: paga, anota resultados y rachas, y borra todas las apuestas pendientes de `rondaId`. Idempotente por
-   * `rondaId` (y un `apostar` que llegue tarde para esa ronda devuelve "anulado"). Por jugador, una sola actualización y
-   * su fila de resultados. Lanza, sin tocar nada, si alguna fila no son enteros seguros (apuesta y pago ≥ 0).
+   * Cierra una ronda: paga, anota resultados, rachas y estadísticas, y borra todas las apuestas pendientes de `rondaId`.
+   * Idempotente por `rondaId` (y un `apostar` que llegue tarde para esa ronda devuelve "anulado"). Por jugador, una sola
+   * actualización y su fila de resultados. Devuelve el neto de cada jugador con su apodo (para el ranking de la noche),
+   * también al repetirla. Lanza, sin tocar nada, si alguna fila no son enteros seguros (apuesta y pago ≥ 0).
    */
-  async liquidar(l: { rondaId: string; juego: IdJuego; codigoPartida: string; filas: FilaLiquidacion[] }, ahora: number): Promise<void> {
+  async liquidar(
+    l: { rondaId: string; juego: IdJuego; codigoPartida: string; filas: FilaLiquidacion[] },
+    ahora: number,
+  ): Promise<FilaRankingPartida[]> {
     for (const fila of l.filas) {
       const { jugadorId, apuesta, pago } = fila;
       if (![jugadorId, apuesta, pago].every(Number.isSafeInteger) || apuesta < 0 || pago < 0) {
         throw new TypeError(`Fila de liquidación no válida en ${l.rondaId}: ${JSON.stringify(fila)}`);
       }
     }
-    this.ctx.storage.transactionSync(() => {
+    return this.ctx.storage.transactionSync(() => {
       const nueva = this.sql.exec("INSERT INTO rondas_liquidadas (ronda_id) VALUES (?) ON CONFLICT DO NOTHING RETURNING ronda_id", l.rondaId).toArray();
-      if (nueva.length === 0) return;
+      if (nueva.length === 0) {
+        // Ya estaba liquidada: no se toca nada, pero se devuelven los netos, por si la respuesta anterior se perdió.
+        return l.filas.flatMap(({ jugadorId, apuesta, pago }) => {
+          const fila = this.sql.exec<{ apodo: string }>("SELECT apodo FROM jugadores WHERE id = ?", jugadorId).toArray()[0];
+          return fila === undefined ? [] : [{ apodo: fila.apodo, neto: pago - apuesta }];
+        });
+      }
 
+      const netos: FilaRankingPartida[] = [];
       for (const { jugadorId, apuesta, pago } of l.filas) {
         const neto = pago - apuesta;
         const resultado = neto > 0 ? "gana" : neto < 0 ? "pierde" : "empata";
+        const gana = resultado === "gana" ? 1 : 0;
+        const blackjack = l.juego === "blackjack" ? 1 : 0;
         // En un UPDATE de SQLite todas las expresiones ven los valores anteriores de la fila. Empatar no toca la racha.
-        this.sql.exec(
-          `UPDATE jugadores SET
-             fichas = fichas + ?,
-             racha_actual = CASE ? WHEN 'gana' THEN racha_actual + 1 WHEN 'pierde' THEN 0 ELSE racha_actual END,
-             mejor_racha = CASE ? WHEN 'gana' THEN MAX(mejor_racha, racha_actual + 1) ELSE mejor_racha END
-           WHERE id = ?`,
-          pago,
-          resultado,
-          resultado,
-          jugadorId,
-        );
+        const fila = this.sql
+          .exec<{ apodo: string }>(
+            `UPDATE jugadores SET
+               fichas = fichas + ?,
+               racha_actual = CASE ? WHEN 'gana' THEN racha_actual + 1 WHEN 'pierde' THEN 0 ELSE racha_actual END,
+               mejor_racha = CASE ? WHEN 'gana' THEN MAX(mejor_racha, racha_actual + 1) ELSE mejor_racha END,
+               partidas = partidas + 1,
+               victorias = victorias + ?,
+               ganancias = ganancias + ?,
+               mayor_premio = MAX(mayor_premio, ?),
+               partidas_blackjack = partidas_blackjack + ?,
+               victorias_blackjack = victorias_blackjack + ?,
+               partidas_carrera = partidas_carrera + ?,
+               victorias_carrera = victorias_carrera + ?
+             WHERE id = ? RETURNING apodo`,
+            pago,
+            resultado,
+            resultado,
+            gana,
+            neto,
+            Math.max(neto, 0),
+            blackjack,
+            blackjack * gana,
+            1 - blackjack,
+            (1 - blackjack) * gana,
+            jugadorId,
+          )
+          .toArray()[0];
+        if (fila !== undefined) netos.push({ apodo: fila.apodo, neto });
         this.sql.exec(
           "INSERT INTO resultados (jugador_id, juego, codigo_partida, ronda_id, apuesta, neto, resultado, momento) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
           jugadorId,
@@ -286,6 +329,7 @@ export class Jugadores extends DurableObject<Env> {
         );
       }
       this.sql.exec("DELETE FROM apuestas_pendientes WHERE ronda_id = ?", l.rondaId);
+      return netos;
     });
   }
 
@@ -320,20 +364,5 @@ export class Jugadores extends DurableObject<Env> {
     const aFila = ({ posicion, apodo, valor }: FilaRanking): FilaRanking => ({ posicion, apodo, valor });
     const mia = jugadorId === null ? undefined : filas.find((f) => f.id === jugadorId);
     return { top: filas.filter((f) => f.posicion <= TAMANO_TOP).map(aFila), yo: mia === undefined ? null : aFila(mia) };
-  }
-
-  /** Neto de cada jugador en la partida `codigo` con los resultados de `desde` (ms, inclusive) en adelante: un código reutilizado empieza de cero. */
-  async rankingPartida(codigo: string, desde: number): Promise<FilaRankingPartida[]> {
-    return this.sql
-      .exec<{ apodo: string; neto: number }>(
-        `SELECT j.apodo AS apodo, SUM(r.neto) AS neto
-         FROM resultados r JOIN jugadores j ON j.id = r.jugador_id
-         WHERE r.codigo_partida = ? AND r.momento >= ?
-         GROUP BY r.jugador_id
-         ORDER BY neto DESC, j.apodo COLLATE NOCASE ASC`,
-        codigo,
-        desde,
-      )
-      .toArray();
   }
 }

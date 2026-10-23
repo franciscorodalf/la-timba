@@ -85,7 +85,7 @@ type Existencia = { estado: "comprobando" } | { estado: "existe" } | { estado: "
  * comprobar, muestra su propia pantalla en lugar de `children`.
  */
 export function PartidaProvider({ codigo, children }: { codigo: string; children: ReactNode }) {
-  const { refrescar } = useSesion();
+  const { refrescarFichas } = useSesion();
   const [existencia, setExistencia] = useState<Existencia>({ estado: "comprobando" });
   const [intento, setIntento] = useState(0);
 
@@ -109,7 +109,7 @@ export function PartidaProvider({ codigo, children }: { codigo: string; children
   // Se perdió la conexión y hay que saber si merece la pena reintentarla:
   // - Si la partida se cerró mientras tanto (30 min sin nadie), el servidor la rechazará siempre: se deja de reintentar.
   // - Si el token caducó o se rotó, también la rechazará siempre, y la consulta de existencia no lo delata porque no lleva
-  //   token: `refrescar` sí (su 401 cierra la sesión y se vuelve a la entrada).
+  //   token: `refrescarFichas` sí (su 401 cierra la sesión y se vuelve a la entrada).
   // Si no se puede saber (sin red), el socket sigue reintentando por su cuenta y se vuelve a comprobar en la siguiente caída.
   const comprobando = useRef(false);
   const alCerrarse = useCallback(async () => {
@@ -118,13 +118,13 @@ export function PartidaProvider({ codigo, children }: { codigo: string; children
     try {
       const [existe] = await Promise.all([
         api.existePartida(codigo).then(({ existe }) => existe, () => true),
-        refrescar(),
+        refrescarFichas(),
       ]);
       if (!existe) setExistencia({ estado: "no_existe" });
     } finally {
       comprobando.current = false;
     }
-  }, [codigo, refrescar]);
+  }, [codigo, refrescarFichas]);
 
   switch (existencia.estado) {
     case "comprobando":

@@ -8,10 +8,10 @@ import { Ficha } from "./Ficha";
  * número que se tenía puede estar desfasado. Si cambió, el contador sube o baja contando.
  */
 export function Saludo() {
-  const { jugador, refrescar } = useSesion();
+  const { jugador, refrescarFichas } = useSesion();
   useEffect(() => {
-    void refrescar();
-  }, [refrescar]);
+    void refrescarFichas();
+  }, [refrescarFichas]);
 
   return (
     <p className="saludo">

@@ -1,6 +1,7 @@
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
+import { ORDENES_RANKING } from "../../src/shared/api";
 import type { FilaLiquidacion, IdJuego } from "../../src/shared/juegos/tipos";
 
 const T0 = 1_800_000_000_000;
@@ -438,6 +439,32 @@ describe("liquidar", () => {
     expect((await j.perfil(id))!.partidas).toBe(1);
   });
 
+  it("liquida a varios jugadores de la misma ronda y devuelve el neto de cada uno con su apodo (también al repetirla)", async () => {
+    const j = nuevo();
+    const a = await crear(j, "Ana");
+    const b = await crear(j, "Beto");
+    await j.apostar(a, 100, "r1", cobro());
+    await j.apostar(b, 200, "r1", cobro());
+    const liquidacion = {
+      rondaId: "r1",
+      juego: "carrera" as const,
+      codigoPartida: "ABCD",
+      filas: [
+        { jugadorId: a, apuesta: 100, pago: 400 },
+        { jugadorId: b, apuesta: 200, pago: 0 },
+      ],
+    };
+    const netos = [
+      { apodo: "Ana", neto: 300 },
+      { apodo: "Beto", neto: -200 },
+    ];
+    expect(await j.liquidar(liquidacion, T0)).toEqual(netos);
+    // Si la respuesta se perdió y la mesa lo repite, no paga otra vez pero devuelve lo mismo (para el ranking de la noche).
+    expect(await j.liquidar(liquidacion, T0)).toEqual(netos);
+    expect(await fichasDe(j, a)).toBe(1300);
+    expect(await fichasDe(j, b)).toBe(800);
+  });
+
   it("liquida a varios jugadores de la misma ronda", async () => {
     const j = nuevo();
     const a = await crear(j, "Ana");
@@ -534,6 +561,43 @@ describe("rescate", () => {
 
     await j.liquidar({ rondaId: "r2", juego: "blackjack", codigoPartida: "ABCD", filas: [{ jugadorId: id, apuesta: 100, pago: 0 }] }, T0);
     expect(await j.rescate(id)).toEqual({ ok: true, fichas: 200 });
+  });
+});
+
+describe("fichas", () => {
+  it("las fichas del jugador, o null si no existe", async () => {
+    const j = nuevo();
+    const id = await crear(j);
+    expect(await j.fichas(id)).toBe(1000);
+    await jugar(j, id, 100, 0);
+    expect(await j.fichas(id)).toBe(900);
+    expect(await j.fichas(id + 1000)).toBeNull();
+  });
+});
+
+describe("lecturas que no crecen con el historial", () => {
+  it("fichas, perfil y los seis rankings leen las mismas filas con 30 rondas jugadas que con 180", async () => {
+    const j = nuevo();
+    const ids = [await crear(j, "Ana"), await crear(j, "Beto"), await crear(j, "Carla")];
+    const medir = async () => {
+      const lecturas: Record<string, number> = {};
+      lecturas["fichas()"] = (await filas(j, () => j.fichas(ids[0]))).leidas;
+      lecturas["perfil()"] = (await filas(j, () => j.perfil(ids[0]))).leidas;
+      for (const orden of ORDENES_RANKING) lecturas[`ranking(${orden})`] = (await filas(j, () => j.ranking(orden, ids[0]))).leidas;
+      return lecturas;
+    };
+    // Rondas repartidas entre los tres, ganando y perdiendo, en los dos juegos.
+    const jugarRondas = async (n: number) => {
+      for (let i = 0; i < n; i++) await jugar(j, ids[i % 3], 10, i % 2 === 0 ? 20 : 0, { juego: i % 5 === 0 ? "carrera" : "blackjack" });
+    };
+    // Con 30 rondas los tres ya clasifican en todos los órdenes (≥ 10 rondas y alguna ganada): lo que se lee depende de
+    // cuántos jugadores hay, no de cuánto han jugado.
+    await jugarRondas(30);
+    const antes = await medir();
+    await jugarRondas(150);
+    expect(await medir()).toEqual(antes);
+    expect(antes["fichas()"]).toBe(1);
+    expect(antes["perfil()"]).toBe(1);
   });
 });
 
@@ -722,68 +786,5 @@ describe("ranking", () => {
         { posicion: 5, apodo: "Dani", valor: 0 },
       ]);
     });
-  });
-});
-
-describe("rankingPartida", () => {
-  it("suma netos por código", async () => {
-    const j = nuevo();
-    const ana = await crear(j, "Ana");
-    const beto = await crear(j, "Beto");
-    const carla = await crear(j, "Carla");
-
-    // Partida ABCD: dos rondas. Ana +100 -40 = +60; Beto -50 +10 = -40; Carla solo juega en otra partida.
-    await j.apostar(ana, 100, "r1", cobro());
-    await j.apostar(beto, 50, "r1", cobro());
-    await j.liquidar(
-      { rondaId: "r1", juego: "blackjack", codigoPartida: "ABCD", filas: [{ jugadorId: ana, apuesta: 100, pago: 200 }, { jugadorId: beto, apuesta: 50, pago: 0 }] },
-      T0,
-    );
-    await j.apostar(ana, 40, "r2", cobro());
-    await j.apostar(beto, 10, "r2", cobro());
-    await j.liquidar(
-      { rondaId: "r2", juego: "carrera", codigoPartida: "ABCD", filas: [{ jugadorId: ana, apuesta: 40, pago: 0 }, { jugadorId: beto, apuesta: 10, pago: 20 }] },
-      T0 + 1000,
-    );
-    await jugar(j, carla, 500, 1500, { codigoPartida: "WXYZ" });
-
-    expect(await j.rankingPartida("ABCD", 0)).toEqual([
-      { apodo: "Ana", neto: 60 },
-      { apodo: "Beto", neto: -40 },
-    ]);
-    expect(await j.rankingPartida("WXYZ", 0)).toEqual([{ apodo: "Carla", neto: 1000 }]);
-    expect(await j.rankingPartida("NADA", 0)).toEqual([]);
-  });
-
-  it("solo cuenta los resultados desde `desde` (inclusive), para que un código reutilizado empiece de cero", async () => {
-    const j = nuevo();
-    const ana = await crear(j, "Ana");
-    const beto = await crear(j, "Beto");
-    await jugar(j, ana, 100, 300, { ahora: T0 }); // +200, de la partida anterior con el mismo código
-    await jugar(j, beto, 100, 150, { ahora: T0 + 999 }); // +50, también anterior
-    await jugar(j, ana, 100, 140, { ahora: T0 + 1000 }); // +40, en el instante exacto de la reapertura
-    await jugar(j, beto, 100, 0, { ahora: T0 + 5000 }); // -100
-
-    expect(await j.rankingPartida("ABCD", T0 + 1000)).toEqual([
-      { apodo: "Ana", neto: 40 },
-      { apodo: "Beto", neto: -100 },
-    ]);
-    expect(await j.rankingPartida("ABCD", T0 + 5001)).toEqual([]);
-    expect(await j.rankingPartida("ABCD", 0)).toEqual([
-      { apodo: "Ana", neto: 240 },
-      { apodo: "Beto", neto: -50 },
-    ]);
-  });
-
-  it("empata por neto → desempata por apodo", async () => {
-    const j = nuevo();
-    const beto = await crear(j, "Beto");
-    const ana = await crear(j, "ana");
-    await jugar(j, beto, 10, 20, { codigoPartida: "ABCD" });
-    await jugar(j, ana, 10, 20, { codigoPartida: "ABCD" });
-    expect(await j.rankingPartida("ABCD", 0)).toEqual([
-      { apodo: "ana", neto: 10 },
-      { apodo: "Beto", neto: 10 },
-    ]);
   });
 });

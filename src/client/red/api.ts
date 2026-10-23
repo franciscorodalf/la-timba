@@ -63,6 +63,7 @@ export const api = {
   registro: (apodo: string, pin: string) => peticion<RespuestaSesion>("POST", "/api/registro", { apodo, pin }),
   entrar: (apodo: string, pin: string) => peticion<RespuestaSesion>("POST", "/api/entrar", { apodo, pin }),
   yo: () => peticion<Perfil>("GET", "/api/yo"),
+  fichas: () => peticion<{ fichas: number }>("GET", "/api/fichas"),
   crearPartida: () => peticion<{ codigo: string }>("POST", "/api/partidas"),
   existePartida: (codigo: string) => peticion<{ existe: boolean }>("GET", `/api/partidas/${encodeURIComponent(codigo)}`),
   ranking: (orden: OrdenRanking) => peticion<RespuestaRanking>("GET", `/api/ranking?orden=${orden}`),

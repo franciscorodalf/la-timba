@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { evictDurableObject, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import type { MensajeSala } from "../../src/shared/api";
 import type { ResumenMesa } from "../../src/shared/juegos/tipos";
 import { firmarToken } from "../../src/server/auth";
@@ -59,41 +59,9 @@ async function esperar(condicion: () => boolean | Promise<boolean>, que: string)
   }
 }
 
-/** Apuesta y liquida una ronda de `neto` fichas (>0) del jugador en la partida, como haría una mesa. */
-async function ganar(jugadorId: number, codigo: string, neto: number, momento = Date.now()): Promise<void> {
-  const rondaId = `ronda-${crypto.randomUUID()}`;
-  expect(await jugadores().apostar(jugadorId, 100, rondaId, crypto.randomUUID())).toBe("ok");
-  await jugadores().liquidar({ rondaId, juego: "blackjack", codigoPartida: codigo, filas: [{ jugadorId, apuesta: 100, pago: 100 + neto }] }, momento);
-}
-
-/**
- * Hace que `Jugadores.rankingPartida` falle para la sala `codigo` (le cambia el binding a esa instancia) y silencia el
- * error registrado. Devuelve el espía de `console.error` y `arreglar()`, que restaura el binding real.
- */
-async function romperRanking(codigo: string) {
-  const roto = {
-    idFromName: () => "global",
-    get: () => ({
-      rankingPartida: async () => {
-        throw new Error("Jugadores caído");
-      },
-    }),
-  };
-  // `env` es protegido: se accede a él por encima del tipo.
-  const bindings = (partida: object) => (partida as { env: Record<string, unknown> }).env;
-  const reales = await runInDurableObject(sala(codigo), (partida) => {
-    const original = bindings(partida).Jugadores;
-    bindings(partida).Jugadores = roto;
-    return original;
-  });
-  return {
-    log: vi.spyOn(console, "error").mockImplementation(() => {}),
-    arreglar: () =>
-      runInDurableObject(sala(codigo), (partida) => {
-        bindings(partida).Jugadores = reales;
-      }),
-  };
-}
+let rondas = 0;
+/** Lo que manda una mesa al liquidar una ronda: su id y el neto de cada jugador. */
+const ronda = (...netos: [string, number][]) => ({ rondaId: `ABCD:blackjack:${++rondas}`, netos: netos.map(([apodo, neto]) => ({ apodo, neto })) });
 
 describe("enrutado de /parties/*", () => {
   it("conectar sin token → 401; con código inexistente → 404", async () => {
@@ -328,7 +296,7 @@ describe("Partida: sala", () => {
     await runInDurableObject(sala(codigo), (partida) => {
       partida.ahora = () => t0 + 7_000;
     });
-    await sala(codigo).actualizarMesa("blackjack", { jugadores: [], fase: "esperando", finFase: null }, false);
+    await sala(codigo).actualizarMesa("blackjack", { jugadores: [], fase: "esperando", finFase: null });
     expect((await conexion.recibir("sala")).ahora).toBe(t0 + 7_000);
   });
 
@@ -382,86 +350,88 @@ describe("Partida: sala", () => {
     await conexionA.recibir("sala");
 
     const resumen: ResumenMesa = { jugadores: [a.jugador.apodo], fase: "apuestas", finFase: 1234 };
-    await sala(codigo).actualizarMesa("blackjack", resumen, false);
+    await sala(codigo).actualizarMesa("blackjack", resumen);
     expect(await conexionA.recibir("sala")).toMatchObject({ mesas: { blackjack: resumen, carrera: MESA_VACIA } });
 
     const otro: ResumenMesa = { jugadores: [], fase: "corriendo", finFase: null };
-    await sala(codigo).actualizarMesa("carrera", otro, false);
+    await sala(codigo).actualizarMesa("carrera", otro);
     expect(await conexionA.recibir("sala")).toMatchObject({ mesas: { blackjack: resumen, carrera: otro } });
 
     const conexionB = await abrir(codigo, b.token);
     expect(await conexionB.recibir("sala")).toMatchObject({ mesas: { blackjack: resumen, carrera: otro } });
   });
 
-  it("rankingNoche se carga al primer conectar y solo se vuelve a pedir con refrescarRanking", async () => {
+  it("rankingNoche suma, por apodo, los netos de las rondas que liquidan las mesas, de mayor a menor", async () => {
     const a = await registrar(unico());
     const b = await registrar(unico());
     const codigo = await crearPartida(a.token);
-    await ganar(a.jugador.id, codigo, 100);
-    await ganar(b.jugador.id, codigo, 30);
-
     const conexionA = await abrir(codigo, a.token);
-    const inicial = [
+    expect((await conexionA.recibir("sala")).rankingNoche).toEqual([]);
+
+    const resumen: ResumenMesa = { jugadores: [], fase: "resultado", finFase: 5 };
+    await sala(codigo).actualizarMesa("blackjack", resumen, [ronda([a.jugador.apodo, 100], [b.jugador.apodo, 30])]);
+    expect((await conexionA.recibir("sala")).rankingNoche).toEqual([
       { apodo: a.jugador.apodo, neto: 100 },
       { apodo: b.jugador.apodo, neto: 30 },
-    ];
-    expect((await conexionA.recibir("sala")).rankingNoche).toEqual(inicial);
-
-    await ganar(b.jugador.id, codigo, 200); // b adelanta, pero la sala aún no lo sabe
-    const conexionB = await abrir(codigo, b.token);
-    expect((await conexionB.recibir("sala")).rankingNoche).toEqual(inicial);
-
-    const resumen: ResumenMesa = { jugadores: [], fase: "apuestas", finFase: 5 };
-    await sala(codigo).actualizarMesa("blackjack", resumen, false);
-    expect((await conexionB.recibir("sala")).rankingNoche).toEqual(inicial);
-
-    await sala(codigo).actualizarMesa("blackjack", resumen, true);
-    expect((await conexionB.recibir("sala")).rankingNoche).toEqual([
+    ]);
+    // Dos rondas en el mismo aviso (una que se reintentó y la de ahora); y la de la otra mesa también cuenta.
+    await sala(codigo).actualizarMesa("carrera", resumen, [ronda([b.jugador.apodo, 200]), ronda([a.jugador.apodo, -40])]);
+    const esperado = [
       { apodo: b.jugador.apodo, neto: 230 },
-      { apodo: a.jugador.apodo, neto: 100 },
+      { apodo: a.jugador.apodo, neto: 60 },
+    ];
+    expect((await conexionA.recibir("sala")).rankingNoche).toEqual(esperado);
+
+    // Lo ve quien llega después, y un aviso sin rondas no lo cambia.
+    const conexionB = await abrir(codigo, b.token);
+    expect((await conexionB.recibir("sala")).rankingNoche).toEqual(esperado);
+    await sala(codigo).actualizarMesa("blackjack", { ...resumen, fase: "apuestas" });
+    expect((await conexionB.recibir("sala")).rankingNoche).toEqual(esperado);
+  });
+
+  it("una ronda que llega dos veces (la mesa la repite si no supo que llegó) cuenta una sola vez", async () => {
+    const { token, jugador, codigo } = await nuevaPartida();
+    const conexion = await abrir(codigo, token);
+    await conexion.recibir("sala");
+    const repetida = ronda([jugador.apodo, 70]);
+    await sala(codigo).actualizarMesa("blackjack", MESA_VACIA, [repetida]);
+    await sala(codigo).actualizarMesa("blackjack", MESA_VACIA, [repetida, ronda([jugador.apodo, 5])]);
+    await conexion.recibir("sala");
+    expect((await conexion.recibir("sala")).rankingNoche).toEqual([{ apodo: jugador.apodo, neto: 75 }]);
+  });
+
+  it("empata por neto → desempata por apodo sin distinguir mayúsculas", async () => {
+    const { token, codigo } = await nuevaPartida();
+    const conexion = await abrir(codigo, token);
+    await conexion.recibir("sala");
+    await sala(codigo).actualizarMesa("blackjack", MESA_VACIA, [ronda(["beto", 10], ["Ana", 10], ["carla", 20], ["dani", -5])]);
+    expect((await conexion.recibir("sala")).rankingNoche).toEqual([
+      { apodo: "carla", neto: 20 },
+      { apodo: "Ana", neto: 10 },
+      { apodo: "beto", neto: 10 },
+      { apodo: "dani", neto: -5 },
     ]);
   });
 
-  it("si Jugadores falla al cargar el ranking, la conexión recibe una 'sala' normal sin ranking y la siguiente lo recupera", async () => {
-    const a = await registrar(unico());
-    const b = await registrar(unico());
-    const codigo = await crearPartida(a.token);
-    await ganar(a.jugador.id, codigo, 70);
-
-    const { log, arreglar } = await romperRanking(codigo);
-    const conexionA = await abrir(codigo, a.token);
-    expect(await conexionA.recibir()).toEqual({
-      t: "sala",
-      codigo,
-      ahora: expect.any(Number),
-      conectados: [a.jugador.apodo],
-      mesas: { blackjack: MESA_VACIA, carrera: MESA_VACIA },
-      rankingNoche: [],
-    });
-    expect(log).toHaveBeenCalled();
-    expect(conexionA.ws.readyState).toBe(WebSocket.OPEN);
-
-    await arreglar();
-    const conexionB = await abrir(codigo, b.token);
-    expect((await conexionB.recibir("sala")).rankingNoche).toEqual([{ apodo: a.jugador.apodo, neto: 70 }]);
-  });
-
-  it("si Jugadores falla al refrescar, actualizarMesa no lanza, difunde igualmente y conserva el ranking anterior", async () => {
+  it("la sala no le pregunta nada a Jugadores: con Jugadores caído conecta, difunde y suma el ranking igual", async () => {
     const { token, jugador, codigo } = await nuevaPartida();
-    await ganar(jugador.id, codigo, 70);
+    // Solo esta instancia ve un Jugadores roto (se cambia su `env`, no el compartido), y se restaura pase lo que pase.
+    const original = await runInDurableObject(sala(codigo), (partida) => {
+      const instancia = partida as unknown as { env: Env };
+      const real = instancia.env;
+      const roto = { idFromName: () => real.Jugadores.idFromName("global"), get: () => ({}) };
+      instancia.env = Object.assign(Object.create(real), { Jugadores: roto });
+      return real;
+    });
+    onTestFinished(() =>
+      runInDurableObject(sala(codigo), (partida) => {
+        (partida as unknown as { env: Env }).env = original;
+      }),
+    );
     const conexion = await abrir(codigo, token);
+    expect((await conexion.recibir("sala")).conectados).toEqual([jugador.apodo]);
+    await sala(codigo).actualizarMesa("blackjack", MESA_VACIA, [ronda([jugador.apodo, 70])]);
     expect((await conexion.recibir("sala")).rankingNoche).toEqual([{ apodo: jugador.apodo, neto: 70 }]);
-    await ganar(jugador.id, codigo, 30);
-
-    const { log, arreglar } = await romperRanking(codigo);
-    const resumen: ResumenMesa = { jugadores: [jugador.apodo], fase: "apuestas", finFase: 7 };
-    await expect(sala(codigo).actualizarMesa("blackjack", resumen, true)).resolves.toBeUndefined();
-    expect(await conexion.recibir("sala")).toMatchObject({ mesas: { blackjack: resumen }, rankingNoche: [{ apodo: jugador.apodo, neto: 70 }] });
-    expect(log).toHaveBeenCalled();
-
-    await arreglar();
-    await sala(codigo).actualizarMesa("blackjack", resumen, true);
-    expect((await conexion.recibir("sala")).rankingNoche).toEqual([{ apodo: jugador.apodo, neto: 100 }]);
   });
 
   it("rankingNoche solo cuenta lo jugado desde que se (re)abrió la partida", async () => {
@@ -469,26 +439,44 @@ describe("Partida: sala", () => {
     const codigo = codigoAleatorio();
     const T = Date.now();
     expect(await sala(codigo).iniciar(jugador.id, T)).toBe(true);
-    await ganar(jugador.id, codigo, 500, T + 10);
     await runInDurableObject(sala(codigo), (partida) => {
       partida.ahora = () => T + 1; // distinto del T con que se abrió, para distinguir la alarma de la desconexión
     });
     const primera = await abrir(codigo, token);
+    await primera.recibir("sala");
+    await sala(codigo).actualizarMesa("blackjack", MESA_VACIA, [ronda([jugador.apodo, 500])]);
     expect((await primera.recibir("sala")).rankingNoche).toEqual([{ apodo: jugador.apodo, neto: 500 }]);
     primera.cerrar();
     await esperar(async () => (await alarmaDe(codigo)) === T + 1 + MIN_30, "alarma tras la desconexión");
     await runDurableObjectAlarm(sala(codigo));
     expect(await sala(codigo).existe()).toBe(false);
 
-    // Mismo código, partida nueva: lo de antes no cuenta, lo de ahora sí (también en el instante exacto de la apertura).
-    const reabierta = T + 60_000;
-    expect(await sala(codigo).iniciar(jugador.id, reabierta)).toBe(true);
+    // Mismo código, partida nueva: lo de antes no cuenta, lo de ahora sí.
+    expect(await sala(codigo).iniciar(jugador.id, T + 60_000)).toBe(true);
     const segunda = await abrir(codigo, token);
     expect((await segunda.recibir("sala")).rankingNoche).toEqual([]);
-
-    await ganar(jugador.id, codigo, 25, reabierta);
-    await sala(codigo).actualizarMesa("blackjack", MESA_VACIA, true);
+    await sala(codigo).actualizarMesa("blackjack", MESA_VACIA, [ronda([jugador.apodo, 25])]);
     expect((await segunda.recibir("sala")).rankingNoche).toEqual([{ apodo: jugador.apodo, neto: 25 }]);
+  });
+
+  it("cada aviso de una mesa es una sola escritura en la sala, aunque traiga rondas", async () => {
+    const { token, jugador, codigo } = await nuevaPartida();
+    const conexion = await abrir(codigo, token);
+    await conexion.recibir("sala");
+    const escrituras: string[] = [];
+    await runInDurableObject(sala(codigo), (_p, state) => {
+      const almacen = state.storage as unknown as Record<string, (...a: unknown[]) => unknown>;
+      for (const nombre of ["put", "delete", "setAlarm"]) {
+        const original = almacen[nombre].bind(state.storage);
+        almacen[nombre] = (...a: unknown[]) => {
+          escrituras.push(`${nombre}:${typeof a[0] === "string" ? a[0] : Object.keys(a[0] as object).join(",")}`);
+          return original(...a);
+        };
+      }
+    });
+    await sala(codigo).actualizarMesa("blackjack", { jugadores: [jugador.apodo], fase: "resultado", finFase: 9 }, [ronda([jugador.apodo, 50])]);
+    await sala(codigo).actualizarMesa("carrera", { jugadores: [jugador.apodo], fase: "apuestas", finFase: 9 });
+    expect(escrituras).toEqual(["put:sala", "put:sala"]);
   });
 
   it("ignora lo que envía el cliente: ni responde ni se cae", async () => {
@@ -501,9 +489,9 @@ describe("Partida: sala", () => {
     conexion.ws.send(new Uint8Array([1, 2, 3]));
 
     // Lo siguiente que llega es lo que provoca el servidor, sin respuestas intercaladas a lo anterior.
-    await sala(codigo).actualizarMesa("blackjack", { jugadores: [], fase: "uno", finFase: null }, false);
+    await sala(codigo).actualizarMesa("blackjack", { jugadores: [], fase: "uno", finFase: null });
     expect(await conexion.recibir()).toMatchObject({ t: "sala", mesas: { blackjack: { fase: "uno" } } });
-    await sala(codigo).actualizarMesa("blackjack", { jugadores: [], fase: "dos", finFase: null }, false);
+    await sala(codigo).actualizarMesa("blackjack", { jugadores: [], fase: "dos", finFase: null });
     expect(await conexion.recibir()).toMatchObject({ t: "sala", mesas: { blackjack: { fase: "dos" } } });
     expect(conexion.ws.readyState).toBe(WebSocket.OPEN);
   });
@@ -512,11 +500,10 @@ describe("Partida: sala", () => {
     const a = await registrar(unico());
     const b = await registrar(unico());
     const codigo = await crearPartida(a.token);
-    await ganar(a.jugador.id, codigo, 50);
     const conexionA = await abrir(codigo, a.token);
     await conexionA.recibir("sala");
     const resumen: ResumenMesa = { jugadores: [a.jugador.apodo], fase: "apuestas", finFase: 99 };
-    await sala(codigo).actualizarMesa("carrera", resumen, true);
+    await sala(codigo).actualizarMesa("carrera", resumen, [ronda([a.jugador.apodo, 50])]);
     await conexionA.recibir("sala");
 
     await evictDurableObject(sala(codigo));
@@ -614,7 +601,7 @@ describe("Partida: ciclo de vida", () => {
     const conexion = await abrir(codigo, token);
     await conexion.recibir("sala");
     const resumen: ResumenMesa = { jugadores: [jugador.apodo], fase: "apuestas", finFase: 1 };
-    await sala(codigo).actualizarMesa("blackjack", resumen, false);
+    await sala(codigo).actualizarMesa("blackjack", resumen);
     expect(await conexion.recibir("sala")).toMatchObject({ mesas: { blackjack: resumen } });
     conexion.cerrar();
     await esperar(async () => (await alarmaDe(codigo)) === t0 + MIN_30, "alarma tras la desconexión");

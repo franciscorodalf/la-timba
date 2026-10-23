@@ -91,12 +91,13 @@ export async function entrarSimulada<V>(pagina: Page, request: APIRequestContext
 }
 
 /**
- * Las fichas que devuelve `/api/yo`, a elegir: se fijan al pedir (una petición en vuelo no ve el cambio siguiente). Si la prueba
- * acaba con una petición en vuelo, la página se cierra y el fallo de esa petición no se cuenta como error de la ejecución.
+ * Las fichas que devuelven `/api/fichas` (las mesas, la sala y el inicio) y `/api/yo` (al abrir la app y el perfil), a
+ * elegir: se fijan al pedir (una petición en vuelo no ve el cambio siguiente). Si la prueba acaba con una petición en vuelo,
+ * la página se cierra y el fallo de esa petición no se cuenta como error de la ejecución.
  */
 export async function fichasDeApi(pagina: Page, inicial: number): Promise<{ poner(n: number): void }> {
   let fichas = inicial;
-  await pagina.route("**/api/yo", async (ruta) => {
+  await pagina.route(/\/api\/(yo|fichas)$/, async (ruta) => {
     const valor = fichas;
     try {
       const respuesta = await ruta.fetch();

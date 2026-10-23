@@ -1,9 +1,10 @@
 import { type Connection, type ConnectionContext, Server, type WSMessage } from "partyserver";
-import type { MensajeMesa } from "../shared/api";
+import type { FilaRankingPartida, MensajeMesa } from "../shared/api";
 import { rngCripto, type Rng } from "../shared/cartas";
 import type { CodigoError, Evento, FilaLiquidacion, Juego, JugadorId, Paso } from "../shared/juegos/tipos";
 import type { Env } from "./index";
 import { type Jugadores, jugadoresGlobal } from "./jugadores";
+import type { RondaLiquidada } from "./partida";
 
 /** La única clave del almacenamiento: el registro de la mesa (`Registro`), que se escribe entero en cada cambio. */
 const CLAVE_MESA = "mesa";
@@ -112,6 +113,8 @@ export abstract class Mesa<E extends { ronda: number }, A extends { t: string }>
   private alarmaEn: number | null = null;
   /** El último resumen que aceptó la sala (en JSON): no se le vuelve a mandar si no cambia. `null` al despertar. */
   private resumenEnSala: string | null = null;
+  /** Rondas pagadas cuyos netos aún no ha recibido la sala (ranking de la noche). Solo en memoria. */
+  private rondasPorAvisar: RondaLiquidada[] = [];
   private cola: Promise<void> = Promise.resolve();
   /** Mensajes de cada conexión (por id) en el segundo en curso del reloj de la mesa. Solo en memoria: hibernar lo reinicia. */
   private mensajes = new Map<string, { segundo: number; cuenta: number }>();
@@ -206,7 +209,8 @@ export abstract class Mesa<E extends { ronda: number }, A extends { t: string }>
       await this.anularCobro();
       if (await this.alDia(ahora)) return;
       // Nada que hacer en el juego (alarma adelantada, o solo para reintentar): reintentar pagos y volver a programar.
-      if (await this.liquidarPendientes()) await this.avisarSala(true);
+      await this.liquidarPendientes();
+      await this.avisarSala();
       await this.programarAlarma(ahora);
     });
   }
@@ -354,14 +358,14 @@ export abstract class Mesa<E extends { ronda: number }, A extends { t: string }>
     }
     if (cerrarCobro) cambios.cobro = null;
     await this.guardar(cambios);
-    const pagadas = await this.liquidarPendientes();
+    await this.liquidarPendientes();
     await this.programarAlarma(ahora);
 
     // La vista nueva enseña todo lo vencido hasta `ahora`: los avisos siguen desde aquí.
     this.avisadoHasta = Math.max(this.avisadoHasta, ahora);
     this.difundir(p.eventos, ahora, excluir);
     this.programarAviso(ahora);
-    await this.avisarSala(pagadas);
+    await this.avisarSala();
   }
 
   /** Envía a cada conexión (salvo a `excluir`) su vista en el instante `momento` con `eventos`. */
@@ -374,34 +378,34 @@ export abstract class Mesa<E extends { ronda: number }, A extends { t: string }>
 
   /**
    * Paga en Jugadores las rondas pendientes (idempotente por `rondaId`); las que fallen quedan para el siguiente cambio.
-   * Devuelve si pagó alguna (para que la sala refresque el ranking de la noche).
+   * Los netos de las que se pagan quedan para el siguiente aviso a la sala (el ranking de la noche).
    */
-  private async liquidarPendientes(): Promise<boolean> {
-    if (this.pendientes.length === 0) return false;
+  private async liquidarPendientes(): Promise<void> {
+    if (this.pendientes.length === 0) return;
     // Liquidar borra todas las apuestas pendientes de la ronda: un cobro a medias se anula antes, o sus fichas se
     // perderían. (El cobro de una jugada recién guardada ya no cuenta: `confirmar` lo cierra antes de llegar aquí.)
-    if (this.cobro !== null && !(await this.anularCobro())) return false;
+    if (this.cobro !== null && !(await this.anularCobro())) return;
     const restantes: Liquidacion[] = [];
     for (const liquidacion of this.pendientes) {
-      if (!(await this.liquidar(liquidacion))) restantes.push(liquidacion);
+      const netos = await this.liquidar(liquidacion);
+      if (netos === null) restantes.push(liquidacion);
+      else this.rondasPorAvisar.push({ rondaId: liquidacion.rondaId, netos });
     }
-    if (restantes.length === this.pendientes.length) return false;
-    await this.guardar({ pendientes: restantes });
-    return true;
+    if (restantes.length < this.pendientes.length) await this.guardar({ pendientes: restantes });
   }
 
-  private async liquidar({ rondaId, filas, momento }: Liquidacion): Promise<boolean> {
+  /** Paga una ronda en Jugadores (con reintentos) y devuelve el neto de cada jugador; `null` si no se pudo. */
+  private async liquidar({ rondaId, filas, momento }: Liquidacion): Promise<FilaRankingPartida[] | null> {
     let ultimoError: unknown;
     for (let intento = 0; intento < INTENTOS_LIQUIDAR; intento++) {
       try {
-        await jugadoresGlobal(this.env).liquidar({ rondaId, juego: this.juego.id, codigoPartida: this.name, filas }, momento);
-        return true;
+        return await jugadoresGlobal(this.env).liquidar({ rondaId, juego: this.juego.id, codigoPartida: this.name, filas }, momento);
       } catch (e) {
         ultimoError = e;
       }
     }
     console.error(`No se pudo liquidar ${rondaId}:`, ultimoError);
-    return false;
+    return null;
   }
 
   /** La alarma del juego; con pagos pendientes o un cobro a medias, como tarde un reintento. Sin nada que esperar, ninguna. */
@@ -417,19 +421,21 @@ export abstract class Mesa<E extends { ronda: number }, A extends { t: string }>
   }
 
   /**
-   * Avisa a la sala del estado visible de la mesa, solo si ha cambiado desde lo último que aceptó (o hay ranking que
-   * refrescar): cada aviso es una petición y una escritura en la sala. Si la sala falla se registra, la mesa sigue y el
-   * siguiente cambio lo vuelve a intentar.
+   * Avisa a la sala del estado visible de la mesa y de las rondas pagadas desde el último aviso, solo si hay algo nuevo
+   * desde lo último que aceptó: cada aviso es una petición y una escritura en la sala. Si la sala falla se registra, la
+   * mesa sigue y el siguiente cambio lo vuelve a intentar (las rondas también: la sala no suma dos veces la misma).
    */
-  private async avisarSala(refrescarRanking: boolean): Promise<void> {
+  private async avisarSala(): Promise<void> {
     const resumen = this.juego.resumen(this.estado);
     const clave = JSON.stringify(resumen);
-    if (clave === this.resumenEnSala && !refrescarRanking) return;
+    const rondas = this.rondasPorAvisar;
+    if (clave === this.resumenEnSala && rondas.length === 0) return;
     try {
       // Stub directo: `getServerByName` escribiría en el almacenamiento de la sala en cada aviso.
       const sala = this.env.Partida.get(this.env.Partida.idFromName(this.name));
-      await sala.actualizarMesa(this.juego.id, resumen, refrescarRanking);
+      await sala.actualizarMesa(this.juego.id, resumen, rondas);
       this.resumenEnSala = clave;
+      this.rondasPorAvisar = this.rondasPorAvisar.filter((r) => !rondas.includes(r));
     } catch (e) {
       console.error(e);
     }

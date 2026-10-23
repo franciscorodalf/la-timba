@@ -80,7 +80,7 @@ interface Otro {
 
 /** La mesa de blackjack de la partida `codigo`, como en el boceto aprobado. */
 export function MesaBlackjack({ codigo }: { codigo: string }) {
-  const { jugador, refrescar } = useSesion();
+  const { jugador, refrescarFichas } = useSesion();
   const { vista, lote, enviar, error, conectado } = useMesa<VistaBJ, AccionBJ>("mesa-blackjack", codigo);
   const medidas = useMedidas();
   const reducido = useMovimientoReducido();
@@ -107,14 +107,14 @@ export function MesaBlackjack({ codigo }: { codigo: string }) {
   const miMano = vista?.manos.find((m) => m.jugadorId === yo);
   const fichas = jugador?.fichas ?? 0;
 
-  // Tu apuesta ya está en la mesa (o la has doblado): el contador baja contando.
+  // Tu apuesta ya está en la mesa (o la has doblado): el contador baja contando. Una vez por apuesta confirmada.
   const miApuesta = miMano?.apuesta ?? null;
   const apuestaVista = useRef<number | null>(null);
   useEffect(() => {
     const antes = apuestaVista.current;
     apuestaVista.current = miApuesta;
-    if (miApuesta !== null && miApuesta !== antes) void refrescar();
-  }, [miApuesta, refrescar]);
+    if (miApuesta !== null && miApuesta !== antes) void refrescarFichas();
+  }, [miApuesta, refrescarFichas]);
 
   // Lo que trae cada lote además de cartas: barajado y pagos. El premio se enseña cuando ya se ha visto la última carta.
   useEffect(() => {

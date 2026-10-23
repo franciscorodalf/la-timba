@@ -89,7 +89,7 @@ function EsqueletoPerfil() {
 
 /** Tu perfil: fichas (con el rescate si te quedas a cero), estadísticas generales y por juego, y cerrar sesión. */
 export function Perfil() {
-  const { jugador, refrescar, salir } = useSesion();
+  const { jugador, fijarFichas, salir } = useSesion();
   const [, navegar] = useLocation();
   const despues = useDespues();
   const [partida] = useState(ultimaPartida);
@@ -102,26 +102,27 @@ export function Perfil() {
   const tarjetaFichas = useRef<HTMLElement>(null);
   const zonaEstadisticas = useRef<HTMLDivElement>(null);
 
+  // El perfil trae también las fichas: con él se pone al día el contador, sin pedirlas aparte.
   const cargar = useCallback(async () => {
     try {
       const datos = await api.yo();
       if (!montado.current) return;
       setPerfil(datos);
+      fijarFichas(datos.fichas);
       setFallo(null);
     } catch (e) {
       if (montado.current) setFallo(mensajeError(e));
     }
-  }, []);
+  }, [fijarFichas]);
 
-  // Al entrar: las estadísticas de ahora (lo jugado desde la última vez) y las fichas al día.
+  // Al entrar, una vez: las estadísticas de ahora (lo jugado desde la última vez) y las fichas al día.
   useEffect(() => {
     montado.current = true;
     void cargar();
-    void refrescar();
     return () => {
       montado.current = false;
     };
-  }, [cargar, refrescar]);
+  }, [cargar]);
 
   async function pedirRescate() {
     if (rescateEnCurso.current) return;
@@ -134,15 +135,14 @@ export function Perfil() {
       despues(AVISO_RESCATE_MS, () => setAviso((actual) => (actual?.tipo === "info" ? null : actual)));
       // El botón se va con las fichas nuevas: el foco se queda en la tarjeta y no se pierde.
       tarjetaFichas.current?.focus({ preventScroll: true });
-      await refrescar(); // el contador cuenta de 0 a lo que haya ahora
+      fijarFichas(fichas); // el contador cuenta de 0 a lo que haya ahora
       void cargar(); // y la quiebra anotada
     } catch (e) {
       const resultado = errorRescate(e);
       if (resultado.tipo === "tiene_fichas") {
         // Ya había fichas (las ganaste en otra pestaña): se pone al día y el botón se va solo, así que el foco pasa a la tarjeta.
         tarjetaFichas.current?.focus({ preventScroll: true });
-        await refrescar();
-        void cargar();
+        await cargar();
       } else setAviso({ tipo: "error", texto: resultado.texto });
     } finally {
       rescateEnCurso.current = false;

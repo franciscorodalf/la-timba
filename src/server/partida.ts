@@ -2,11 +2,12 @@ import { type Connection, type ConnectionContext, Server } from "partyserver";
 import type { FilaRankingPartida, MensajeSala } from "../shared/api";
 import type { IdJuego, ResumenMesa } from "../shared/juegos/tipos";
 import type { Env } from "./index";
-import { jugadoresGlobal } from "./jugadores";
 
 const CLAVE_PARTIDA = "partida";
-const CLAVE_MESAS = "mesas";
-const CLAVE_RANKING = "ranking";
+/** Lo que enseña la sala (`RegistroSala`), en una sola clave: cada aviso de una mesa es una sola fila escrita. */
+const CLAVE_SALA = "sala";
+/** Rondas liquidadas que se recuerdan para no sumarlas dos veces si una mesa repite el aviso. */
+const RONDAS_RECORDADAS = 50;
 /** Sin conexiones durante este tiempo, la sala se cierra. */
 const INACTIVIDAD_MS = 30 * 60 * 1000;
 /** Cierre de una conexión que llega sin la identidad que inyecta el Worker. */
@@ -30,17 +31,40 @@ interface EstadoConexion {
 
 type Mesas = Record<IdJuego, ResumenMesa>;
 
+/** Una ronda que una mesa acaba de liquidar: su id y el neto de cada jugador, para el ranking de la noche. */
+export interface RondaLiquidada {
+  rondaId: string;
+  netos: FilaRankingPartida[];
+}
+
+interface RegistroSala {
+  mesas: Mesas;
+  /** El ranking de la noche, ordenado: neto acumulado por apodo. */
+  ranking: FilaRankingPartida[];
+  /** Las últimas rondas sumadas al ranking. */
+  rondas: string[];
+}
+
 const mesasVacias = (): Mesas => ({
   blackjack: { jugadores: [], fase: "esperando", finFase: null },
   carrera: { jugadores: [], fase: "esperando", finFase: null },
 });
+
+/** Neto DESC y, a igualdad, apodo sin distinguir mayúsculas (los apodos son ASCII). */
+const ordenRanking = (a: FilaRankingPartida, b: FilaRankingPartida) => {
+  if (a.neto !== b.neto) return b.neto - a.neto;
+  const x = a.apodo.toLowerCase();
+  const y = b.apodo.toLowerCase();
+  return x < y ? -1 : x > y ? 1 : 0;
+};
 
 /**
  * La sala de una partida: un WebSocket por pestaña abierto mientras dura la partida. Muestra quién está conectado,
  * el estado de cada mesa y el ranking de la noche, y se cierra tras 30 min sin conexiones.
  *
  * Hiberna: nada de lo que necesita la sala puede vivir en campos de la instancia. Lo persistente está en el
- * almacenamiento (`partida`, `mesas`, `ranking`) y quién es cada conexión, en su estado.
+ * almacenamiento (`partida` y el registro `sala`: mesas, ranking de la noche y rondas ya sumadas) y quién es cada
+ * conexión, en su estado. El ranking de la noche lo van sumando las mesas al liquidar: la sala no pregunta a Jugadores.
  */
 export class Partida extends Server<Env> {
   static options = { hibernate: true };
@@ -58,7 +82,7 @@ export class Partida extends Server<Env> {
     if (actual !== undefined && !actual.cerrada) return false;
 
     const estado: EstadoPartida = { creadaEn: ahora, creadorId, cerrada: false };
-    await this.ctx.storage.delete([CLAVE_MESAS, CLAVE_RANKING]);
+    await this.ctx.storage.delete(CLAVE_SALA);
     await this.ctx.storage.put(CLAVE_PARTIDA, estado);
     await this.ctx.storage.setAlarm(ahora + INACTIVIDAD_MS);
     return true;
@@ -70,13 +94,25 @@ export class Partida extends Server<Env> {
     return estado !== undefined && !estado.cerrada;
   }
 
-  /** Las mesas avisan aquí de cada cambio de su estado visible; con `refrescarRanking`, también de que se liquidó una ronda. */
-  async actualizarMesa(juego: IdJuego, resumen: ResumenMesa, refrescarRanking: boolean): Promise<void> {
-    const mesas = await this.leerMesas();
-    mesas[juego] = resumen;
-    await this.ctx.storage.put(CLAVE_MESAS, mesas);
-    if (refrescarRanking) await this.cargarRanking();
-    await this.difundir();
+  /**
+   * Las mesas avisan aquí de cada cambio de su estado visible, con las rondas que acaban de liquidar (sus netos se suman
+   * al ranking de la noche; una ronda ya sumada no vuelve a contar). Una sola escritura.
+   */
+  async actualizarMesa(juego: IdJuego, resumen: ResumenMesa, liquidadas: RondaLiquidada[] = []): Promise<void> {
+    const sala = await this.leerSala();
+    sala.mesas[juego] = resumen;
+    for (const { rondaId, netos } of liquidadas) {
+      if (sala.rondas.includes(rondaId)) continue;
+      sala.rondas = [...sala.rondas, rondaId].slice(-RONDAS_RECORDADAS);
+      for (const { apodo, neto } of netos) {
+        const fila = sala.ranking.find((f) => f.apodo === apodo);
+        if (fila === undefined) sala.ranking.push({ apodo, neto });
+        else fila.neto += neto;
+      }
+    }
+    sala.ranking.sort(ordenRanking);
+    await this.ctx.storage.put(CLAVE_SALA, sala);
+    this.difundir(sala);
   }
 
   async onConnect(conn: Connection<EstadoConexion>, { request }: ConnectionContext): Promise<void> {
@@ -91,13 +127,12 @@ export class Partida extends Server<Env> {
     const turnos = Array.from(this.getConnections<EstadoConexion>(), (c) => c.state?.orden ?? 0);
     conn.setState({ jugadorId: Number(id), apodo, orden: Math.max(0, ...turnos) + 1 });
 
-    if ((await this.ctx.storage.get(CLAVE_RANKING)) === undefined) await this.cargarRanking();
-    await this.difundir();
+    this.difundir(await this.leerSala());
   }
 
   async onClose(): Promise<void> {
     if (this.conectados().length === 0) await this.ctx.storage.setAlarm(this.ahora() + INACTIVIDAD_MS);
-    await this.difundir();
+    this.difundir(await this.leerSala());
   }
 
   /** Los clientes no mandan nada a la sala: todo lo que cambia viene de las mesas. */
@@ -126,33 +161,14 @@ export class Partida extends Server<Env> {
     return [...new Set(abiertas.map((estado) => estado.apodo))];
   }
 
-  private async leerMesas(): Promise<Mesas> {
-    return { ...mesasVacias(), ...(await this.ctx.storage.get<Partial<Mesas>>(CLAVE_MESAS)) };
-  }
-
-  /**
-   * Pide a Jugadores el ranking de lo jugado desde que se abrió la partida y lo guarda. Si Jugadores falla se registra
-   * y se sigue con el ranking que hubiera (o ninguno): la sala no depende de él para funcionar.
-   */
-  private async cargarRanking(): Promise<void> {
-    const estado = await this.ctx.storage.get<EstadoPartida>(CLAVE_PARTIDA);
-    let ranking: FilaRankingPartida[];
-    try {
-      ranking = await jugadoresGlobal(this.env).rankingPartida(this.name, estado?.creadaEn ?? 0);
-    } catch (e) {
-      console.error(e);
-      return;
-    }
-    await this.ctx.storage.put(CLAVE_RANKING, ranking);
+  private async leerSala(): Promise<RegistroSala> {
+    const guardada = await this.ctx.storage.get<RegistroSala>(CLAVE_SALA);
+    return { ranking: [], rondas: [], ...guardada, mesas: { ...mesasVacias(), ...guardada?.mesas } };
   }
 
   /** Envía a todas las conexiones el estado actual de la sala. */
-  private async difundir(): Promise<void> {
-    const [mesas, rankingNoche] = await Promise.all([
-      this.leerMesas(),
-      this.ctx.storage.get<FilaRankingPartida[]>(CLAVE_RANKING).then((ranking) => ranking ?? []),
-    ]);
-    const mensaje: MensajeSala = { t: "sala", codigo: this.name, ahora: this.ahora(), conectados: this.conectados(), mesas, rankingNoche };
+  private difundir({ mesas, ranking }: RegistroSala): void {
+    const mensaje: MensajeSala = { t: "sala", codigo: this.name, ahora: this.ahora(), conectados: this.conectados(), mesas, rankingNoche: ranking };
     this.broadcast(JSON.stringify(mensaje));
   }
 }

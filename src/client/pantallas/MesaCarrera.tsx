@@ -37,7 +37,7 @@ const SIN_TRAMOS: null[] = Array.from({ length: CARRERA.TRAMOS }, () => null);
 
 /** La mesa de la carrera de caballos de la partida `codigo`: pista vertical en móvil, horizontal en ordenador. */
 export function MesaCarrera({ codigo }: { codigo: string }) {
-  const { jugador, refrescar } = useSesion();
+  const { jugador, refrescarFichas } = useSesion();
   const { vista, lote, enviar, error, conectado } = useMesa<VistaCarrera, AccionCarrera>("mesa-carrera", codigo);
   const ordenador = useAnchoVentana() >= ORDENADOR_PX;
 
@@ -70,7 +70,8 @@ export function MesaCarrera({ codigo }: { codigo: string }) {
   for (const a of misApuestas) mias[a.caballo] += a.cantidad;
   const fichas = jugador?.fichas ?? 0;
 
-  // Tras apostar, el contador baja contando; y lo preparado para apostar queda hecho.
+  // Tras apostar, el contador baja contando; y lo preparado para apostar queda hecho. Las fichas se vuelven a leer una
+  // vez por apuesta confirmada; al cambiar de ronda ya las lee `useFichasAlDia`.
   const firma = vista === null ? null : `${vista.ronda}:${misApuestas.map((a) => `${a.caballo}${a.cantidad}`).sort().join(",")}`;
   const firmaVista = useRef(firma);
   useEffect(() => {
@@ -78,8 +79,9 @@ export function MesaCarrera({ codigo }: { codigo: string }) {
     firmaVista.current = firma;
     if (firma === null || firma === antes) return;
     setMontante(0);
-    if (antes !== null) void refrescar();
-  }, [firma, refrescar]);
+    const mismaRonda = antes !== null && antes.split(":")[0] === firma.split(":")[0];
+    if (mismaRonda) void refrescarFichas();
+  }, [firma, refrescarFichas]);
 
   // Tus pagos, cuando la escena los enseña (tras el ganador): el premio, el resultado y las fichas al día.
   const idPagos = escena?.pagos?.id ?? 0;

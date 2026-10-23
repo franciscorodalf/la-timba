@@ -16,7 +16,7 @@ export const LLEGADA_FICHAS_MS = 450;
  * contador. `premio` es lo que enseña `CartelPremio` (y su `id` lanza las fichas volando).
  */
 export function usePremio(): { premio: Premio | null; celebrar(neto: number): void } {
-  const { refrescar } = useSesion();
+  const { refrescarFichas } = useSesion();
   const despues = useDespues();
   const [premio, setPremio] = useState<Premio | null>(null);
   const premios = useRef(0);
@@ -24,7 +24,7 @@ export function usePremio(): { premio: Premio | null; celebrar(neto: number): vo
   const celebrar = useCallback(
     (neto: number) => {
       if (neto <= 0) {
-        void refrescar();
+        void refrescarFichas();
         return;
       }
       premios.current += 1;
@@ -32,9 +32,9 @@ export function usePremio(): { premio: Premio | null; celebrar(neto: number): vo
       sonidos.reproducir("victoria");
       vibrar(80);
       despues(CARTEL_MS, () => setPremio(null));
-      despues(LLEGADA_FICHAS_MS, () => void refrescar());
+      despues(LLEGADA_FICHAS_MS, () => void refrescarFichas());
     },
-    [despues, refrescar],
+    [despues, refrescarFichas],
   );
 
   return { premio, celebrar };

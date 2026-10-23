@@ -478,8 +478,8 @@ test.describe("conexión de la sala", () => {
     await page.goto(`/p/${codigo}`);
     await expect(jugadoresEnLaSala(page).getByRole("listitem")).toHaveCount(1);
 
-    // La consulta de si existe la partida no lleva token y seguiría diciendo que sí: lo que lo delata es el perfil.
-    await page.route("**/api/yo", (ruta) => ruta.fulfill({ status: 401, json: { error: "no_autenticado" } }));
+    // La consulta de si existe la partida no lleva token y seguiría diciendo que sí: lo que lo delata es leer las fichas.
+    await page.route(/\/api\/(yo|fichas)$/, (ruta) => ruta.fulfill({ status: 401, json: { error: "no_autenticado" } }));
     await abiertas[abiertas.length - 1].close({ code: 1001 });
 
     await expect(page.getByLabel("Apodo")).toBeVisible();
@@ -488,18 +488,18 @@ test.describe("conexión de la sala", () => {
 });
 
 test.describe("fichas", () => {
-  /** Hace que `/api/yo` conteste 250 fichas más de las que tiene el jugador cuando se active. Devuelve el interruptor. */
+  /** Hace que `/api/fichas` (y `/api/yo`) contesten 250 fichas más de las que tiene el jugador cuando se active. Devuelve el interruptor. */
   async function sumarFichasAlRefrescar(pagina: Page) {
     const estado = { activo: false };
-    await pagina.route("**/api/yo", async (ruta) => {
+    await pagina.route(/\/api\/(yo|fichas)$/, async (ruta) => {
       const sumar = estado.activo;
       try {
         const respuesta = await ruta.fetch();
         if (!sumar) return await ruta.fulfill({ response: respuesta });
-        const perfil = await respuesta.json();
-        await ruta.fulfill({ response: respuesta, json: { ...perfil, fichas: perfil.fichas + 250 } });
+        const cuerpo = await respuesta.json();
+        await ruta.fulfill({ response: respuesta, json: { ...cuerpo, fichas: cuerpo.fichas + 250 } });
       } catch {
-        // La sala pide el perfil dos veces seguidas en desarrollo: si el test acaba con una petición en vuelo, ya no hay a quién contestar.
+        // La sala pide las fichas dos veces seguidas en desarrollo: si el test acaba con una petición en vuelo, ya no hay a quién contestar.
       }
     });
     // Anota cada valor que enseña el contador, en orden.

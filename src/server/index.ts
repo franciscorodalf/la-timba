@@ -143,6 +143,12 @@ const yo = conSesion(async (c, { id }) => {
   return perfil === null ? noAutenticado() : json(perfil);
 });
 
+/** Solo las fichas (una fila): lo que necesitan las mesas, la sala y el inicio para tener el contador al día. */
+const fichas = conSesion(async (c, { id }) => {
+  const actuales = await jugadoresGlobal(c.env).fichas(id);
+  return actuales === null ? noAutenticado() : json({ fichas: actuales });
+});
+
 const crearPartida = conSesion(async (c, { id }) => {
   const codigo = await abrirPartida(c.env, id, Date.now());
   return codigo === null ? descansando() : json({ codigo }, 201);
@@ -176,6 +182,7 @@ const RUTAS = new Map<string, Manejador>([
   ["POST /api/registro", registro],
   ["POST /api/entrar", entrar],
   ["GET /api/yo", yo],
+  ["GET /api/fichas", fichas],
   ["POST /api/partidas", crearPartida],
   ["GET /api/ranking", ranking],
   ["POST /api/rescate", rescate],

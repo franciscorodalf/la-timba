@@ -233,6 +233,24 @@ describe("GET /api/yo", () => {
   });
 });
 
+describe("GET /api/fichas", () => {
+  it("200 con las fichas del jugador, al día tras apostar", async () => {
+    const { token, jugador } = await registrar(unico());
+    expect(await llamar("/api/fichas", { token })).toMatchObject({ status: 200, cuerpo: { fichas: 1000 } });
+    expect(await jugadores().apostar(jugador.id, 120, `r-${unico()}`, crypto.randomUUID())).toBe("ok");
+    expect((await llamar("/api/fichas", { token })).cuerpo).toEqual({ fichas: 880 });
+  });
+
+  it("401 no_autenticado sin token, con un token inválido o de un jugador que no existe", async () => {
+    const fantasma = await firmarToken({ id: 999_999_999, apodo: "fantasma" }, env.TOKEN_SECRET, Date.now());
+    for (const token of [undefined, "basura", fantasma]) {
+      const r = await llamar("/api/fichas", token === undefined ? {} : { token });
+      expect(r.status, String(token)).toBe(401);
+      expect(r.cuerpo).toEqual({ error: "no_autenticado" });
+    }
+  });
+});
+
 describe("POST /api/partidas", () => {
   it("201 con un código de 4 caracteres del alfabeto, y la partida queda abierta con su creador", async () => {
     const { token, jugador } = await registrar(unico());
@@ -508,6 +526,7 @@ describe("enrutado", () => {
       ["GET", "/api/registro"],
       ["GET", "/api/entrar"],
       ["POST", "/api/yo"],
+      ["POST", "/api/fichas"],
       ["GET", "/api/partidas"],
       ["POST", "/api/partidas/ABCD"],
       ["DELETE", "/api/partidas/ABCD"],
