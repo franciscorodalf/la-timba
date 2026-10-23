@@ -532,6 +532,7 @@ test.describe("movimiento de la pista (mesa simulada)", () => {
 
     fichas.poner(1150);
     await mirar(page, 2500);
+    await mirarGanador(page, 2500);
     mesa.enviar(
       estado({ ...enMarcha, fase: "resultado", finFase: Date.now() + 5_000, posiciones: pos(8, 3, 2, 4), ultimaCarta: c("9H"), ganador: "H" }, [
         { tipo: "caballo_avanza", palo: "H", carta: c("9H") },
@@ -539,16 +540,17 @@ test.describe("movimiento de la pista (mesa simulada)", () => {
         { tipo: "pago", jugadorId: yo, neto: 150 },
       ]),
     );
-    // Recién llegado el paso, nada del resultado se adelanta: el caballo aún va hacia la meta.
-    await page.waitForTimeout(120);
-    expect(await ganadorDe(page, "corazones").count()).toBe(0);
-    expect(await premio(page).count()).toBe(0);
-    expect(await page.getByText("Ganas 150").count()).toBe(0);
-    await expect(page.getByText("¡Corren los caballos!")).toBeVisible();
 
     await expect(ganadorDe(page, "corazones")).toBeVisible();
     // Cuando se anuncia, el caballo ya está en la meta (casilla 8).
     expect(await recorrido(page, "H")).toBeCloseTo(8 * casilla, 0);
+    // Nada del resultado se adelantó: en cada fotograma desde que llegó el paso, el aviso, el cartel y los destellos solo
+    // están con el caballo ya en la meta (se mide en la página, sin depender de cuánto tarde la prueba en mirar).
+    await expect.poll(async () => (await fotos(page)).some((f) => f.aviso)).toBe(true);
+    const llegada = 8 * casilla;
+    const lista = await fotos(page);
+    expect(lista.some((f) => f.d < llegada - 1)).toBe(true);
+    expect(lista.filter((f) => (f.aviso || f.premio || f.chispas > 0) && f.d < llegada - 1)).toEqual([]);
     await expect(caballo(page, "H")).toHaveAttribute("data-casilla", "8");
     await expect(premio(page)).toHaveText("¡Ganas +150!");
     await expect(page.getByText("Ganas 150", { exact: true })).toBeVisible();
@@ -701,15 +703,19 @@ test.describe("movimiento de la pista (mesa simulada)", () => {
     const inicio = await osciladores();
 
     // Un paso sin giros: una carta (un oscilador por carta).
+    const primerPaso = Date.now();
     mesa.enviar(estado({ ...antes, posiciones: pos(2, 2, 2, 2), ultimaCarta: c("5H") }, [{ tipo: "caballo_avanza", palo: "H", carta: c("5H") }]));
-    await page.waitForTimeout(700);
-    expect((await osciladores()) - inicio).toBe(1);
-    // Un paso con giro: la carta al salir y otra al girarse el tramo.
+    await expect.poll(async () => (await osciladores()) - inicio).toBe(1);
+    // Un paso con giro: la carta al salir y otra al girarse el tramo. Llega cuando lo haría en la mesa de verdad, un paso
+    // (800 ms) después del anterior.
+    await page.waitForTimeout(Math.max(0, 800 - (Date.now() - primerPaso)));
     mesa.enviar(
       estado({ ...antes, posiciones: pos(2, 2, 2, 2), tramos: tramos("9D"), ultimaCarta: c("3S") }, [{ tipo: "caballo_avanza", palo: "S", carta: c("3S") }, { tipo: "tramo_girado", indice: 0, palo: "D" }]),
     );
-    await page.waitForTimeout(900);
-    expect((await osciladores()) - inicio).toBe(3);
+    await expect.poll(async () => (await osciladores()) - inicio).toBe(3);
+    // Sin ráfagas: una vez sonado el paso no suena nada más (el giro sale a los 250 ms; se mira otro tanto).
+    await expect(page.getByRole("img", { name: "9 de diamantes" })).toBeVisible();
+    await expect.poll(async () => (await osciladores()) - inicio, { intervals: [300, 300] }).toBe(3);
 
     // Al ganar tú: la victoria (un arpegio de varias notas) y una vibración de 80 ms.
     expect(await page.evaluate(() => (window as unknown as { __vibraciones: number[] }).__vibraciones)).toEqual([]);

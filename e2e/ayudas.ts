@@ -97,7 +97,9 @@ export async function entrarSimulada<V>(pagina: Page, request: APIRequestContext
  */
 export async function fichasDeApi(pagina: Page, inicial: number): Promise<{ poner(n: number): void }> {
   let fichas = inicial;
-  await pagina.route(/\/api\/(yo|fichas)$/, async (ruta) => {
+  // `/api/fichas` solo trae las fichas: se contesta aquí mismo, sin ir al servidor de desarrollo.
+  await pagina.route(/\/api\/fichas$/, (ruta) => ruta.fulfill({ json: { fichas } }));
+  await pagina.route(/\/api\/yo$/, async (ruta) => {
     const valor = fichas;
     try {
       const respuesta = await ruta.fetch();
