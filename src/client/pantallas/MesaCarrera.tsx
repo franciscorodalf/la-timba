@@ -38,7 +38,7 @@ const SIN_TRAMOS: null[] = Array.from({ length: CARRERA.TRAMOS }, () => null);
 /** La mesa de la carrera de caballos de la partida `codigo`: pista vertical en móvil, horizontal en ordenador. */
 export function MesaCarrera({ codigo }: { codigo: string }) {
   const { jugador, refrescarFichas } = useSesion();
-  const { vista, lote, enviar, error, conectado } = useMesa<VistaCarrera, AccionCarrera>("mesa-carrera", codigo);
+  const { vista, lote, enviar, error, errorDe, conectado } = useMesa<VistaCarrera, AccionCarrera>("mesa-carrera", codigo);
   const ordenador = useAnchoVentana() >= ORDENADOR_PX;
 
   const mazo = useRef<HTMLDivElement>(null);
@@ -178,7 +178,7 @@ export function MesaCarrera({ codigo }: { codigo: string }) {
 
       <CartelPremio premio={premio} />
       <FichasVolando disparo={premio?.id ?? 0} desde={refDesde} hasta={refFichas} />
-      <AvisoMesa error={error} />
+      <AvisoMesa error={error} accion={errorDe} />
 
       {salida.dialogo}
       <GirarMovil />

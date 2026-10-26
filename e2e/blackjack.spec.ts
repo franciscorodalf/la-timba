@@ -173,11 +173,34 @@ test.describe("mesa simulada", () => {
     await expect(page.getByText("No tienes fichas suficientes")).toBeVisible();
     await expect(page.getByRole("alert")).toHaveCount(1);
 
+    // La mesa no pudo atender y no respondía a nada tuyo (al llegar): el texto general.
+    mesa.enviar({ t: "error", codigo: "no_disponible" });
+    await expect(page.getByText("Algo ha salido mal. Inténtalo de nuevo")).toBeVisible();
+    // Responde a tu apuesta: entonces sí es la apuesta lo que no se hizo.
+    await page.getByRole("button", { name: "Añadir 50", exact: true }).click();
+    await page.getByRole("button", { name: "Apostar 50" }).click();
+    await expect.poll(() => mesa.recibidas).toContainEqual({ t: "apostar", cantidad: 50 });
     mesa.enviar({ t: "error", codigo: "no_disponible" });
     await expect(page.getByText("No se pudo hacer la apuesta. Inténtalo de nuevo")).toBeVisible();
 
     mesa.enviar({ t: "error", codigo: "fase_incorrecta" });
     await expect(page.getByText("No puedes hacer eso ahora")).toBeVisible();
+  });
+
+  test("si la mesa no puede atender una decisión, lo dice con el texto general (no el de la apuesta) y se puede volver a pedir", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    const mano = { jugadorId: sesion.jugador.id, apodo: sesion.jugador.apodo, apuesta: 50, cartas: [c("10H"), c("2C")], estado: "jugando" as const, doblada: false, total: 12 };
+    mesa.alConectar(estado(vista(sesion, { fase: "decisiones", banca: [c("6S"), null], totalBanca: 6, manos: [mano] })));
+    await page.goto(`/p/${codigo}/blackjack`);
+    const pedir = page.getByRole("button", { name: "Pedir" });
+    await pedir.click();
+    await expect.poll(() => mesa.recibidas).toContainEqual({ t: "pedir" });
+    await expect(pedir).toBeDisabled();
+
+    mesa.enviar({ t: "error", codigo: "no_disponible" });
+    await expect(page.getByText("Algo ha salido mal. Inténtalo de nuevo")).toBeVisible();
+    await expect(page.getByText("No se pudo hacer la apuesta. Inténtalo de nuevo")).toHaveCount(0);
+    await expect(pedir).toBeEnabled();
   });
 
   test("con la mesa llena lo dice y no reintenta", async ({ page, request }) => {

@@ -329,6 +329,14 @@ test.describe("mesa simulada", () => {
     mesa.enviar({ t: "error", codigo: "sin_fichas" });
     await expect(page.getByText("No tienes fichas suficientes")).toBeVisible();
     await expect(alertas(page)).toHaveCount(1);
+    // La mesa no pudo atender y no respondía a nada tuyo (al llegar): el texto general.
+    mesa.enviar({ t: "error", codigo: "no_disponible" });
+    await expect(page.getByText("Algo ha salido mal. Inténtalo de nuevo")).toBeVisible();
+    // Responde a tu apuesta: entonces sí es la apuesta lo que no se hizo.
+    await cabecera(page, "picas").click();
+    await ficha(page, 50).click();
+    await page.getByRole("button", { name: "Apostar 50 a picas" }).click();
+    await expect.poll(() => mesa.recibidas).toContainEqual({ t: "apostar", caballo: "S", cantidad: 50 });
     mesa.enviar({ t: "error", codigo: "no_disponible" });
     await expect(page.getByText("No se pudo hacer la apuesta. Inténtalo de nuevo")).toBeVisible();
     mesa.enviar({ t: "error", codigo: "fase_incorrecta" });

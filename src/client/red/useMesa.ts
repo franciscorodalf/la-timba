@@ -59,6 +59,8 @@ export interface Mesa<V, A> {
   enviar(accion: A): void;
   /** El último error de la mesa durante unos segundos (`demasiados_mensajes` no se cuenta). `mesa_llena` se queda. */
   error: CodigoError | null;
+  /** La acción (su `t`) a la que responde `error`; `null` si no responde a ninguna tuya (p. ej. al llegar a la mesa). */
+  errorDe: string | null;
   /** El socket de la mesa está abierto ahora mismo. */
   conectado: boolean;
 }
@@ -67,7 +69,7 @@ export interface Mesa<V, A> {
  * Conexión con una mesa de la partida `codigo` (`/parties/<party>/<codigo>`). No supone que el primer mensaje sea la foto
  * inicial: cada `estado` trae la vista completa y sus eventos. Cada mensaje pone al día la hora del servidor.
  */
-export function useMesa<V, A>(party: "mesa-blackjack" | "mesa-carrera", codigo: string): Mesa<V, A> {
+export function useMesa<V, A extends { t: string }>(party: "mesa-blackjack" | "mesa-carrera", codigo: string): Mesa<V, A> {
   const [recibido, setRecibido] = useState<Recibido<V>>({ vista: null, lote: SIN_EVENTOS, n: 0 });
   const pintado = useRef(0);
   useLayoutEffect(() => {
@@ -75,6 +77,9 @@ export function useMesa<V, A>(party: "mesa-blackjack" | "mesa-carrera", codigo: 
   }, [recibido.n]);
 
   const [error, setError] = useState<CodigoError | null>(null);
+  const [errorDe, setErrorDe] = useState<string | null>(null);
+  /** La última acción mandada a la que aún no ha respondido un error: el siguiente error es de ella. */
+  const enVuelo = useRef<string | null>(null);
   const [conectado, setConectado] = useState(false);
   const [llena, setLlena] = useState(false);
   const borrado = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -82,6 +87,8 @@ export function useMesa<V, A>(party: "mesa-blackjack" | "mesa-carrera", codigo: 
 
   const avisar = useCallback((codigoError: CodigoError) => {
     clearTimeout(borrado.current);
+    setErrorDe(enVuelo.current);
+    enVuelo.current = null;
     setError(codigoError);
     if (codigoError !== "mesa_llena") borrado.current = setTimeout(() => setError(null), ERROR_MS);
   }, []);
@@ -93,7 +100,11 @@ export function useMesa<V, A>(party: "mesa-blackjack" | "mesa-carrera", codigo: 
     query: () => ({ token: leerToken() }),
     enabled: !llena,
     shouldReconnectOnClose: (evento) => evento.code !== CIERRE_SIN_ASIENTO && evento.code !== CIERRE_NO_AUTENTICADO,
-    onOpen: () => setConectado(true),
+    onOpen: () => {
+      // Lo que se mandó antes de caerse la conexión ya no tiene respuesta: un error al llegar es de la llegada.
+      enVuelo.current = null;
+      setConectado(true);
+    },
     onClose: (evento) => {
       setConectado(false);
       if (evento.code === CIERRE_SIN_ASIENTO) {
@@ -118,10 +129,11 @@ export function useMesa<V, A>(party: "mesa-blackjack" | "mesa-carrera", codigo: 
       if (socket.readyState !== WebSocket.OPEN) return;
       clearTimeout(borrado.current);
       setError((actual) => (actual === "mesa_llena" ? actual : null));
+      enVuelo.current = accion.t;
       socket.send(JSON.stringify(accion));
     },
     [socket],
   );
 
-  return { vista: recibido.vista, lote: recibido.lote, enviar, error, conectado };
+  return { vista: recibido.vista, lote: recibido.lote, enviar, error, errorDe, conectado };
 }

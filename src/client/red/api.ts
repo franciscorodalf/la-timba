@@ -2,6 +2,8 @@ import type { OrdenRanking, Perfil, RespuestaRanking, RespuestaSesion } from "..
 import { leerToken } from "./token";
 
 export const MENSAJE_DESCANSANDO = "La Timba está descansando, vuelve mañana";
+/** Lo que se dice cuando algo falla y no hay un texto más concreto. */
+export const MENSAJE_GENERICO = "Algo ha salido mal. Inténtalo de nuevo";
 
 /** Respuesta no 2xx de la API (o, con `status` 0, una petición que no llegó al servidor). `datos` es el cuerpo JSON, o `null`. */
 export class ErrorApi extends Error {
@@ -23,7 +25,7 @@ export function mensajeError(e: unknown): string {
     if (e.error === "demasiados_intentos") return "Demasiados intentos. Espera unos minutos";
     if (e.status === 0) return "No hay conexión con La Timba. Revisa tu red e inténtalo de nuevo";
   }
-  return "Algo ha salido mal. Inténtalo de nuevo";
+  return MENSAJE_GENERICO;
 }
 
 let alSesionInvalidaActual: ((tokenUsado: string) => void) | null = null;
