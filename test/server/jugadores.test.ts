@@ -625,7 +625,8 @@ describe("fichas", () => {
 });
 
 describe("lecturas que no crecen con el historial", () => {
-  it("fichas, perfil y los seis rankings leen las mismas filas con 30 rondas jugadas que con 180", async () => {
+  // Juega 180 rondas por RPC: con toda la suite en paralelo tarda más que el plazo por defecto.
+  it("fichas, perfil y los seis rankings leen las mismas filas con 30 rondas jugadas que con 180", { timeout: 30_000 }, async () => {
     const j = nuevo();
     const ids = [await crear(j, "Ana"), await crear(j, "Beto"), await crear(j, "Carla")];
     const medir = async () => {
