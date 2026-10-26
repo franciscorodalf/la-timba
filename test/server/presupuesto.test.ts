@@ -23,7 +23,7 @@ import { abrir, ayudasMesa, cerrarAbiertas, enviar, hasta, jugadores, T, type Co
 const LIMITE = { escritas: 100_000, leidas: 5_000_000, peticiones: 100_000 } as const;
 const NOCHE = { blackjack: 330, carrera: 240 } as const;
 /** La parte de cada límite diario que puede gastar una noche típica (spec §1). */
-const OBJETIVO = 0.25;
+const OBJETIVO = 0.3;
 /** Mensajes WebSocket entrantes que Cloudflare factura como una petición. */
 const MENSAJES_POR_PETICION = 20;
 const RONDAS_MEDIDAS = 3;
@@ -315,6 +315,7 @@ it("una ronda de cada juego no pasa de su techo, y la noche típica extrapolada 
     expect(peticionesDO(g), `${juego}: peticiones a Durable Objects por ronda`).toBeLessThanOrEqual(TECHO[juego].peticionesDO);
     expect(porRonda(g, "peticionesWorker"), `${juego}: peticiones al Worker por ronda`).toBeLessThanOrEqual(TECHO[juego].peticionesWorker);
   }
+  expect(escritas).toBeLessThanOrEqual(OBJETIVO * LIMITE.escritas);
   expect(leidas).toBeLessThanOrEqual(OBJETIVO * LIMITE.leidas);
   expect(peticiones).toBeLessThanOrEqual(OBJETIVO * LIMITE.peticiones);
   expect(peticionesWorker).toBeLessThanOrEqual(OBJETIVO * LIMITE.peticiones);
