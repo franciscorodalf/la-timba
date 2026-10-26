@@ -17,7 +17,7 @@ Tiene dos propósitos a la vez:
 | Unirse es rápido | Crear partida y que 2 amigos entren por QR en menos de 30 s |
 | Se siente bien jugar | Animaciones a 60 fps en un móvil de gama media (sin tareas largas durante animaciones en el perfilador de Chrome) |
 | Las fichas siempre cuadran | Tests de integración: tras cualquier secuencia de rondas, fichas finales = iniciales + suma de netos |
-| Coste 0 € | Una noche típica (8 jugadores, 3 h) usa como mucho el 25 % de cada límite diario gratuito (filas escritas, peticiones y filas leídas), medido por `test/server/presupuesto.test.ts`. Antes decía «menos del 5 %», imposible con un libro de fichas duradero: ≈ 2.800 apuestas por noche necesitan al menos una escritura cada una |
+| Coste 0 € | Una noche típica (8 jugadores, 3 h) usa como mucho el 30 % de cada límite diario gratuito. Medido con `test/server/presupuesto.test.ts`: filas escritas 27 %, peticiones a Durable Objects 15 %, peticiones al Worker 7 %, filas leídas 0,5 %. Antes decía «menos del 5 %», imposible con un libro de fichas duradero: ≈ 2.800 apuestas por noche necesitan al menos una escritura cada una |
 | Demo de portfolio | Un visitante solo puede registrarse y jugar ambos juegos sin nadie más |
 | Reconexión | Cerrar y reabrir la pestaña te devuelve a tu mesa, con tu mano, en menos de 3 s |
 
@@ -185,6 +185,8 @@ jugadores (
   quiebras INTEGER DEFAULT 0,
   racha_actual INTEGER DEFAULT 0,
   mejor_racha INTEGER DEFAULT 0,
+  partidas, victorias, ganancias, mayor_premio INTEGER DEFAULT 0,          -- estadísticas, al día al liquidar
+  partidas_blackjack, victorias_blackjack, partidas_carrera, victorias_carrera INTEGER DEFAULT 0,
   creado_en INTEGER
 )
 resultados (
@@ -194,16 +196,17 @@ resultados (
   resultado TEXT,                          -- 'gana' | 'pierde' | 'empata'
   momento INTEGER
 )
-apuestas_pendientes ( ronda_id TEXT, jugador_id INTEGER, cantidad INTEGER )  -- se borran al liquidar
-rondas_liquidadas ( ronda_id TEXT PRIMARY KEY )
+apuestas_pendientes ( cobro_id TEXT PRIMARY KEY, ronda_id TEXT, jugador_id INTEGER, cantidad INTEGER ) WITHOUT ROWID  -- se borran al liquidar
+rondas_liquidadas ( ronda_id TEXT PRIMARY KEY ) WITHOUT ROWID
+cobros_anulados ( cobro_id TEXT PRIMARY KEY ) WITHOUT ROWID
 intentos ( apodo TEXT PRIMARY KEY COLLATE NOCASE, fallos INTEGER, bloqueado_hasta INTEGER )
 ```
 
 - **Una fila de `resultados` por jugador y ronda**: `apuesta` = total apostado en la ronda (incluye doblar o varios caballos); `resultado` sale del signo de `neto` (> 0 gana, < 0 pierde, = 0 empata).
 - **Racha**: se incrementa con cada `gana`, se pone a 0 con `pierde`; `empata` no la cambia.
-- **Estadísticas** (consultas sobre `resultados`): partidas jugadas, % de victorias por juego, ganancias totales (suma de `neto`), mayor premio (`max(neto)`).
-- **Ranking global**: por fichas por defecto; pestañas por ganancias totales, % de victorias, mayor premio, mejor racha y quiebras. Top 50 + la posición propia.
-- **Ranking de la partida**: `sum(neto)` agrupado por jugador para `codigo_partida`.
+- **Estadísticas**: partidas jugadas, % de victorias por juego, ganancias totales (suma de `neto`) y mayor premio (mayor `neto` positivo) van en columnas de `jugadores`, que `liquidar` pone al día en la misma actualización por jugador. `resultados` se guarda como historial, sin índices: nada lo lee durante el juego.
+- **Ranking global**: por fichas por defecto; pestañas por ganancias totales, % de victorias (con al menos 10 rondas), mayor premio, mejor racha y quiebras. Top 50 + la posición propia. Solo lee `jugadores`.
+- **Ranking de la partida**: lo lleva la Partida. Cada mesa le pasa, con su resumen, el neto de cada jugador en las rondas que liquida, y la sala los suma por apodo (una ronda repetida no cuenta dos veces). Empieza de cero al reabrir la partida.
 - Las mesas y la partida guardan su propio estado en el almacenamiento de su DO (no en estas tablas).
 
 ## 8. Seguridad
@@ -227,7 +230,8 @@ Bocetos aprobados en `.superpowers/brainstorm/` (`look-and-feel-v3.html`).
 
 ## 10. Errores y reconexión
 - `partysocket` reconecta solo; al reconectar la mesa envía la vista completa.
-- El estado de cada mesa se persiste tras cada cambio y los temporizadores usan **alarmas** del DO, así que hibernar o reiniciar no rompe la ronda.
+- El estado de cada mesa se persiste tras cada cambio (en una sola clave) y los temporizadores usan **alarmas** del DO, así que hibernar o reiniciar no rompe la ronda.
+- La carrera se sortea entera al cerrarse las apuestas y se guarda una vez. Sus pasos los anuncia un temporizador en memoria, sin escribir nada; la alarma guardada es la de la meta y hace de respaldo: si la mesa cae a mitad de carrera, sigue desde la hora y la meta liquida igual.
 - Liquidaciones idempotentes por `rondaId`.
 - Mensajes de error para el usuario: partida inexistente, PIN incorrecto con intentos restantes, apodo bloqueado, reconectando, fichas insuficientes, mesa llena, y «La Timba está descansando, vuelve mañana» si se supera el límite gratuito diario.
 
