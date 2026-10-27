@@ -1,0 +1,4 @@
+# Variables secretas para el desarrollo local: copia este archivo a `.dev.vars` (que Git ignora) y cambia el valor.
+# TOKEN_SECRET firma los tokens de sesión (HMAC-SHA256). Genera uno fuerte con:  openssl rand -base64 32
+# En producción NO se usa este archivo: se guarda con `npx wrangler secret put TOKEN_SECRET`.
+TOKEN_SECRET=cambia-esto

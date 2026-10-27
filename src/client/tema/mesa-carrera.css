@@ -1,0 +1,197 @@
+/* Mesa de la carrera (1 de 4): la rejilla de la mesa y la pista. En móvil, la pista vertical: cuatro carriles de abajo (salida)
+   arriba (meta), la columna de los siete tramos a su lado y, debajo, las cabeceras donde se apuesta con el mazo en la esquina.
+   Las medidas (paso, tamaño de caballos y tramos) las pone la pantalla en píxeles como variables: --paso, --cab-ancho,
+   --cab-alto, --cab-largo, --salida, --meta, --tramo-ancho, --tramo-alto, --mazo-ancho y --franja. Todo lo que se mueve usa
+   solo `transform` y `opacity`. Las otras partes: mesa-carrera-caballos.css (caballos, tramos, mazo), mesa-carrera-apuestas.css
+   (cabeceras y panel) y mesa-carrera-ordenador.css (la vista de ordenador). */
+
+.carrera {
+  --avance: 400ms;
+  --retroceso: 340ms;
+}
+
+.carrera-mesa {
+  position: relative;
+  flex: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--franja);
+  grid-template-rows: minmax(230px, 1fr) auto;
+  grid-template-areas:
+    "pista franja"
+    "cabeceras esquina";
+  gap: 8px;
+  margin-top: 8px;
+}
+
+/* ---------- Pista ---------- */
+
+.carrera-pista {
+  grid-area: pista;
+  position: relative;
+  border-radius: 16px;
+  background:
+    linear-gradient(180deg, rgba(0, 0, 0, 0.34), rgba(0, 0, 0, 0.06) 26%, rgba(0, 0, 0, 0.06) 72%, rgba(0, 0, 0, 0.3)),
+    radial-gradient(ellipse at 50% 38%, rgba(255, 255, 255, 0.06), transparent 70%),
+    rgba(3, 40, 23, 0.6);
+  box-shadow:
+    inset 0 0 0 1.5px rgba(212, 175, 55, 0.34),
+    inset 0 2px 22px rgba(0, 0, 0, 0.5),
+    0 10px 26px rgba(0, 0, 0, 0.3);
+}
+
+/* El marco recorta lo de dentro a las esquinas redondeadas de la pista; los destellos van fuera, por encima. */
+.carrera-pista__marco {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: inherit;
+}
+
+.carrera-carriles {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.carrera-carril {
+  position: relative;
+}
+
+.carrera-carril > .carrera-caballo {
+  z-index: 1;
+}
+
+.carrera-carril + .carrera-carril {
+  border-left: 1.5px dashed rgba(243, 231, 196, 0.2);
+}
+
+/* El palo de cada carril, impreso en el tapete. */
+.carrera-carril::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 46%;
+  translate: -50% -50%;
+  font-family: var(--fuente-titulo);
+  font-size: clamp(2.5rem, 12vw, 4.25rem);
+  line-height: 1;
+  color: var(--crema);
+  opacity: 0.075;
+  pointer-events: none;
+}
+
+.carrera-carril--H::before {
+  content: "♥︎";
+}
+
+.carrera-carril--D::before {
+  content: "♦︎";
+}
+
+.carrera-carril--C::before {
+  content: "♣︎";
+}
+
+.carrera-carril--S::before {
+  content: "♠︎";
+}
+
+/* El carril elegido para apostar: un halo dorado que se funde. */
+.carrera-carril::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(212, 175, 55, 0.05), rgba(212, 175, 55, 0.2));
+  box-shadow: inset 0 0 0 1.5px rgba(212, 175, 55, 0.7);
+  opacity: 0;
+  transition: opacity 0.25s;
+  pointer-events: none;
+}
+
+.carrera-carril--eligible {
+  cursor: pointer;
+}
+
+.carrera-carril--eligible:hover::after {
+  opacity: 0.4;
+}
+
+.carrera-carril--elegido::after,
+.carrera-carril--elegido:hover::after {
+  opacity: 1;
+}
+
+/* Las líneas de cada casilla: la salida, una por tramo (se enciende en oro al girarse su tramo) y la meta a cuadros. */
+.carrera-lineas {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.carrera-linea {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(var(--salida) + var(--cab-largo) + var(--k) * var(--paso));
+  height: 2px;
+}
+
+.carrera-linea::before,
+.carrera-linea::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(90deg, currentColor 0 7px, transparent 7px 14px);
+}
+
+.carrera-linea::before {
+  color: var(--crema);
+  opacity: 0.2;
+}
+
+.carrera-linea::after {
+  color: var(--oro-claro);
+  opacity: 0;
+  transition: opacity 0.35s;
+}
+
+.carrera-linea--encendida::after {
+  opacity: 0.85;
+}
+
+.carrera-linea--salida::before {
+  background: var(--crema);
+  opacity: 0.55;
+}
+
+.carrera-meta {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: var(--meta);
+  background: repeating-conic-gradient(var(--crema) 0 25%, #1b1404 0 50%) 0 0 / calc(var(--meta)) calc(var(--meta));
+  box-shadow:
+    0 2px 0 var(--oro),
+    0 5px 14px rgba(0, 0, 0, 0.45);
+  opacity: 0.92;
+}
+
+/* Un fundido simple: lo que en movimiento reducido sustituye a las entradas con desplazamiento (lo usan los otros archivos). */
+@keyframes carrera-aparece {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Movimiento reducido: la pista no tiene desplazamientos propios; las líneas que se encienden y el carril elegido solo se funden, más deprisa. */
+@media (prefers-reduced-motion: reduce) {
+  .carrera-linea::after,
+  .carrera-carril::after {
+    transition-duration: 0.12s;
+  }
+}

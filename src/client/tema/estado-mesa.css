@@ -1,0 +1,40 @@
+/* Estado de la mesa: el texto de la fase con su cuenta atrás pegada, los detalles al final y, debajo, la barra del temporizador. */
+
+.estado-mesa {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Una sola línea siempre (el alto no depende de si hay cuenta o detalles: lo de debajo, y la pista, no se mueven al cambiar de fase);
+   si no cabe todo, es el texto el que se recorta con puntos suspensivos. */
+.estado-mesa__fila {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 26px;
+  font-size: 0.875rem;
+  color: var(--crema-tenue);
+}
+
+.estado-mesa__texto {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.estado-mesa__cuenta {
+  flex: none;
+  font-family: var(--fuente-titulo);
+  font-weight: 600;
+  font-size: 1.0625rem;
+  line-height: 1.2;
+  color: var(--oro);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.estado-mesa__detalle {
+  flex: none;
+  margin-left: auto;
+}

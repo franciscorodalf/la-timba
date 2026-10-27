@@ -1,0 +1,402 @@
+/* Sala de la partida: jugadores, mesas y «Esta noche». */
+
+.sala {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: max(20px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) calc(96px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+}
+
+.sala__columna {
+  width: 100%;
+  max-width: var(--ancho-sala);
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.sala__cabecera {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.sala__logo {
+  font-size: 1.875rem;
+  line-height: 1.1;
+}
+
+.sala .saludo {
+  font-size: 1.0625rem;
+}
+
+/* El botón con el código: abre el diálogo para invitar. */
+.sala-codigo {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 44px;
+  padding: 0 18px 0 14px;
+  border-radius: 999px;
+  border: 1.5px solid rgba(212, 175, 55, 0.6);
+  background: rgba(0, 0, 0, 0.25);
+  color: var(--crema);
+  font-weight: 700;
+  font-size: 0.9375rem;
+  letter-spacing: 0.18em;
+  cursor: pointer;
+  transition:
+    border-color 0.2s,
+    background-color 0.2s,
+    transform 0.12s var(--curva);
+}
+
+.sala-codigo svg {
+  color: var(--oro);
+}
+
+.sala-codigo:hover {
+  border-color: var(--oro);
+  background: rgba(212, 175, 55, 0.14);
+}
+
+.sala-codigo:active {
+  transform: scale(0.97);
+}
+
+.sala-etiqueta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+  font-family: var(--fuente-ui);
+  font-weight: 700;
+  font-size: 0.75rem;
+  line-height: 1;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--oro);
+}
+
+.sala-etiqueta__n {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgba(212, 175, 55, 0.18);
+  font-size: 0.75rem;
+  letter-spacing: 0;
+}
+
+/* Quién está en la sala. */
+.sala-conectados {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sala-pastilla {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  padding: 4px 14px 4px 4px;
+  border-radius: 999px;
+  border: 1px solid rgba(243, 231, 196, 0.16);
+  background: rgba(0, 0, 0, 0.25);
+  font-size: 0.9375rem;
+  animation: aparecer 0.4s var(--curva) both;
+}
+
+.sala-pastilla span:not(.avatar-jugador) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sala-pastilla small {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--oro);
+}
+
+/* Las mesas. */
+.sala-mesas {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.sala-mesa {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(212, 175, 55, 0.26);
+  background:
+    linear-gradient(160deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.02)),
+    rgba(4, 26, 15, 0.4);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22);
+  transition:
+    transform 0.2s var(--curva),
+    border-color 0.2s,
+    box-shadow 0.2s;
+}
+
+.sala-mesa:hover,
+.sala-mesa:focus-within {
+  transform: translateY(-2px);
+  border-color: rgba(212, 175, 55, 0.7);
+  box-shadow:
+    0 12px 28px rgba(0, 0, 0, 0.38),
+    0 0 0 1px rgba(212, 175, 55, 0.25);
+}
+
+.sala-mesa__icono {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 50px;
+  height: 50px;
+  border-radius: 14px;
+  color: var(--crema);
+  background: radial-gradient(circle at 30% 30%, #2a7a52, #0f5132);
+  box-shadow:
+    inset 0 0 0 2px var(--madera-2),
+    0 2px 6px rgba(0, 0, 0, 0.35);
+}
+
+.sala-mesa__clavos {
+  fill: var(--tapete-2);
+}
+
+.sala-mesa__cuerpo {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.sala-mesa__nombre {
+  font-size: 1.125rem;
+  line-height: 1.2;
+}
+
+.sala-mesa__estado {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 0.875rem;
+  color: rgba(243, 231, 196, 0.72);
+}
+
+.sala-mesa__vivo {
+  flex: none;
+  font-size: 0.625rem;
+  line-height: 1;
+  color: var(--acierto);
+  animation: latir 1.6s ease-in-out infinite;
+}
+
+.sala-mesa__cuenta {
+  color: var(--oro);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.sala-avatares {
+  display: flex;
+  margin: 7px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sala-avatares li {
+  display: flex;
+}
+
+.sala-avatares li + li {
+  margin-left: -7px;
+}
+
+.sala-avatares__mas > span:first-child {
+  display: inline-grid;
+  place-items: center;
+  min-width: 26px;
+  height: 26px;
+  padding: 0 6px;
+  border-radius: 999px;
+  border: 2px solid rgba(8, 26, 18, 0.9);
+  background: rgba(243, 231, 196, 0.22);
+  font-size: 0.6875rem;
+  font-weight: 700;
+}
+
+/* Toda la tarjeta es pulsable: el enlace «Entrar» se extiende sobre ella. */
+.sala-mesa__ir {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0 18px;
+  border-radius: 10px;
+  background: linear-gradient(180deg, #e6c75f, var(--oro) 55%, #bd9a2c);
+  color: var(--tinta);
+  font-weight: 700;
+  font-size: 0.9375rem;
+  text-decoration: none;
+  box-shadow: 0 2px 0 #7a5f12;
+}
+
+.sala-mesa__ir::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 16px;
+}
+
+.sala-mesa:hover .sala-mesa__ir {
+  filter: brightness(1.07);
+}
+
+.sala-mesa--proxima {
+  opacity: 0.45;
+  box-shadow: none;
+}
+
+.sala-mesa--proxima:hover {
+  transform: none;
+  border-color: rgba(212, 175, 55, 0.26);
+  box-shadow: none;
+}
+
+/* Esta noche. */
+.sala-ranking {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 8px 16px;
+  list-style: none;
+  border-radius: 16px;
+  background: rgba(0, 0, 0, 0.24);
+}
+
+.sala-ranking__fila {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+}
+
+.sala-ranking__fila + .sala-ranking__fila {
+  border-top: 1px solid rgba(243, 231, 196, 0.08);
+}
+
+.sala-ranking__pos {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  font-size: 0.8125rem;
+  font-weight: 800;
+  color: var(--tinta);
+  box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.18);
+}
+
+.sala-ranking__pos--1 {
+  background: linear-gradient(180deg, var(--oro-claro), var(--oro));
+}
+
+.sala-ranking__pos--2 {
+  background: linear-gradient(180deg, #e3e3e3, #b4b4b4);
+}
+
+.sala-ranking__pos--3 {
+  background: linear-gradient(180deg, #dc9a5a, #b9722f);
+}
+
+.sala-ranking__nombre {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sala-ranking__valor {
+  font-family: var(--fuente-titulo);
+  font-weight: 600;
+  font-size: 1.125rem;
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.sala-sube {
+  color: var(--acierto);
+}
+
+.sala-baja {
+  color: var(--fallo);
+}
+
+.sala-vacio {
+  padding: 18px 16px;
+  border-radius: 16px;
+  border: 1px dashed rgba(212, 175, 55, 0.32);
+  text-align: center;
+  font-size: 0.9375rem;
+  color: var(--crema-tenue);
+  text-wrap: balance;
+}
+
+/* Marcadores de lo que aún no ha llegado. */
+.sala-esqueletos {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.sala-esqueleto {
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.06);
+  animation: latir 1.4s ease-in-out infinite;
+}
+
+.sala-esqueleto--pastillas {
+  height: 56px;
+}
+
+.sala-esqueleto--mesa {
+  height: 92px;
+}
+
+.sala-esqueleto--ranking {
+  height: 142px;
+}
+
+/* Movimiento reducido: las tarjetas y el botón del código no se levantan ni se hunden. */
+@media (prefers-reduced-motion: reduce) {
+  .sala-mesa,
+  .sala-mesa:hover,
+  .sala-mesa:focus-within,
+  .sala-codigo,
+  .sala-codigo:active {
+    transform: none;
+    transition-property: border-color, background-color, box-shadow;
+  }
+}

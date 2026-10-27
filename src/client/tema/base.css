@@ -1,0 +1,494 @@
+@import "@fontsource/playfair-display/600.css";
+@import "@fontsource/playfair-display/800.css";
+@import "@fontsource/inter/400.css";
+@import "@fontsource/inter/600.css";
+@import "@fontsource/inter/700.css";
+
+/* ==========================================================================
+   Tema de La Timba: casino clásico. Tapete verde, madera, oro y crema.
+   Las animaciones solo mueven `transform` y `opacity`.
+   Este archivo trae lo compartido (variables, base, botones, campos, avisos);
+   cada pantalla o componente tiene el suyo en esta carpeta, con sus reglas de movimiento reducido.
+   ========================================================================== */
+
+:root {
+  color-scheme: dark;
+
+  /* Paleta */
+  --tapete-1: #1d7a4c;
+  --tapete-2: #0f5132;
+  --tapete-3: #08361f;
+  --madera-1: #5a3a1e;
+  --madera-2: #8b5e34;
+  --oro: #d4af37;
+  --oro-claro: #f5d76e;
+  --oro-oscuro: #a8851f;
+  --crema: #f3e7c4;
+  --crema-tenue: rgba(243, 231, 196, 0.74);
+  --rojo: #b3122e;
+  --reverso: #7a1020;
+  --tinta: #1b1404; /* texto sobre oro */
+  --tapete-barra: #0a3a23; /* verde oscuro opaco: fondo de las barras que se quedan fijas sobre el contenido */
+  --acierto: #7ee2a8;
+  --fallo: #f08a8a;
+
+  /* Tipografía */
+  --fuente-titulo: "Playfair Display", Georgia, "Times New Roman", serif;
+  --fuente-ui: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  /* Movimiento: con `prefers-reduced-motion` el desplazamiento desaparece y solo queda el fundido. */
+  --curva: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --desplazamiento: 14px;
+
+  /* Ancho de la columna de las pantallas de una partida (la sala, su barra inferior y, más adelante, las demás). */
+  --ancho-sala: 460px;
+}
+
+@media (min-width: 720px) {
+  :root {
+    --ancho-sala: 560px;
+  }
+}
+
+/* ---------- Base ---------- */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--tapete-3);
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  min-height: 100dvh;
+  color: var(--crema);
+  font: 400 1rem/1.5 var(--fuente-ui);
+  font-variant-numeric: lining-nums; /* Playfair usa por defecto cifras de estilo antiguo: las fichas se leen mejor alineadas */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+/* El tapete: degradado verde, viñeta y un grano muy fino de fieltro. Va fijo y detrás de todo. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='f'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 .1 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23f)'/%3E%3C/svg%3E"),
+    radial-gradient(ellipse at 50% 42%, transparent 30%, rgba(0, 0, 0, 0.5) 100%),
+    radial-gradient(ellipse at 50% 38%, var(--tapete-1) 0%, var(--tapete-2) 55%, var(--tapete-3) 100%);
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  font-family: var(--fuente-titulo);
+  font-weight: 600;
+}
+
+p {
+  margin: 0;
+}
+
+button,
+input {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  -webkit-tap-highlight-color: transparent;
+}
+
+::selection {
+  background: rgba(212, 175, 55, 0.4);
+  color: var(--crema);
+}
+
+/* Anillo de foco dorado, visible con teclado. */
+:focus-visible {
+  outline: 2px solid var(--oro);
+  outline-offset: 3px;
+}
+
+/* Un título al que se lleva el foco desde código no necesita anillo. */
+[tabindex="-1"]:focus {
+  outline: none;
+}
+
+/* ---------- Pantallas ---------- */
+
+.pantalla {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 28px;
+  padding: max(28px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(28px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+  text-align: center;
+}
+
+.pantalla > * {
+  width: 100%;
+  max-width: 400px;
+}
+
+/* Pegada arriba en vez de centrada: al pasar del formulario a la confirmación el logo no salta de sitio. */
+.pantalla--entrada {
+  justify-content: flex-start;
+  padding-top: max(28px, env(safe-area-inset-top), 8vh);
+}
+
+/* Entrada suave: sube y se funde. Con movimiento reducido solo se funde (ver el final del archivo). */
+.aparece {
+  animation: aparecer 0.55s var(--curva) both;
+  animation-delay: var(--retardo, 0ms);
+}
+
+@keyframes aparecer {
+  from {
+    opacity: 0;
+    transform: translateY(var(--desplazamiento));
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.nota {
+  font-size: 0.8125rem;
+  color: var(--crema);
+  opacity: 0.8;
+}
+
+/* ---------- Panel ---------- */
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 24px 22px;
+  text-align: left;
+  border-radius: 18px;
+  border: 1px solid rgba(212, 175, 55, 0.34);
+  background:
+    linear-gradient(160deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.015)),
+    rgba(4, 26, 15, 0.7);
+  box-shadow:
+    0 20px 50px rgba(0, 0, 0, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+}
+
+.panel__titulo {
+  font-size: 1.5rem;
+  line-height: 1.2;
+  text-wrap: balance;
+}
+
+.panel__texto {
+  font-size: 0.9375rem;
+  color: var(--crema-tenue);
+}
+
+/* ---------- Botón ---------- */
+
+.boton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 0 24px;
+  border-radius: 10px;
+  border: 1.5px solid var(--oro);
+  font-weight: 700;
+  font-size: 0.9375rem;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  cursor: pointer;
+  user-select: none;
+  text-decoration: none;
+  transition:
+    transform 0.12s var(--curva),
+    filter 0.12s,
+    box-shadow 0.2s,
+    background-color 0.2s;
+}
+
+.boton--ancho {
+  width: 100%;
+}
+
+.boton--principal {
+  background: linear-gradient(180deg, #e6c75f, var(--oro) 55%, #bd9a2c);
+  color: var(--tinta);
+  box-shadow:
+    0 2px 0 #7a5f12,
+    0 8px 18px rgba(0, 0, 0, 0.35);
+}
+
+.boton--secundario {
+  background: rgba(0, 0, 0, 0.25);
+  color: var(--crema);
+}
+
+.boton:hover {
+  transform: translateY(-1px);
+}
+
+.boton--principal:hover {
+  filter: brightness(1.07);
+}
+
+.boton--secundario:hover {
+  background: rgba(212, 175, 55, 0.16);
+}
+
+.boton:active {
+  transform: scale(0.97);
+  filter: brightness(1.12);
+}
+
+.boton:disabled,
+.boton[aria-disabled="true"] {
+  cursor: default;
+  opacity: 0.6;
+  transform: none;
+  filter: none;
+}
+
+.boton__giro {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2.5px solid rgba(27, 20, 4, 0.3);
+  border-top-color: var(--tinta);
+  animation: girar 0.8s linear infinite;
+}
+
+.boton--secundario .boton__giro {
+  border-color: rgba(243, 231, 196, 0.3);
+  border-top-color: var(--crema);
+}
+
+@keyframes girar {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes latir {
+  50% {
+    opacity: 0.3;
+  }
+}
+
+/* ---------- Campo ---------- */
+
+.campo {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.campo__etiqueta {
+  font-weight: 600;
+  font-size: 0.8125rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--oro);
+}
+
+.campo__control {
+  position: relative;
+  display: flex;
+}
+
+.campo__control input {
+  width: 100%;
+  min-height: 52px;
+  padding: 0 14px;
+  border-radius: 10px;
+  border: 1.5px solid rgba(212, 175, 55, 0.4);
+  background: rgba(0, 0, 0, 0.32);
+  color: var(--crema);
+  font-size: 1.0625rem; /* 16 px o más: iOS no hace zoom al enfocar */
+  transition:
+    border-color 0.2s,
+    background-color 0.2s;
+}
+
+.campo__control input:hover {
+  border-color: rgba(212, 175, 55, 0.65);
+}
+
+.campo__control input:focus-visible {
+  outline: 2px solid var(--oro);
+  outline-offset: 2px;
+  border-color: var(--oro);
+  background: rgba(0, 0, 0, 0.42);
+}
+
+.campo__control input[inputmode="numeric"] {
+  padding-inline: 52px;
+  text-align: center;
+  font-family: var(--fuente-titulo);
+  font-weight: 600;
+  font-size: 1.25rem;
+  letter-spacing: 0.5em;
+  text-indent: 0.5em; /* compensa el espacio que deja el último carácter */
+}
+
+.campo__control input:-webkit-autofill {
+  -webkit-text-fill-color: var(--crema);
+  caret-color: var(--crema);
+  box-shadow: 0 0 0 1000px #0b2f1f inset;
+}
+
+.campo__ayuda {
+  font-size: 0.8125rem;
+  color: var(--crema-tenue);
+}
+
+.campo[data-invalido] .campo__control input {
+  border-color: var(--fallo);
+}
+
+.campo[data-invalido] .campo__ayuda {
+  color: var(--fallo);
+}
+
+.campo__accion {
+  position: absolute;
+  inset-block: 0;
+  right: 0;
+  width: 52px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 0 10px 10px 0;
+  background: none;
+  color: var(--crema-tenue);
+  cursor: pointer;
+}
+
+.campo__accion:hover,
+.campo__accion[aria-pressed="true"] {
+  color: var(--oro);
+}
+
+.campo__accion:focus-visible {
+  outline-offset: -3px;
+}
+
+/* ---------- Aviso ---------- */
+
+.aviso {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid;
+  font-size: 0.9375rem;
+  line-height: 1.4;
+  text-align: left;
+}
+
+.aviso::before {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin-top: 1px;
+  border-radius: 50%;
+  font-size: 0.8125rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.aviso--error {
+  background: rgba(179, 18, 46, 0.24);
+  border-color: rgba(240, 138, 138, 0.55);
+  color: #ffe5e5;
+}
+
+.aviso--error::before {
+  content: "!";
+  background: var(--fallo);
+  color: #3a0a12;
+}
+
+.aviso--info {
+  background: rgba(212, 175, 55, 0.12);
+  border-color: rgba(212, 175, 55, 0.45);
+  color: var(--crema);
+}
+
+.aviso--info::before {
+  content: "i";
+  background: var(--oro);
+  color: var(--tinta);
+}
+
+/* ---------- Carga ---------- */
+
+.giro {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 3px solid rgba(212, 175, 55, 0.25);
+  border-top-color: var(--oro);
+  animation: girar 0.8s linear infinite;
+}
+
+/* ---------- Solo para lectores de pantalla ---------- */
+
+.solo-lectores {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Movimiento reducido: sin desplazamientos ni giros, solo fundidos. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --desplazamiento: 0px;
+  }
+
+  .aparece {
+    animation-duration: 0.3s;
+  }
+
+  .boton,
+  .boton:hover,
+  .boton:active {
+    transform: none;
+    transition-property: background-color, filter, box-shadow;
+  }
+
+  .boton__giro,
+  .giro {
+    animation: latir 1.2s ease-in-out infinite;
+  }
+}

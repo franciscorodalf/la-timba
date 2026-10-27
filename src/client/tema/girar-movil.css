@@ -1,0 +1,117 @@
+/* «Gira el móvil para jugar»: pantalla completa sobre las mesas cuando el móvil está tumbado (puntero táctil, apaisado, 500 px de
+   alto o menos). Fuera de ese caso no existe. Lo demás de la mesa se esconde con `display: none` (sigue montado, con su socket).
+   La misma consulta está en `efectos/ventana.ts` (`MESA_TAPADA`): con el aviso puesto, la mesa no suena ni vibra. */
+
+.girar-movil {
+  display: none;
+}
+
+@media (pointer: coarse) and (orientation: landscape) and (max-height: 500px) {
+  /* Nada de la mesa se ve ni se desplaza; el marco de madera y el foco de luz los pone el propio aviso. */
+  .marco-mesa > :not(.girar-movil),
+  .marco-mesa::before,
+  .marco-mesa::after {
+    display: none;
+  }
+
+  .marco-mesa {
+    min-height: 100dvh;
+    padding: 0;
+    overflow: hidden;
+  }
+
+  .girar-movil {
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: clamp(20px, 5vw, 48px);
+    padding: max(18px, env(safe-area-inset-top)) max(28px, env(safe-area-inset-right)) max(18px, env(safe-area-inset-bottom)) max(28px, env(safe-area-inset-left));
+    background:
+      radial-gradient(ellipse 70% 90% at 50% 42%, rgba(255, 255, 255, 0.08), transparent 70%),
+      radial-gradient(ellipse at 50% 38%, var(--tapete-1) 0%, var(--tapete-2) 55%, var(--tapete-3) 100%);
+    box-shadow:
+      inset 0 0 0 6px var(--madera-1),
+      inset 0 0 0 8px var(--madera-2),
+      inset 0 0 0 9px rgba(0, 0, 0, 0.35),
+      inset 0 0 50px rgba(0, 0, 0, 0.5);
+  }
+
+  .girar-movil__icono {
+    flex: none;
+    width: clamp(110px, 36vh, 170px);
+    height: auto;
+    fill: none;
+    stroke: var(--oro);
+    stroke-width: 3;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.45));
+  }
+
+  .girar-movil__cuerpo {
+    fill: rgba(4, 26, 15, 0.7);
+  }
+
+  .girar-movil__pantalla {
+    fill: rgba(212, 175, 55, 0.14);
+    stroke-width: 1.5;
+  }
+
+  .girar-movil__boton {
+    fill: var(--oro);
+    stroke: none;
+  }
+
+  /* El móvil se pone de pie: gira un cuarto de vuelta, se queda un momento y vuelve. */
+  .girar-movil__giro {
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: girar-movil 3.2s var(--curva) infinite;
+  }
+
+  .girar-movil__texto {
+    max-width: 30ch;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    text-align: left;
+  }
+
+  .girar-movil__titulo {
+    font-size: clamp(1.5rem, 6vh, 1.875rem);
+    line-height: 1.15;
+    color: var(--oro-claro);
+    text-wrap: balance;
+  }
+
+  .girar-movil__texto p {
+    font-size: 0.9375rem;
+    line-height: 1.4;
+    color: var(--crema-tenue);
+    text-wrap: balance;
+  }
+}
+
+@keyframes girar-movil {
+  0%,
+  18% {
+    transform: rotate(0deg);
+  }
+  45%,
+  72% {
+    transform: rotate(-90deg);
+  }
+  100% {
+    transform: rotate(0deg);
+  }
+}
+
+/* Movimiento reducido: el móvil se queda quieto. */
+@media (prefers-reduced-motion: reduce) {
+  .girar-movil__giro {
+    animation: none;
+  }
+}

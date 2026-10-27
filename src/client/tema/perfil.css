@@ -1,0 +1,195 @@
+/* Perfil: quién eres, tus fichas con el rescate, tus estadísticas y cerrar sesión. */
+
+.perfil-cabecera {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.perfil-cabecera .avatar-jugador {
+  width: 64px;
+  height: 64px;
+  border-width: 3px;
+  font-size: 1.75rem;
+  box-shadow:
+    0 0 0 2px rgba(212, 175, 55, 0.7),
+    0 6px 16px rgba(0, 0, 0, 0.4);
+}
+
+.perfil-cabecera__texto {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.perfil-cabecera__etiqueta {
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--oro);
+}
+
+.perfil-cabecera__apodo {
+  font-size: 1.875rem;
+  line-height: 1.1;
+  overflow-wrap: anywhere;
+}
+
+/* ---------- Fichas y rescate ---------- */
+
+.perfil-fichas {
+  gap: 14px;
+}
+
+.perfil-fichas .sala-etiqueta {
+  margin: 0;
+}
+
+.perfil-fichas__total {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-family: var(--fuente-titulo);
+  font-weight: 600;
+  font-size: 2.75rem;
+  line-height: 1;
+  color: var(--oro);
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.35);
+}
+
+.perfil-rescate {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(243, 231, 196, 0.12);
+}
+
+/* ---------- Estadísticas ---------- */
+
+/* Lo que cambia al cargar (esqueleto, error o estadísticas): un solo bloque al que llevar el foco. */
+.perfil-zona {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.perfil-datos {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin: 0;
+}
+
+.perfil-dato {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 12px 10px;
+  border-radius: 14px;
+  border: 1px solid rgba(243, 231, 196, 0.08);
+  background: rgba(0, 0, 0, 0.24);
+}
+
+.perfil-dato dt {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--crema-tenue);
+  text-wrap: balance;
+}
+
+.perfil-dato dd {
+  margin: 0;
+  font-family: var(--fuente-titulo);
+  font-weight: 600;
+  font-size: 1.5rem;
+  line-height: 1.1;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.perfil-juegos {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.perfil-juego {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 16px;
+  border: 1px solid rgba(212, 175, 55, 0.26);
+  background:
+    linear-gradient(160deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.02)),
+    rgba(4, 26, 15, 0.4);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22);
+}
+
+.perfil-juego__nombre {
+  font-size: 1.125rem;
+  line-height: 1.2;
+}
+
+/* Dentro de cada juego, una fila por dato (etiqueta a la izquierda, cifra a la derecha): «% victorias» cabe en una línea en cualquier ancho. */
+.perfil-datos--juego {
+  grid-template-columns: 1fr;
+  gap: 0;
+}
+
+.perfil-datos--juego .perfil-dato {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 2px;
+  border: 0;
+  border-radius: 0;
+  background: none;
+}
+
+.perfil-datos--juego .perfil-dato + .perfil-dato {
+  border-top: 1px solid rgba(243, 231, 196, 0.1);
+}
+
+.perfil-datos--juego .perfil-dato dd {
+  font-size: 1.25rem;
+}
+
+/* ---------- Carga y fallo ---------- */
+
+.perfil-esqueleto {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.perfil-esqueleto__bloque {
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.06);
+  animation: latir 1.4s ease-in-out infinite;
+}
+
+.perfil-esqueleto__bloque--datos {
+  height: 170px;
+}
+
+.perfil-esqueleto__bloque--juego {
+  height: 120px;
+  animation-delay: 0.2s;
+}
+
+.perfil-fallo {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}

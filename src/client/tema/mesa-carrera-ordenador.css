@@ -1,0 +1,174 @@
+/* Mesa de la carrera (4 de 4): la vista de ordenador (desde 900 px): la pista horizontal en su tapete con canto de madera. Solo
+   recoloca (ejes, tamaños, rejilla); lo que se mueve sigue siendo `transform` y `opacity`, con las mismas reglas de movimiento
+   reducido de los otros archivos. */
+
+/* ---------- Ordenador: la pista horizontal en su tapete ---------- */
+
+.carrera--ordenador {
+  padding-inline: max(28px, env(safe-area-inset-left));
+}
+
+.carrera--ordenador .barra-mesa {
+  width: min(1180px, 100%);
+  margin: 0 auto;
+}
+
+.carrera--ordenador .carrera-mesa {
+  flex: none;
+  width: min(1120px, 100%);
+  margin: 16px auto 0;
+  padding: 18px 20px 20px;
+  gap: 8px 14px;
+  border-radius: 30px;
+  grid-template-columns: 238px minmax(0, 1fr);
+  grid-template-rows: var(--franja) clamp(230px, calc(100dvh - 430px), 420px);
+  grid-template-areas:
+    "esquina franja"
+    "cabeceras pista";
+  background:
+    radial-gradient(ellipse 70% 55% at 50% 30%, rgba(255, 255, 255, 0.08), transparent 70%),
+    radial-gradient(ellipse at 50% 40%, var(--tapete-1) 0%, var(--tapete-2) 60%, var(--tapete-3) 100%);
+  box-shadow:
+    inset 0 0 0 2px rgba(212, 175, 55, 0.18),
+    inset 0 0 70px rgba(0, 0, 0, 0.45),
+    0 0 0 12px var(--madera-1),
+    0 0 0 15px var(--madera-2),
+    0 0 0 16px rgba(0, 0, 0, 0.45),
+    0 28px 60px rgba(0, 0, 0, 0.55);
+}
+
+.carrera--ordenador .carrera-carriles {
+  grid-template-columns: none;
+  grid-template-rows: repeat(4, minmax(0, 1fr));
+}
+
+.carrera--ordenador .carrera-carril + .carrera-carril {
+  border-left: 0;
+  border-top: 1.5px dashed rgba(243, 231, 196, 0.2);
+}
+
+.carrera--ordenador .carrera-carril::before {
+  left: 42%;
+  top: 50%;
+  font-size: 3.25rem;
+}
+
+.carrera--ordenador .carrera-linea {
+  left: calc(var(--salida) + var(--cab-largo) + var(--k) * var(--paso));
+  right: auto;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  height: auto;
+}
+
+.carrera--ordenador .carrera-linea::before,
+.carrera--ordenador .carrera-linea::after {
+  background: repeating-linear-gradient(180deg, currentColor 0 7px, transparent 7px 14px);
+}
+
+.carrera--ordenador .carrera-linea--salida::before {
+  background: var(--crema);
+}
+
+.carrera--ordenador .carrera-meta {
+  left: auto;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: var(--meta);
+  height: auto;
+  box-shadow:
+    -2px 0 0 var(--oro),
+    -5px 0 14px rgba(0, 0, 0, 0.45);
+}
+
+.carrera--ordenador .carrera-festejos {
+  grid-template-columns: none;
+  grid-template-rows: repeat(4, minmax(0, 1fr));
+}
+
+.carrera--ordenador .carrera-festejo .destellos {
+  left: calc(100% - var(--meta) - var(--cab-largo) / 2);
+  top: 50%;
+}
+
+.carrera--ordenador .carrera-caballo__estela {
+  left: auto;
+  right: 92%;
+  top: 14%;
+  bottom: 14%;
+  width: 78%;
+  height: auto;
+  border-radius: 40% 0 0 40%;
+  background: linear-gradient(270deg, rgba(245, 215, 110, 0.55), rgba(245, 215, 110, 0));
+  transform-origin: 100% 50%;
+}
+
+.carrera--ordenador .carrera-caballo {
+  left: var(--salida);
+  bottom: auto;
+  top: 50%;
+  margin: calc(var(--cab-alto) / -2) 0 0;
+  transform: translateX(calc(var(--casilla) * var(--paso)));
+}
+
+.carrera--ordenador .carrera-tramo {
+  left: calc(var(--salida) + var(--cab-largo) + var(--k) * var(--paso) - var(--tramo-ancho) / 2);
+  bottom: auto;
+  top: 50%;
+  margin: calc(var(--tramo-alto) / -2) 0 0;
+}
+
+.carrera--ordenador .carrera-cabeceras {
+  grid-template-columns: none;
+  grid-template-rows: repeat(4, minmax(0, 1fr));
+}
+
+.carrera--ordenador .carrera-cabecera {
+  flex-direction: row;
+  justify-content: flex-start;
+  gap: 12px;
+  min-height: 0;
+  padding: 0 14px;
+  text-align: left;
+}
+
+.carrera--ordenador .carrera-cabecera__palo {
+  font-size: 2rem;
+}
+
+.carrera--ordenador .carrera-cabecera__nombre {
+  display: block;
+  flex: 1;
+  font-size: 0.9375rem;
+  font-weight: 700;
+  color: var(--crema);
+}
+
+.carrera--ordenador .carrera-cabecera__datos {
+  align-items: flex-end;
+  margin: 0;
+}
+
+.carrera--ordenador .carrera-cabecera__mia {
+  font-size: 0.8125rem;
+}
+
+/* En ordenador el hueco de «Tú N» solo existe cuando hay apuesta. */
+.carrera--ordenador .carrera-cabecera__mia:empty {
+  display: none;
+}
+
+.carrera--ordenador .carrera-cabecera__mesa {
+  font-size: 0.75rem;
+}
+
+.carrera--ordenador .carrera-panel {
+  width: min(640px, 100%);
+  margin: 26px auto 0;
+}
+
+.carrera--ordenador .carrera-ganador__texto {
+  font-size: 1.75rem;
+}

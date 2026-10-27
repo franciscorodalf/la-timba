@@ -1,0 +1,15 @@
+/* Avatar: el círculo con la inicial de un jugador. */
+
+.avatar-jugador {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 2px solid rgba(8, 26, 18, 0.9);
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--tinta);
+}
