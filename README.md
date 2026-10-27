@@ -132,9 +132,11 @@ Lo hace cada persona con su propia cuenta de Cloudflare (el plan gratuito basta)
 
 ```bash
 npx wrangler login
-npx wrangler secret put TOKEN_SECRET     # pega aquí un secreto fuerte: openssl rand -base64 32
+openssl rand -base64 32 | npx wrangler secret put TOKEN_SECRET
 npm run deploy
 ```
+
+La segunda línea genera un secreto fuerte y lo guarda directamente, sin copiar ni pegar nada. Si `TOKEN_SECRET` falta o está vacío, la web responde «La Timba está descansando» y el registro de errores (`npx wrangler tail`) lo dice. La primera vez, la cuenta necesita un subdominio `workers.dev`: se crea solo al abrir **Workers & Pages** en el panel de Cloudflare.
 
 `npm run deploy` construye el cliente y el Worker (`vite build`) y los sube con `wrangler deploy`. La configuración está en [`wrangler.jsonc`](wrangler.jsonc): los cuatro Durable Objects con su migración `new_sqlite_classes` y la web como recursos estáticos con *fallback* de aplicación de una sola página, de modo que `/p/KXP4` abre la partida también al recargar. La URL queda como `https://la-timba.<tu-cuenta>.workers.dev`.
 
