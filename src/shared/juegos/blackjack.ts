@@ -9,7 +9,6 @@ export const BJ = {
   BANCA_MS: 1_000,
   RESULTADO_MS: 4_000,
   MIN: 10,
-  MAX: 500,
   MAX_JUGADORES: 6,
 } as const;
 
@@ -62,9 +61,9 @@ export function pago(mano: { cartas: Carta[]; apuesta: number; doblada: boolean 
   return 0;
 }
 
-/** Apuesta válida: entero entre `BJ.MIN` y `BJ.MAX`, ambos inclusive. */
+/** Apuesta válida: un entero seguro desde `BJ.MIN`. No hay tope: se puede apostar todo (lo que no tengas lo rechaza el cobro). */
 export function apuestaValida(cantidad: unknown): cantidad is number {
-  return typeof cantidad === "number" && Number.isInteger(cantidad) && cantidad >= BJ.MIN && cantidad <= BJ.MAX;
+  return typeof cantidad === "number" && Number.isSafeInteger(cantidad) && cantidad >= BJ.MIN;
 }
 
 // ---------------------------------------------------------------------------

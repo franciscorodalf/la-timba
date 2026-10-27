@@ -120,12 +120,12 @@ describe("crear, sentar y apuestas", () => {
     expect(p.estado.fase).toBe("apuestas");
   });
 
-  it("apostar fuera de fase → fase_incorrecta; cantidad 501 → apuesta_invalida; dos veces → accion_invalida", () => {
+  it("apostar fuera de fase → fase_incorrecta; cantidad 9 → apuesta_invalida; dos veces → accion_invalida", () => {
     const decisiones = enDecisiones();
     expect(error(blackjack.aplicar(decisiones, 1, { t: "apostar", cantidad: 50 }, T0, rng))).toBe("fase_incorrecta");
 
     const e = exito(blackjack.sentar(blackjack.crear(T0, rng), 1, "ana", T0)).estado;
-    expect(error(blackjack.aplicar(e, 1, { t: "apostar", cantidad: 501 }, T0, rng))).toBe("apuesta_invalida");
+    expect(error(blackjack.aplicar(e, 1, { t: "apostar", cantidad: 9 }, T0, rng))).toBe("apuesta_invalida");
     const apostado = exito(blackjack.aplicar(e, 1, { t: "apostar", cantidad: 50 }, T0, rng)).estado;
     expect(error(blackjack.aplicar(apostado, 1, { t: "apostar", cantidad: 50 }, T0, rng))).toBe("accion_invalida");
   });
@@ -384,7 +384,7 @@ describe("mesa ociosa", () => {
     for (const accion of [{ t: "pedir" }, { t: "plantarse" }, { t: "doblar" }] as AccionBJ[]) {
       expect(error(blackjack.aplicar(dormida, 1, accion, T0, rng))).toBe("fase_incorrecta");
     }
-    expect(error(blackjack.aplicar(dormida, 1, { t: "apostar", cantidad: 501 }, T0, rng))).toBe("apuesta_invalida");
+    expect(error(blackjack.aplicar(dormida, 1, { t: "apostar", cantidad: 9 }, T0, rng))).toBe("apuesta_invalida");
     expect(error(blackjack.aplicar(dormida, 2, { t: "apostar", cantidad: 50 }, T0, rng))).toBe("no_sentado");
   });
 
@@ -936,7 +936,7 @@ describe("costo, alarma y resumen", () => {
 
   it("costo nunca devuelve una cantidad inválida ni cobra por doblar sin mano", () => {
     const e = enDecisiones();
-    for (const cantidad of [-10, 0, 50.5, 501, NaN, "50"]) {
+    for (const cantidad of [-10, 0, 9, 50.5, NaN, Infinity, "50"]) {
       expect(blackjack.costo(e, 1, { t: "apostar", cantidad } as unknown as AccionBJ)).toBe(0);
     }
     expect(blackjack.costo(e, 2, { t: "doblar" })).toBe(0);

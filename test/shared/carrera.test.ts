@@ -103,7 +103,6 @@ describe("crear, sentar y apuestas", () => {
       APUESTAS_MS: 20_000,
       RESULTADO_MS: 5_000,
       MIN: 10,
-      MAX: 500,
       PAGO: 4,
       MAX_JUGADORES: 12,
     });
@@ -185,7 +184,7 @@ describe("crear, sentar y apuestas", () => {
 
   it("las cantidades raras son apuesta_invalida y no crean apuesta", () => {
     const e = exito(carrera.sentar(carrera.crear(T0, rng), 1, "ana", T0)).estado;
-    for (const cantidad of [0, -10, 9, 501, 50.5, NaN, Infinity, "50", null, undefined]) {
+    for (const cantidad of [0, -10, 9, 50.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1, "50", null, undefined]) {
       const accion = { t: "apostar", caballo: "H", cantidad } as unknown as AccionCarrera;
       expect(error(carrera.aplicar(e, 1, accion, T0, rng))).toBe("apuesta_invalida");
     }
@@ -201,40 +200,31 @@ describe("crear, sentar y apuestas", () => {
     expect(e.apuestas).toEqual([]);
   });
 
-  it("apostar crea una apuesta con el mínimo y el máximo permitidos", () => {
+  it("apostar crea una apuesta con el mínimo, y no hay tope: se puede apostar todo", () => {
     const e = exito(carrera.sentar(carrera.crear(T0, rng), 1, "ana", T0)).estado;
     const p = exito(carrera.aplicar(e, 1, apostar("D", 10), T0, rng));
     expect(p.estado.apuestas).toEqual([ap(1, "D", 10)]);
     expect(p.estado.fase).toBe("apuestas");
     expect(p.eventos).toEqual([]);
     expect(exito(carrera.aplicar(e, 1, apostar("S", 500), T0, rng)).estado.apuestas).toEqual([ap(1, "S", 500)]);
+    expect(exito(carrera.aplicar(e, 1, apostar("S", 12_345), T0, rng)).estado.apuestas).toEqual([ap(1, "S", 12_345)]);
   });
 
-  it("apostar a varios caballos y acumular hasta 500 por caballo", () => {
+  it("apostar a varios caballos y acumular en uno sin tope", () => {
     let e = exito(carrera.sentar(carrera.crear(T0, rng), 1, "ana", T0)).estado;
     e = exito(carrera.aplicar(e, 1, apostar("H", 300), T0, rng)).estado;
-    e = exito(carrera.aplicar(e, 1, apostar("H", 200), T0, rng)).estado; // 500 en H: justo el tope
-    expect(e.apuestas).toEqual([ap(1, "H", 500)]);
-    expect(error(carrera.aplicar(e, 1, apostar("H", 10), T0, rng))).toBe("apuesta_invalida");
-    // el tope es por caballo: otros caballos siguen abiertos
+    e = exito(carrera.aplicar(e, 1, apostar("H", 200), T0, rng)).estado;
+    e = exito(carrera.aplicar(e, 1, apostar("H", 1_000), T0, rng)).estado; // pasar de 500 ya no es un problema
+    expect(e.apuestas).toEqual([ap(1, "H", 1_500)]);
     e = exito(carrera.aplicar(e, 1, apostar("D", 500), T0, rng)).estado;
     e = exito(carrera.aplicar(e, 1, apostar("S", 10), T0, rng)).estado;
-    expect(e.apuestas).toEqual([ap(1, "H", 500), ap(1, "D", 500), ap(1, "S", 10)]);
-    // y el rechazo no tocó nada
-    expect(error(carrera.aplicar(e, 1, apostar("D", 10), T0, rng))).toBe("apuesta_invalida");
-    expect(e.apuestas).toEqual([ap(1, "H", 500), ap(1, "D", 500), ap(1, "S", 10)]);
+    expect(e.apuestas).toEqual([ap(1, "H", 1_500), ap(1, "D", 500), ap(1, "S", 10)]);
   });
 
-  it("una apuesta que pasaría de 500 en ese caballo se rechaza entera, aunque sea válida sola", () => {
-    const e = enApuestas({ apuestas: [ap(1, "H", 300)] });
-    expect(error(carrera.aplicar(e, 1, apostar("H", 201), T0, rng))).toBe("apuesta_invalida");
-    expect(exito(carrera.aplicar(e, 1, apostar("H", 200), T0, rng)).estado.apuestas).toEqual([ap(1, "H", 500)]);
-  });
-
-  it("el tope por caballo es de cada jugador, no de la mesa", () => {
-    const e = enApuestas({ apuestas: [ap(1, "H", 500)] });
-    const p = exito(carrera.aplicar(e, 2, apostar("H", 500), T0, rng));
-    expect(p.estado.apuestas).toEqual([ap(1, "H", 500), ap(2, "H", 500)]);
+  it("lo acumulado en un caballo no puede pasar de un entero seguro", () => {
+    const e = enApuestas({ apuestas: [ap(1, "H", Number.MAX_SAFE_INTEGER - 5)] });
+    expect(error(carrera.aplicar(e, 1, apostar("H", 10), T0, rng))).toBe("apuesta_invalida");
+    expect(exito(carrera.aplicar(e, 1, apostar("D", 10), T0, rng)).estado.apuestas).toEqual([ap(1, "H", Number.MAX_SAFE_INTEGER - 5), ap(1, "D", 10)]);
   });
 
   it("actuar sin estar sentado → no_sentado", () => {
@@ -371,7 +361,7 @@ describe("mesa ociosa", () => {
 
   it("en una mesa dormida apostar sigue con las mismas reglas de siempre", () => {
     const dormida = estado({ asientos: [asiento(1, "ana")], ventanasVacias: 3 });
-    expect(error(carrera.aplicar(dormida, 1, apostar("H", 501), T0, rng))).toBe("apuesta_invalida");
+    expect(error(carrera.aplicar(dormida, 1, apostar("H", 9), T0, rng))).toBe("apuesta_invalida");
     expect(error(carrera.aplicar(dormida, 2, apostar("H", 50), T0, rng))).toBe("no_sentado");
     // una apuesta inválida no despierta la mesa
     expect(dormida.fase).toBe("esperando");
@@ -989,7 +979,7 @@ describe("costo, alarma y resumen", () => {
 
   it("costo nunca devuelve una cantidad inválida", () => {
     const e = enApuestas();
-    for (const cantidad of [0, -10, 9, 501, 50.5, NaN, Infinity, "50", null, undefined]) {
+    for (const cantidad of [0, -10, 9, 50.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1, "50", null, undefined]) {
       expect(carrera.costo(e, 1, { t: "apostar", caballo: "H", cantidad } as unknown as AccionCarrera)).toBe(0);
     }
     expect(carrera.costo(e, 1, { t: "apostar", caballo: "X", cantidad: 50 } as unknown as AccionCarrera)).toBe(0);

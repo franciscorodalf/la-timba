@@ -8,7 +8,6 @@ export const CARRERA = {
   APUESTAS_MS: 20_000,
   RESULTADO_MS: 5_000,
   MIN: 10,
-  MAX: 500,
   PAGO: 4,
   MAX_JUGADORES: 12,
 } as const;
@@ -62,7 +61,7 @@ export interface EstadoCarrera {
    * pasos con `momento ≤ ahora`. Mientras corre, `posiciones`, `tramosGirados` y `ganador` siguen como al salir.
    */
   plan: PasoCarrera[];
-  /** Una entrada por jugador y caballo, con la cantidad acumulada (≤ `MAX`). Se conservan en `resultado`. */
+  /** Una entrada por jugador y caballo, con la cantidad acumulada. Se conservan en `resultado`. */
   apuestas: { jugadorId: JugadorId; caballo: Palo; cantidad: number }[];
   asientos: { jugadorId: JugadorId; apodo: string; conectado: boolean }[];
   /** Jugadores que salieron de la mesa con apuestas en la ronda en curso: sus apuestas se pierden. */
@@ -95,9 +94,9 @@ const MAX_VENTANAS_VACIAS = 3;
 
 const caballoValido = (caballo: unknown): caballo is Palo => CABALLOS.includes(caballo as Palo);
 
-/** Cantidad válida de una apuesta: entero entre `CARRERA.MIN` y `CARRERA.MAX`, ambos inclusive. */
+/** Cantidad válida de una apuesta: un entero seguro desde `CARRERA.MIN`. No hay tope: se puede apostar todo (lo que no tengas lo rechaza el cobro). */
 const cantidadValida = (cantidad: unknown): cantidad is number =>
-  typeof cantidad === "number" && Number.isInteger(cantidad) && cantidad >= CARRERA.MIN && cantidad <= CARRERA.MAX;
+  typeof cantidad === "number" && Number.isSafeInteger(cantidad) && cantidad >= CARRERA.MIN;
 
 function exito(estado: EstadoCarrera, eventos: Evento[] = [], liquidacion?: Liquidacion): Paso<EstadoCarrera> {
   return liquidacion ? { ok: true, estado, eventos, liquidacion } : { ok: true, estado, eventos };
@@ -246,7 +245,8 @@ function apostar(e: EstadoCarrera, jugadorId: JugadorId, caballo: Palo, cantidad
   if (!caballoValido(caballo) || !cantidadValida(cantidad)) return fallo("apuesta_invalida");
   // Quien salió con apuestas ya las dio por perdidas: no puede volver a apostar en esta ronda.
   if (e.abandonos.includes(jugadorId)) return fallo("accion_invalida");
-  if ((apuestaDe(e, jugadorId, caballo)?.cantidad ?? 0) + cantidad > CARRERA.MAX) return fallo("apuesta_invalida");
+  // Sin tope por caballo, pero lo acumulado tiene que seguir siendo un entero exacto.
+  if (!Number.isSafeInteger((apuestaDe(e, jugadorId, caballo)?.cantidad ?? 0) + cantidad)) return fallo("apuesta_invalida");
   const s = structuredClone(e);
   const previa = apuestaDe(s, jugadorId, caballo);
   if (previa) previa.cantidad += cantidad;

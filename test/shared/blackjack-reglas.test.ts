@@ -121,19 +121,20 @@ describe("pago", () => {
 
 describe("apuestaValida", () => {
   it("apuestaValida", () => {
-    for (const ok of [10, 250, 500]) expect(apuestaValida(ok)).toBe(true);
-    for (const mal of [0, -10, 9, 501, 50.5, "50", NaN, null]) expect(apuestaValida(mal)).toBe(false);
+    for (const ok of [10, 250, 500, 501, 12_345]) expect(apuestaValida(ok)).toBe(true);
+    for (const mal of [0, -10, 9, 50.5, "50", NaN, null]) expect(apuestaValida(mal)).toBe(false);
   });
 
   it("rechaza infinitos, undefined, booleanos y objetos", () => {
     for (const mal of [Infinity, -Infinity, undefined, true, {}, [], [50]]) expect(apuestaValida(mal)).toBe(false);
   });
 
-  it("acepta los límites inclusivos y un valor interior", () => {
+  it("acepta desde el mínimo sin tope (se puede apostar todo), pero solo enteros seguros", () => {
     expect(apuestaValida(BJ.MIN)).toBe(true);
-    expect(apuestaValida(BJ.MAX)).toBe(true);
     expect(apuestaValida(BJ.MIN - 1)).toBe(false);
-    expect(apuestaValida(BJ.MAX + 1)).toBe(false);
+    expect(apuestaValida(1_000_000)).toBe(true);
+    expect(apuestaValida(Number.MAX_SAFE_INTEGER)).toBe(true);
+    expect(apuestaValida(Number.MAX_SAFE_INTEGER + 1)).toBe(false);
   });
 });
 
@@ -147,7 +148,6 @@ describe("BJ", () => {
       BANCA_MS: 1_000,
       RESULTADO_MS: 4_000,
       MIN: 10,
-      MAX: 500,
       MAX_JUGADORES: 6,
     });
   });
