@@ -1,7 +1,8 @@
-import { useAnimate } from "motion/react";
-import { type CSSProperties, forwardRef, memo, type Ref, useLayoutEffect, useRef } from "react";
+import { AnimatePresence, motion, useAnimate } from "motion/react";
+import { type CSSProperties, forwardRef, memo, type Ref, type RefObject, useLayoutEffect, useRef } from "react";
 import type { Carta, Palo } from "../../../shared/cartas";
 import { CARRERA } from "../../../shared/juegos/carrera";
+import { CasillaApuesta } from "../../componentes/CasillaApuesta";
 import { Destellos } from "../../componentes/Destellos";
 import { Ficha } from "../../componentes/Ficha";
 import { Mazo } from "../../componentes/Mazo";
@@ -87,10 +88,16 @@ interface PistaProps {
   onElegir(palo: Palo): void;
   /** El ancho de los caballos, o `null` mientras no se ha medido la pista: sin medidas no se pintan (no deben deslizarse hasta su casilla). */
   caballoAncho: number | null;
+  /**
+   * Tus casillas de apuesta, mientras se apuesta (si no, `null`): una en cada carril donde has apostado y otra en el elegido,
+   * con lo que llevas preparado. `ref` es la del elegido, adonde vuelan las fichas.
+   */
+  casillas: { mias: Record<Palo, number>; preparada: number; todo: boolean; ref: RefObject<HTMLDivElement> } | null;
 }
 
 /** Los cuatro carriles con sus caballos, las líneas de cada casilla (se iluminan al girarse su tramo) y la meta a cuadros. */
-export const Pista = forwardRef<HTMLDivElement, PistaProps>(function Pista({ escena, elegido, eligible, onElegir, caballoAncho }, ref) {
+export const Pista = forwardRef<HTMLDivElement, PistaProps>(function Pista({ escena, elegido, eligible, onElegir, caballoAncho, casillas }, ref) {
+  const reducido = useMovimientoReducido();
   return (
     <div ref={ref} className="carrera-pista">
       <div className="carrera-pista__marco">
@@ -103,6 +110,19 @@ export const Pista = forwardRef<HTMLDivElement, PistaProps>(function Pista({ esc
               onClick={eligible ? () => onElegir(palo) : undefined}
             >
               {caballoAncho !== null && <Caballo palo={palo} casilla={escena.posiciones[palo]} ganador={escena.ganador} ancho={caballoAncho} />}
+              <AnimatePresence>
+                {casillas !== null && (casillas.mias[palo] > 0 || elegido === palo) && (
+                  <motion.div key="casilla" className="carrera-casilla" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={reducido ? { opacity: 0 } : { opacity: 0, transform: "scale(0.85)" }} transition={{ duration: 0.2 }}>
+                    <CasillaApuesta
+                      compacta
+                      ref={elegido === palo ? casillas.ref : undefined}
+                      apostado={casillas.mias[palo]}
+                      preparado={elegido === palo ? casillas.preparada : 0}
+                      todo={elegido === palo && casillas.todo}
+                    />
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
           ))}
         </div>

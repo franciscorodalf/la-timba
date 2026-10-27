@@ -1,4 +1,4 @@
-import { useState } from "react";
+import type { RefObject } from "react";
 import { type AccionBJ, BJ, type VistaBJ } from "../../../shared/juegos/blackjack";
 import { Boton } from "../../componentes/Boton";
 import { FichasApuesta } from "../../componentes/FichasApuesta";
@@ -11,23 +11,28 @@ import type { ManoVista } from "./piezas";
 /** La última apuesta hecha en esta pestaña: la siguiente ronda empieza con ella preparada. */
 let ultimaApuesta = 0;
 
+/** Lo que se prepara al empezar a apostar: la última apuesta de esta pestaña. */
+export const apuestaRecordada = (): number => ultimaApuesta;
+
 interface ApostarProps {
+  /** Lo preparado (lo lleva la pantalla: también se ve en tu casilla del tapete). */
+  cantidad: number;
   fichas: number;
   activo: boolean;
   esperando: boolean;
+  onCambiar(cantidad: number): void;
   onApostar(cantidad: number): void;
+  /** Tu casilla del tapete, adonde vuelan las fichas. */
+  destino: RefObject<HTMLElement | null>;
 }
 
-/** Las fichas de 10 a 500 para ir sumando la apuesta, «Borrar» y «Apostar N». No deja pasar de 500 ni de tus fichas. */
-export function Apostar({ fichas, activo, esperando, onApostar }: ApostarProps) {
-  const tope = Math.min(BJ.MAX, fichas);
-  const [montante, setMontante] = useState(() => (ultimaApuesta <= tope ? ultimaApuesta : 0));
-  const cantidad = montante <= tope ? montante : 0;
+/** Las fichas para ir sumando la apuesta (y «Todo»), «Borrar» y «Apostar N». No hay tope: solo tus fichas. */
+export function Apostar({ cantidad, fichas, activo, esperando, onCambiar, onApostar, destino }: ApostarProps) {
   return (
     <div className="panel-apuesta">
-      <FichasApuesta montante={cantidad} tope={tope} activo={activo} onCambiar={setMontante} />
+      <FichasApuesta montante={cantidad} tope={fichas} minimo={BJ.MIN} activo={activo} onCambiar={onCambiar} destino={destino} />
       <div className="panel-apuesta__fila">
-        <Boton variante="secundario" className="panel-apuesta__borrar" aria-label="Borrar apuesta" disabled={cantidad === 0} onClick={() => setMontante(0)}>
+        <Boton variante="secundario" className="panel-apuesta__borrar" aria-label="Borrar apuesta" disabled={cantidad === 0} onClick={() => onCambiar(0)}>
           Borrar
         </Boton>
         <Boton disabled={!activo || cantidad < BJ.MIN} cargando={esperando} onClick={() => {

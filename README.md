@@ -16,8 +16,8 @@ Una web para jugar a las cartas con amigos: **Blackjack** y una **carrera de cab
 1. **Entra** con un apodo y un PIN de 4 cifras. Si el apodo no existe, la web pregunta «¿Crear el perfil?» y, al aceptar, te da **1.000 fichas**.
 2. **Crea una partida** (te da un código de 4 caracteres, un QR y un enlace) o **únete** con el de un amigo.
 3. En la **sala** ves quién está conectado, qué hay en cada mesa y quién va ganando esta noche. Entra en la mesa que quieras y vuelve cuando quieras: la conexión con la sala se mantiene abierta mientras juegas (cada mesa abre además la suya). Ojo: salir de una mesa a propósito con una apuesta en juego la pierde.
-4. **Blackjack.** Seis barajas, hasta 6 jugadores. Apuestas durante 15 s (de 10 a 500 fichas), cada uno recibe dos cartas y decides en 15 s: *Pedir*, *Plantarse* o *Doblar*. La banca pide hasta 17 y se planta en cualquier 17 o más. Ganar paga 1:1, blackjack natural 3:2 y un empate devuelve la apuesta.
-5. **Carrera de caballos.** Los cuatro ases son los caballos. Apuesta durante 20 s a uno o a varios (de 10 a 500 por caballo, hasta 12 jugadores). Se levanta una carta cada 800 ms y avanza el caballo de su palo; cuando todos pasan un tramo de la pista se gira su carta y el caballo de ese palo retrocede. Gana el primero que llega a la meta y paga ×4 (apuesta incluida).
+4. **Blackjack.** Seis barajas, hasta 6 jugadores. Apuestas durante 15 s (desde 10 fichas y sin tope: con «Todo» te lo juegas todo), cada uno recibe dos cartas y decides en 15 s: *Pedir*, *Plantarse* o *Doblar*. La banca pide hasta 17 y se planta en cualquier 17 o más. Ganar paga 1:1, blackjack natural 3:2 y un empate devuelve la apuesta.
+5. **Carrera de caballos.** Los cuatro ases son los caballos. Apuesta durante 20 s a uno o a varios (desde 10 fichas, sin tope por caballo, hasta 12 jugadores). Se levanta una carta cada 800 ms y avanza el caballo de su palo; cuando todos pasan un tramo de la pista se gira su carta y el caballo de ese palo retrocede. Gana el primero que llega a la meta y paga ×4 (apuesta incluida).
 6. Si te quedas **sin fichas**, el perfil te ofrece un **rescate** de 200 (cuenta como una quiebra en tus estadísticas).
 
 ## Características
@@ -26,7 +26,7 @@ Una web para jugar a las cartas con amigos: **Blackjack** y una **carrera de cab
 - **Partidas con código, QR y enlace**; la sala se cierra sola tras 30 minutos sin nadie.
 - **Fichas globales**: cada jugador tiene su propio saldo, el mismo en todas las partidas y mesas.
 - **Ranking global** (fichas, ganancias, % de victorias, mayor premio, mejor racha y quiebras) y **ranking de cada noche**, además de un perfil con estadísticas por juego.
-- **Animaciones cuidadas** con Motion: reparto desde el mazo, cartas que se giran en 3D, caballos con estela, fichas que vuelan al contador. Los movimientos solo usan `transform` y `opacity` (las transiciones de color de botones y pestañas son aparte) y, con `prefers-reduced-motion`, pasan a fundidos.
+- **Animaciones cuidadas** con Motion: reparto desde el mazo, cartas que se giran en 3D, caballos con estela, fichas que vuelan de la bandeja a tu casilla del tapete (donde tu apuesta se apila y se ve en grande) y del premio al contador. Los movimientos solo usan `transform` y `opacity` (las transiciones de color de botones y pestañas son aparte) y, con `prefers-reduced-motion`, pasan a fundidos.
 - **Sonido sintetizado** (cartas, fichas, victoria) con silencio recordado, y vibración corta al ganar donde el navegador la permita.
 - **Hecha para el móvil**: botones de al menos 44 px, tu mano grande abajo, y en un móvil tumbado las mesas piden girarlo en vez de ofrecer un tapete que obligue a desplazarse. En el ordenador, la mesa completa con los asientos en semicírculo.
 - **Coste 0 €**: solo el plan gratuito de Cloudflare, sin tarjeta.

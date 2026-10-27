@@ -139,6 +139,46 @@ test.describe("mesa simulada", () => {
     await expect.poll(() => mesa.recibidas).toContainEqual({ t: "apostar", cantidad: 75 });
   });
 
+  test("lo que preparas se apila en tu casilla del tapete, en grande; «Todo» prepara todas tus fichas; al apostar queda apostada y al repartir se va", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    mesa.alConectar(estado(vista(sesion)));
+    await page.goto(`/p/${codigo}/blackjack`);
+    const casilla = page.locator(".bj-yo .casilla, .bj-asiento--yo .casilla");
+
+    await expect(contador(page)).toHaveText("Tienes 1.000 fichas");
+    await expect(casilla).toHaveAttribute("data-estado", "vacia");
+    await expect(casilla).toContainText("Tu apuesta");
+
+    await page.getByRole("button", { name: "Añadir 100", exact: true }).click();
+    await page.getByRole("button", { name: "Añadir 25", exact: true }).click();
+    await expect(casilla).toHaveAttribute("data-estado", "preparada");
+    await expect(casilla).toContainText("Preparada");
+    await expect(casilla).toContainText("125");
+    await expect(casilla.locator(".casilla__ficha")).toHaveCount(2);
+    // La cantidad se ve en grande: más que el texto normal de la mesa.
+    const alto = await casilla.locator(".casilla__cantidad").evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
+    expect(alto).toBeGreaterThanOrEqual(32);
+
+    // Sin tope: «Todo» prepara tus 1.000 y apaga el resto de fichas.
+    await page.getByRole("button", { name: "Todo", exact: true }).click();
+    await expect(casilla).toContainText("¡Todo!");
+    await expect(casilla).toContainText("1.000");
+    for (const valor of [10, 25, 50, 100, 500]) await expect(page.getByRole("button", { name: `Añadir ${valor}`, exact: true })).toBeDisabled();
+    await page.getByRole("button", { name: "Apostar 1.000" }).click();
+    await expect.poll(() => mesa.recibidas).toContainEqual({ t: "apostar", cantidad: 1000 });
+
+    // La mesa confirma: tu casilla pasa a apostada (aro dorado).
+    const mano = { jugadorId: sesion.jugador.id, apodo: sesion.jugador.apodo, apuesta: 1000, cartas: [], estado: "jugando" as const, doblada: false, total: 0 };
+    mesa.enviar(estado(vista(sesion, { manos: [mano] })));
+    await expect(casilla).toHaveAttribute("data-estado", "apostada");
+    await expect(casilla).toContainText("Apostada");
+
+    // Al repartir, la casilla deja su sitio a tus cartas; tu apuesta sigue junto a tu total.
+    mesa.enviar(estado(vista(sesion, { fase: "decisiones", manos: [{ ...mano, cartas: [carta("10H"), carta("9C")], total: 19 }] })));
+    await expect(casilla).toHaveCount(0);
+    await expect(page.locator(".bj-etiqueta .bj-apuesta").first()).toContainText("1.000");
+  });
+
   test("las fichas que no puedes pagar no se pueden pulsar", async ({ page, request }) => {
     const { sesion, codigo, mesa } = await entrarSimulada(page, request);
     await fichasDeApi(page, 60);

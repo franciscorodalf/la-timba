@@ -5,6 +5,7 @@ import type { JugadorId } from "../../shared/juegos/tipos";
 import { AvisoMesa } from "../componentes/AvisoMesa";
 import { BarraMesa } from "../componentes/BarraMesa";
 import { CartelPremio } from "../componentes/CartelPremio";
+import { CasillaApuesta } from "../componentes/CasillaApuesta";
 import { EstadoMesa } from "../componentes/EstadoMesa";
 import { GirarMovil } from "../componentes/GirarMovil";
 import { Ficha } from "../componentes/Ficha";
@@ -31,7 +32,7 @@ import { useMesa } from "../red/useMesa";
 import { useSalirDeMesa } from "../red/useSalirDeMesa";
 import { useSentado } from "../red/useSentado";
 import { MesaLlena } from "./MesaLlena";
-import { Apostar, Decidir, textoEstado } from "./blackjack/controles";
+import { Apostar, apuestaRecordada, Decidir, textoEstado } from "./blackjack/controles";
 import { claveCarta, totalVisible } from "./blackjack/guion";
 import { Apuesta, Leyenda, Mano, type ManoVista, SimboloMano, Total, tonoDe } from "./blackjack/piezas";
 import { aterrizada, girada, restante, useGuion } from "./blackjack/useGuion";
@@ -88,7 +89,10 @@ export function MesaBlackjack({ codigo }: { codigo: string }) {
   const mazo = useRef<HTMLDivElement>(null);
   const refFichas = useRef<HTMLParagraphElement>(null);
   const refApuesta = useRef<HTMLSpanElement>(null);
+  const refCasilla = useRef<HTMLDivElement>(null);
   const reloj = useGuion(lote, vista, mazo);
+  // Lo que llevas preparado para apostar: se ve a la vez en tu casilla del tapete y en el botón.
+  const [montante, setMontante] = useState(apuestaRecordada);
 
   const [resultados, setResultados] = useState<Resultados | null>(null);
   const { premio, celebrar } = usePremio();
@@ -106,6 +110,7 @@ export function MesaBlackjack({ codigo }: { codigo: string }) {
   const yo = vista?.yo ?? null;
   const miMano = vista?.manos.find((m) => m.jugadorId === yo);
   const fichas = jugador?.fichas ?? 0;
+  const preparada = montante <= fichas ? montante : 0;
 
   // Tu apuesta ya está en la mesa (o la has doblado): el contador baja contando. Una vez por apuesta confirmada.
   const miApuesta = miMano?.apuesta ?? null;
@@ -184,9 +189,12 @@ export function MesaBlackjack({ codigo }: { codigo: string }) {
   if (vista !== null && miMano === undefined && (fase === "apuestas" || fase === "esperando")) {
     controles = (
       <Apostar
+        cantidad={preparada}
         fichas={fichas}
         activo={conectado && sentado}
         esperando={esperando}
+        onCambiar={setMontante}
+        destino={refCasilla}
         onApostar={(cantidad) => {
           sonidos.reproducir("fichas");
           actuar({ t: "apostar", cantidad });
@@ -205,10 +213,28 @@ export function MesaBlackjack({ codigo }: { codigo: string }) {
       {miMano !== undefined && <Apuesta cantidad={miMano.apuesta} refPila={refApuesta} />}
     </div>
   );
+  // Mientras se apuesta, tu casilla ocupa en el tapete el sitio de tu mano: lo que preparas se apila ahí, en grande.
+  const conCasilla = vista !== null && (fase === "apuestas" || fase === "esperando");
   const miSitio = (
     <>
       {miEtiqueta}
-      <Mano cartas={miMano?.cartas ?? []} de={yo ?? 0} ronda={ronda} ancho={medidas.yo} reloj={reloj} etiqueta="Tu mano" />
+      <div className="bj-yo__juego">
+        <Mano cartas={miMano?.cartas ?? []} de={yo ?? 0} ronda={ronda} ancho={medidas.yo} reloj={reloj} etiqueta="Tu mano" />
+        <AnimatePresence>
+          {conCasilla && (
+            <motion.div
+              key="casilla"
+              className="bj-casilla"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={reducido ? { opacity: 0 } : { opacity: 0, transform: "scale(0.9)" }}
+              transition={{ duration: 0.22 }}
+            >
+              <CasillaApuesta ref={refCasilla} apostado={miMano?.apuesta ?? 0} preparado={miMano === undefined ? preparada : 0} todo={preparada > 0 && preparada === fichas} />
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
     </>
   );
 

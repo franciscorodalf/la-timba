@@ -23,6 +23,7 @@ import "./tema/marco-mesa.css";
 import "./tema/girar-movil.css";
 import "./tema/estado-mesa.css";
 import "./tema/fichas-apuesta.css";
+import "./tema/casilla-apuesta.css";
 import "./tema/fichas-volando.css";
 import "./tema/cartel-premio.css";
 import "./tema/aviso-mesa.css";

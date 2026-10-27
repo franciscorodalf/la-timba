@@ -23,12 +23,14 @@
   gap: 6px;
 }
 
+/* Seis fichas en una fila: encogen a la vez en un móvil estrecho, sin bajar de 44 px. */
 .ficha-apuesta {
   position: relative;
   display: grid;
   place-items: center;
-  width: 54px;
-  height: 54px;
+  flex: 0 1 54px;
+  min-width: 44px;
+  aspect-ratio: 1;
   padding: 0;
   border: 0;
   border-radius: 50%;
@@ -78,40 +80,12 @@
   opacity: 0.3;
 }
 
-.ficha-apuesta--10 .ficha__cuerpo {
-  fill: #2462b3;
-}
-
-.ficha-apuesta--10 .ficha__centro {
-  fill: #163f78;
-}
-
-.ficha-apuesta--25 .ficha__cuerpo {
-  fill: #18804f;
-}
-
-.ficha-apuesta--25 .ficha__centro {
-  fill: #0d5232;
-}
-
-.ficha-apuesta--50 .ficha__centro {
-  fill: #7a1020;
-}
-
-.ficha-apuesta--100 .ficha__cuerpo {
-  fill: #232326;
-}
-
-.ficha-apuesta--100 .ficha__centro {
-  fill: #0f0f11;
-}
-
-.ficha-apuesta--500 .ficha__cuerpo {
-  fill: #66308f;
-}
-
-.ficha-apuesta--500 .ficha__centro {
-  fill: #401a5c;
+/* «Todo»: la ficha dorada; su letrero es más largo que un número. */
+.ficha-apuesta--todo .ficha-apuesta__valor {
+  font-size: 0.625rem;
+  letter-spacing: 0.06em;
+  color: var(--tinta);
+  text-shadow: none;
 }
 
 /* Movimiento reducido: las fichas no se levantan ni se hunden. */

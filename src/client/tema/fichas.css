@@ -41,6 +41,56 @@
   fill: var(--reverso);
 }
 
+/* Los colores de las fichas de apostar, por valor (en la bandeja y en la casilla del tapete). */
+.ficha--v10 .ficha__cuerpo {
+  fill: #2462b3;
+}
+
+.ficha--v10 .ficha__centro {
+  fill: #163f78;
+}
+
+.ficha--v25 .ficha__cuerpo {
+  fill: #18804f;
+}
+
+.ficha--v25 .ficha__centro {
+  fill: #0d5232;
+}
+
+.ficha--v50 .ficha__centro {
+  fill: #7a1020;
+}
+
+.ficha--v100 .ficha__cuerpo {
+  fill: #232326;
+}
+
+.ficha--v100 .ficha__centro {
+  fill: #0f0f11;
+}
+
+.ficha--v500 .ficha__cuerpo {
+  fill: #66308f;
+}
+
+.ficha--v500 .ficha__centro {
+  fill: #401a5c;
+}
+
+.ficha--vtodo .ficha__cuerpo {
+  fill: #d4af37;
+}
+
+.ficha--vtodo .ficha__muescas,
+.ficha--vtodo .ficha__anillo {
+  stroke: #fff6d8;
+}
+
+.ficha--vtodo .ficha__centro {
+  fill: #e9c95c;
+}
+
 .contador {
   font-variant-numeric: tabular-nums lining-nums;
 }

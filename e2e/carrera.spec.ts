@@ -91,6 +91,9 @@ const ganadorDe = (pagina: Page, nombre: string): Locator => pagina.getByText(`�
 const premio = (pagina: Page): Locator => pagina.getByText(/^¡Ganas \+\d+!$/);
 const tramosDeLaPista = (pagina: Page): Locator => pagina.getByRole("group", { name: "Tramos de la pista" }).getByRole("img");
 const ficha = (pagina: Page, valor: number): Locator => pagina.getByRole("button", { name: `Añadir ${valor}`, exact: true });
+const todo = (pagina: Page): Locator => pagina.getByRole("button", { name: "Todo", exact: true });
+/** Tu casilla de apuesta en el carril de un caballo (la pila y la cantidad). */
+const casilla = (pagina: Page, palo: Palo): Locator => pagina.locator(`.carrera-carril--${palo} .casilla`);
 
 const fichasDe = fichasDeApi;
 
@@ -230,45 +233,54 @@ test.describe("mesa simulada", () => {
     await expect.poll(() => mesa.recibidas).toContainEqual({ t: "apostar", caballo: "S", cantidad: 75 });
   });
 
-  test("varias apuestas al mismo caballo se suman en lo tuyo; la mesa muestra lo de todos; el máximo por caballo apaga las fichas que lo pasarían", async ({ page, request }) => {
+  test("varias apuestas al mismo caballo se suman en lo tuyo y se ven en su carril; no hay tope por caballo: «Todo» prepara todas tus fichas", async ({ page, request }) => {
     const { sesion, codigo, mesa } = await entrar(page, request);
     mesa.alConectar(estado(vista(sesion, { misApuestas: [{ caballo: "H", cantidad: 450 }], totalesPorCaballo: pos(900, 100, 0, 0) })));
     await page.goto(`/p/${codigo}/carrera`);
 
+    await expect(contador(page)).toHaveText("Tienes 1.000 fichas");
     await expect(cabecera(page, "corazones")).toContainText("Tú 450");
     await expect(cabecera(page, "corazones")).toContainText("Mesa 900");
     await expect(cabecera(page, "diamantes")).toContainText("Mesa 100");
     await expect(cabecera(page, "tréboles")).not.toContainText("Tú");
+    // Lo tuyo también está en su carril, con el aro de lo ya apostado; en los demás no hay casilla.
+    await expect(casilla(page, "H")).toHaveAttribute("data-estado", "apostada");
+    await expect(casilla(page, "H")).toContainText("450");
+    await expect(casilla(page, "C")).toHaveCount(0);
 
-    // Corazones: 450 + 100 pasaría de 500; 50 justo llega.
+    // Corazones: ya hay 450 y se puede sumar sin tope.
     await cabecera(page, "corazones").click();
-    for (const valor of [10, 25, 50]) await expect(ficha(page, valor)).toBeEnabled();
-    for (const valor of [100, 500]) await expect(ficha(page, valor)).toBeDisabled();
-    await ficha(page, 25).click();
-    // Con 25 preparados ya solo caben 25 más: el 50 se apaga, el 25 y el 10 no.
-    await expect(ficha(page, 50)).toBeDisabled();
-    await expect(ficha(page, 25)).toBeEnabled();
-    await ficha(page, 25).click();
-    await expect(page.getByRole("button", { name: "Apostar 50 a corazones" })).toBeEnabled();
-    for (const valor of [10, 25, 50, 100, 500]) await expect(ficha(page, valor)).toBeDisabled();
+    for (const valor of [10, 25, 50, 100, 500]) await expect(ficha(page, valor)).toBeEnabled();
+    await ficha(page, 100).click();
+    await ficha(page, 100).click();
+    await expect(page.getByRole("button", { name: "Apostar 200 a corazones" })).toBeEnabled();
+    await expect(casilla(page, "H")).toHaveAttribute("data-estado", "preparada");
+    await expect(casilla(page, "H")).toContainText("650");
+    await expect(casilla(page, "H")).toContainText("+200 por apostar");
 
-    // Lo preparado se pasa al caballo que se elige; el tope es por caballo: en diamantes (sin apuesta tuya) cabe hasta 500.
+    // «Todo» prepara todas tus fichas: ya no cabe ninguna más.
+    await todo(page).click();
+    await expect(page.getByRole("button", { name: "Apostar 1.000 a corazones" })).toBeEnabled();
+    await expect(casilla(page, "H")).toContainText("¡Todo!");
+    await expect(casilla(page, "H")).toContainText("1.450");
+    for (const valor of [10, 25, 50, 100, 500]) await expect(ficha(page, valor)).toBeDisabled();
+    await expect(todo(page)).toBeDisabled();
+
+    // Lo preparado se pasa al caballo que se elige, con su casilla; «Borrar» la deja vacía.
     await cabecera(page, "diamantes").click();
-    await expect(page.getByRole("button", { name: "Apostar 50 a diamantes" })).toBeEnabled();
+    await expect(page.getByRole("button", { name: "Apostar 1.000 a diamantes" })).toBeEnabled();
+    await expect(casilla(page, "D")).toContainText("1.000");
+    await expect(casilla(page, "H")).toHaveAttribute("data-estado", "apostada");
     await page.getByRole("button", { name: "Borrar apuesta" }).click();
     await expect(page.getByRole("button", { name: "Elige tu apuesta" })).toBeDisabled();
-    for (const valor of [10, 25, 50, 100, 500]) await expect(ficha(page, valor)).toBeEnabled();
+    await expect(casilla(page, "D")).toHaveAttribute("data-estado", "vacia");
     await ficha(page, 500).click();
-    await expect(page.getByRole("button", { name: "Apostar 500 a diamantes" })).toBeEnabled();
-    await expect(ficha(page, 10)).toBeDisabled();
+    await page.getByRole("button", { name: "Apostar 500 a diamantes" }).click();
+    await expect.poll(() => mesa.recibidas).toContainEqual({ t: "apostar", caballo: "D", cantidad: 500 });
 
-    // Llegar a 500 en un caballo lo deja cerrado.
-    mesa.enviar(estado(vista(sesion, { misApuestas: [{ caballo: "H", cantidad: 500 }, { caballo: "D", cantidad: 500 }], totalesPorCaballo: pos(950, 600, 0, 0) })));
-    await expect(cabecera(page, "diamantes")).toContainText("Tú 500");
-    await expect(page.getByRole("button", { name: "Máximo en diamantes" })).toBeDisabled();
-    for (const valor of [10, 25, 50, 100, 500]) await expect(ficha(page, valor)).toBeDisabled();
-    await cabecera(page, "tréboles").click();
-    await expect(ficha(page, 500)).toBeEnabled();
+    // En cuanto corren, las casillas se van: el carril es de los caballos.
+    mesa.enviar(estado(vista(sesion, { fase: "carrera", finFase: null, misApuestas: [{ caballo: "H", cantidad: 450 }, { caballo: "D", cantidad: 500 }] })));
+    await expect(page.locator(".carrera-casilla")).toHaveCount(0);
   });
 
   test("las fichas que superan tus fichas no se pueden pulsar", async ({ page, request }) => {
@@ -284,6 +296,9 @@ test.describe("mesa simulada", () => {
     await ficha(page, 50).click();
     await expect(ficha(page, 25)).toBeDisabled();
     await expect(ficha(page, 10)).toBeEnabled();
+    // «Todo» son tus 60.
+    await todo(page).click();
+    await expect(page.getByRole("button", { name: "Apostar 60 a tréboles" })).toBeEnabled();
   });
 
   test("un doble toque en «Apostar» manda una sola apuesta, y una novedad de otro jugador no reactiva el botón", async ({ page, request }) => {

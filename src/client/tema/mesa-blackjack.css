@@ -158,6 +158,38 @@
   top: 0;
 }
 
+/* Tu apuesta durante la mano, junto a tu total: más grande y en oro, que se vea de un vistazo. */
+.bj-yo .bj-apuesta,
+.bj-asiento--yo .bj-apuesta {
+  gap: 9px;
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--oro-claro);
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.4);
+}
+
+.bj-yo .bj-apuesta__pila,
+.bj-asiento--yo .bj-apuesta__pila {
+  width: 26px;
+  height: 34px;
+}
+
+.bj-yo .bj-apuesta__pila .ficha,
+.bj-asiento--yo .bj-apuesta__pila .ficha {
+  width: 24px;
+  height: 24px;
+}
+
+.bj-yo .bj-apuesta__pila .ficha:nth-child(1),
+.bj-asiento--yo .bj-apuesta__pila .ficha:nth-child(1) {
+  top: 10px;
+}
+
+.bj-yo .bj-apuesta__pila .ficha:nth-child(2),
+.bj-asiento--yo .bj-apuesta__pila .ficha:nth-child(2) {
+  top: 5px;
+}
+
 /* ---------- El resto de jugadores (móvil) ---------- */
 
 .bj-otros {
@@ -277,6 +309,26 @@
   gap: 8px;
 }
 
+/* Tu mano y, mientras se apuesta, tu casilla encima, en el centro del tapete. */
+.bj-yo__juego {
+  position: relative;
+  display: grid;
+}
+
+.bj-casilla {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+
+/* Con la casilla puesta, el hueco de la carta no se dibuja: en ese sitio está tu apuesta. */
+.bj-yo__juego:has(.bj-casilla) .bj-mano::before {
+  opacity: 0;
+}
+
 /* ---------- Panel: estado, temporizador y botones ---------- */
 
 /* Reserva siempre el alto del panel más alto (el de apostar: 164 px) aunque la fase solo traiga una línea de estado: si el panel
@@ -348,7 +400,7 @@
 
 .bj--ordenador .bj-leyenda {
   width: 420px;
-  margin: 4px auto 0;
+  margin: -6px auto 0;
 }
 
 .bj-asientos {
@@ -395,6 +447,24 @@
   white-space: nowrap;
   color: var(--crema);
   letter-spacing: 0.06em;
+}
+
+/* Tu casilla en el ordenador: el aro centrado en tu sitio, entre la leyenda y tu nombre; la cantidad, a su derecha. */
+.bj--ordenador .bj-casilla {
+  place-items: end center;
+}
+
+.bj--ordenador .bj-casilla .casilla {
+  position: relative;
+  transform: scale(0.74);
+  transform-origin: 50% 100%;
+}
+
+.bj--ordenador .bj-casilla .casilla__texto {
+  position: absolute;
+  left: calc(100% + 14px);
+  top: 50%;
+  translate: 0 -50%;
 }
 
 .bj--ordenador .bj-panel {
