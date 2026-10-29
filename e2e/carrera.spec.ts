@@ -207,6 +207,84 @@ async function mirarGanador(pagina: Page, ms: number): Promise<void> {
 
 const fotos = (pagina: Page): Promise<Foto[]> => pagina.evaluate(() => (window as unknown as { __fotos: Foto[] }).__fotos);
 
+interface FotoCarta {
+  /** Lo recorrido por el caballo de corazones. */
+  d: number;
+  /** La carta del paso en ese fotograma, o `null` si no estaba en pantalla. */
+  carta: {
+    dato: string | null;
+    opacidad: number;
+    /** Su centro está dentro del rectángulo de la pista. */
+    dentro: boolean;
+    /** Cuánto se ha agrandado respecto a su tamaño en el centro (1). */
+    escala: number;
+    tapada: boolean;
+    /** Lo que le falta, en píxeles, para llegar al centro de la pila de descartes. */
+    aLaPila: number;
+  } | null;
+}
+
+/** Mira durante `ms`, fotograma a fotograma, el caballo de corazones y la carta del paso (dónde está, cuánto se ve y si va boca abajo). */
+async function mirarCarta(pagina: Page, ms: number): Promise<void> {
+  await pagina.evaluate((duracion) => {
+    const w = window as unknown as { __cartas: unknown[] };
+    w.__cartas = [];
+    const inicio = performance.now();
+    const caballo = document.querySelector<HTMLElement>('[data-caballo="H"]')!;
+    const pista = document.querySelector(".carrera-pista")!;
+    const pila = document.querySelector(".carrera-ultima")!;
+    const centro = (r: DOMRect) => ({ x: r.left + r.width / 2, y: r.top + r.height / 2 });
+    const paso = () => {
+      const m = new DOMMatrix(getComputedStyle(caballo).transform);
+      const el = document.querySelector<HTMLElement>(".carrera-carta-paso");
+      let carta: unknown = null;
+      if (el) {
+        const r = el.getBoundingClientRect();
+        const p = pista.getBoundingClientRect();
+        const c = centro(r);
+        const q = centro(pila.getBoundingClientRect());
+        const t = new DOMMatrix(getComputedStyle(el).transform);
+        carta = {
+          dato: el.dataset.carta ?? null,
+          opacidad: Number(getComputedStyle(el).opacity),
+          dentro: c.x >= p.left && c.x <= p.right && c.y >= p.top && c.y <= p.bottom,
+          escala: Math.hypot(t.a, t.b),
+          tapada: el.querySelector(".naipe")?.classList.contains("naipe--tapada") ?? false,
+          aLaPila: Math.hypot(c.x - q.x, c.y - q.y),
+        };
+      }
+      w.__cartas.push({ d: Math.hypot(m.m41, m.m42), carta });
+      if (performance.now() - inicio < duracion) requestAnimationFrame(paso);
+    };
+    requestAnimationFrame(paso);
+  }, ms);
+}
+
+const fotosDeCarta = (pagina: Page): Promise<FotoCarta[]> => pagina.evaluate(() => (window as unknown as { __cartas: FotoCarta[] }).__cartas);
+
+/**
+ * Vigila durante `ms` la carta del paso, fotograma a fotograma: en cuántos se la ve y cuántas animaciones de `transform` lleva en
+ * marcha (ella o lo que lleva dentro, como la vuelta de la carta). Los resultados quedan en `window.__cartaPaso`.
+ */
+async function vigilarCartaDelPaso(pagina: Page, ms: number): Promise<void> {
+  await pagina.evaluate((duracion) => {
+    const w = window as unknown as { __cartaPaso: { vista: number; transform: number } };
+    w.__cartaPaso = { vista: 0, transform: 0 };
+    const inicio = performance.now();
+    const paso = () => {
+      const el = document.querySelector(".carrera-carta-paso");
+      if (el) {
+        w.__cartaPaso.vista++;
+        for (const a of el.getAnimations({ subtree: true })) if (a.effect instanceof KeyframeEffect && a.effect.getKeyframes().some((k) => "transform" in k)) w.__cartaPaso.transform++;
+      }
+      if (performance.now() - inicio < duracion) requestAnimationFrame(paso);
+    };
+    requestAnimationFrame(paso);
+  }, ms);
+}
+
+const cartaPasoVigilada = (pagina: Page): Promise<{ vista: number; transform: number }> => pagina.evaluate(() => (window as unknown as { __cartaPaso: { vista: number; transform: number } }).__cartaPaso);
+
 const muestras = (pagina: Page): Promise<Muestra[]> => pagina.evaluate(() => (window as unknown as { __muestras: Muestra[] }).__muestras);
 
 test.describe("mesa simulada", () => {
@@ -465,6 +543,46 @@ test.describe("movimiento de la pista (mesa simulada)", () => {
     for (let i = 1; i < frames.length; i++) expect(frames[i] - frames[i - 1]).toBeLessThan(0.6 * casilla);
   });
 
+  test("la carta de cada paso sale del mazo boca abajo, se gira en el centro de la pista antes de que el caballo se mueva y baja a la pila de descartes", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrar(page, request);
+    const antes = vista(sesion, { fase: "carrera", misApuestas: [{ caballo: "H", cantidad: 50 }], finFase: Date.now() + 800 });
+    mesa.alConectar(estado(antes));
+    await page.goto(`/p/${codigo}/carrera`);
+    await expect(caballo(page, "H")).toHaveAttribute("data-casilla", "0");
+    await pistaQuieta(page);
+    await expect(page.locator(".carrera-carta-paso")).toHaveCount(0);
+
+    await mirarCarta(page, 1500);
+    mesa.enviar(estado({ ...antes, posiciones: pos(1, 0, 0, 0), ultimaCarta: c("4H") }, [{ tipo: "caballo_avanza", palo: "H", carta: c("4H") }]));
+    // Al final, la última carta de la pila de descartes es la del paso.
+    await expect(page.locator(".carrera-ultima__carta").last()).toHaveAttribute("data-carta", "4H");
+    await page.waitForTimeout(1300);
+    const lista = await fotosDeCarta(page);
+
+    // Hay fotogramas con la carta a la vista (opaca y con su centro dentro de la pista) ANTES de que el caballo se haya movido 1 px…
+    const iMovimiento = lista.findIndex((f) => f.d >= 1);
+    expect(iMovimiento).toBeGreaterThan(0);
+    const delPaso = lista.slice(0, iMovimiento).filter((f) => f.carta !== null && f.carta.opacidad > 0.5 && f.carta.dentro);
+    expect(delPaso.length).toBeGreaterThanOrEqual(2);
+    expect(new Set(delPaso.map((f) => f.carta!.dato))).toEqual(new Set(["4H"]));
+
+    // …sale del mazo pequeña y boca abajo, se agranda y, por el camino, se gira para enseñar la cara…
+    const conCarta = lista.filter((f) => f.carta !== null).map((f) => f.carta!);
+    const iTapada = conCarta.findIndex((x) => x.tapada);
+    const iCara = conCarta.findIndex((x) => !x.tapada);
+    expect(iTapada).toBe(0);
+    expect(iCara).toBeGreaterThan(iTapada);
+    expect(conCarta[0].escala).toBeLessThan(0.95);
+    expect(Math.max(...conCarta.map((x) => x.escala))).toBeCloseTo(1, 1);
+
+    // …y cuando el caballo echa a andar sigue a la vista un rato mientras baja a la pila: llega a su centro y deja el centro libre.
+    const despues = lista.slice(iMovimiento).filter((f) => f.carta !== null);
+    expect(despues.length).toBeGreaterThanOrEqual(3);
+    expect(Math.min(...despues.map((f) => f.carta!.aLaPila))).toBeLessThan(30);
+    expect(lista.at(-1)?.carta).toBeNull();
+    await expect(page.locator(".carrera-carta-paso")).toHaveCount(0);
+  });
+
   test("tras avanzar, el tramo se gira y, ya visto, el caballo retrocede: se ven el avance, el giro y la vuelta", async ({ page, request }) => {
     const { sesion, codigo, mesa } = await entrar(page, request);
     const antes = vista(sesion, { fase: "carrera", posiciones: pos(0, 1, 1, 1), misApuestas: [{ caballo: "H", cantidad: 50 }], finFase: Date.now() + 800 });
@@ -478,7 +596,7 @@ test.describe("movimiento de la pista (mesa simulada)", () => {
     await expect(page.locator(".carrera-linea:not(.carrera-linea--salida)")).toHaveCount(7);
     const casilla = await paso(page);
 
-    await mirar(page, 1500);
+    await mirar(page, 1800);
     // Sale un corazón: todos están ya en la casilla 1 o más, se gira el tramo 0 (un 5 de corazones) y el caballo de corazones vuelve a la 0.
     mesa.enviar(estado({ ...antes, posiciones: pos(0, 1, 1, 1), tramos: tramos("5H"), ultimaCarta: c("4H") }, [{ tipo: "caballo_avanza", palo: "H", carta: c("4H") }, { tipo: "tramo_girado", indice: 0, palo: "H" }]));
     await expect(page.getByRole("img", { name: "5 de corazones" })).toBeVisible();
@@ -668,7 +786,7 @@ test.describe("movimiento de la pista (mesa simulada)", () => {
     await expect(contador(page)).toHaveText("Tienes 1.200 fichas");
   });
 
-  test("con movimiento reducido los caballos saltan a su casilla y el giro del tramo solo se funde", async ({ page, request }) => {
+  test("con movimiento reducido los caballos saltan a su casilla y el giro del tramo y la carta del paso solo se funden", async ({ page, request }) => {
     await page.emulateMedia({ reducedMotion: "reduce" });
     const { sesion, codigo, mesa } = await entrar(page, request);
     await fichasDe(page, 950);
@@ -680,6 +798,7 @@ test.describe("movimiento de la pista (mesa simulada)", () => {
     const casilla = await paso(page);
 
     await mirar(page, 1200);
+    await vigilarCartaDelPaso(page, 1500);
     // Un paso con giro: sale una pica, se gira el tramo 0 (un 8 de picas) y el caballo de picas vuelve a la 0.
     mesa.enviar(estado({ ...antes, posiciones: pos(1, 1, 1, 0), tramos: tramos("8S"), ultimaCarta: c("3S") }, [{ tipo: "caballo_avanza", palo: "S", carta: c("3S") }, { tipo: "tramo_girado", indice: 0, palo: "S" }]));
     await expect(page.getByRole("img", { name: "8 de picas" })).toBeVisible();
@@ -690,6 +809,12 @@ test.describe("movimiento de la pista (mesa simulada)", () => {
     expect(await page.locator("[data-caballo]").evaluateAll((els) => els.flatMap((el) => el.getAnimations().map((a) => a.constructor.name)))).toEqual([]);
     // El tramo se destapa sin girar: la carta nunca está rotada en 3D.
     expect(await page.locator(".carrera-tramo .naipe__giro").first().evaluate((el) => getComputedStyle(el).transform)).toBe("none");
+    // La carta del paso sí se ha visto (con un fundido), pero sin vuelo ni vuelta: ningún fotograma con una animación de `transform` en marcha.
+    const cartaDelPaso = await cartaPasoVigilada(page);
+    expect(cartaDelPaso.vista).toBeGreaterThan(0);
+    expect(cartaDelPaso.transform).toBe(0);
+    await expect(page.locator(".carrera-carta-paso")).toHaveCount(0);
+    await expect(page.locator(".carrera-ultima__carta").last()).toHaveAttribute("data-carta", "3S");
     // Y no vuela nada hacia el contador al ganar.
     expect(await page.locator(".fichas-volando").count()).toBe(0);
   });
@@ -738,7 +863,7 @@ test.describe("movimiento de la pista (mesa simulada)", () => {
       estado({ ...antes, posiciones: pos(2, 2, 2, 2), tramos: tramos("9D"), ultimaCarta: c("3S") }, [{ tipo: "caballo_avanza", palo: "S", carta: c("3S") }, { tipo: "tramo_girado", indice: 0, palo: "D" }]),
     );
     await expect.poll(async () => (await osciladores()) - inicio).toBe(3);
-    // Sin ráfagas: una vez sonado el paso no suena nada más (el giro sale a los 250 ms; se mira otro tanto).
+    // Sin ráfagas: una vez sonado el paso no suena nada más (el giro sale a los 550 ms; se mira otro tanto).
     await expect(page.getByRole("img", { name: "9 de diamantes" })).toBeVisible();
     await expect.poll(async () => (await osciladores()) - inicio, { intervals: [300, 300] }).toBe(3);
 
@@ -806,7 +931,7 @@ test.describe("movimiento de la pista (mesa simulada)", () => {
     await pistaQuieta(page);
     const casilla = await paso(page);
 
-    await mirar(page, 1500);
+    await mirar(page, 1800);
     const despues = { ...antes, posiciones: pos(0, 1, 1, 1), tramos: tramos("5H"), ultimaCarta: c("4H") };
     mesa.enviar(estado(despues, [{ tipo: "caballo_avanza", palo: "H", carta: c("4H") }, { tipo: "tramo_girado", indice: 0, palo: "H" }]));
     // Cien milisegundos después, otro jugador se sienta: la mesa manda la foto de siempre, sin eventos.
@@ -842,7 +967,7 @@ test.describe("movimiento de la pista (mesa simulada)", () => {
     await pistaQuieta(page);
     const casilla = await paso(page);
 
-    await mirarGanador(page, 3000);
+    await mirarGanador(page, 3600);
     const final = { ...enMarcha, fase: "resultado" as const, finFase: Date.now() + 5_000, posiciones: pos(8, 3, 2, 4), ultimaCarta: c("9H"), ganador: "H" as const };
     mesa.enviar(
       estado(final, [
@@ -914,11 +1039,11 @@ test.describe("movimiento de la pista (mesa simulada)", () => {
 
     await mirarGanador(page, 4500);
     // Paso 1: sale un diamante (D 3→4), se gira el tramo 2 (un 7 de tréboles) y tréboles retrocede (3→2): su último fotograma, el
-    // retroceso, sale a los 480 ms de llegar.
+    // retroceso, sale a los 780 ms de llegar.
     const paso1 = { ...antes, posiciones: pos(7, 4, 2, 3), tramos: tramos("5H", "6D", "7C"), ultimaCarta: c("8D") };
     mesa.enviar(estado(paso1, [{ tipo: "caballo_avanza", palo: "D", carta: c("8D") }, { tipo: "tramo_girado", indice: 2, palo: "C" }]));
     // Paso 2, justo antes de ese último fotograma: gana H (7→8) y cobras.
-    await page.waitForTimeout(400);
+    await page.waitForTimeout(700);
     const final = { ...paso1, fase: "resultado" as const, finFase: Date.now() + 5_000, posiciones: pos(8, 4, 2, 3), ultimaCarta: c("JH"), ganador: "H" as const };
     mesa.enviar(
       estado(final, [

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ColaDeMarcos, type Reloj } from "../../src/client/pantallas/carrera/cola";
-import { aplicarMarco, type Escena, GANADOR_MS, GIRO_TRAMO_MS, type Marco, PAGOS_TRAS_GANADOR_MS, planDeLote, RETROCESO_MS } from "../../src/client/pantallas/carrera/escena";
+import { aplicarMarco, BAJADA_MS, type Escena, GANADOR_MS, GIRO_TRAMO_MS, type Marco, PAGOS_TRAS_GANADOR_MS, planDeLote, RETROCESO_MS, REVELADO_MS } from "../../src/client/pantallas/carrera/escena";
 import type { Carta, Palo } from "../../src/shared/cartas";
 import type { VistaCarrera } from "../../src/shared/juegos/carrera";
 
@@ -97,7 +97,7 @@ describe("ColaDeMarcos", () => {
     p.llega([], inicial);
     expect(p.escena().posiciones).toEqual(pos(7, 3, 3, 3));
 
-    // Paso 1: sale un diamante (D 3→4), se gira el tramo 2 (un 7 de tréboles) y tréboles retrocede (3→2): avance a 0, giro a 250, retroceso a 480.
+    // Paso 1: sale un diamante (D 3→4), se gira el tramo 2 (un 7 de tréboles) y tréboles retrocede (3→2): la carta a 0, el avance a 300, el giro a 550 y el retroceso a 780.
     const paso1 = vista({ posiciones: pos(7, 4, 2, 3), tramos: tramos("5H", "6D", "7C"), ultimaCarta: c("8D"), misApuestas: inicial.misApuestas });
     p.reloj.en(1000);
     p.llega([{ tipo: "caballo_avanza", palo: "D", carta: c("8D") }, { tipo: "tramo_girado", indice: 2, palo: "C" }], paso1);
@@ -145,15 +145,16 @@ describe("ColaDeMarcos", () => {
     expect(p.cola.restante()).toBe(0);
   });
 
-  it("los fotogramas salen a su hora y en orden: avance, giro, retroceso", () => {
+  it("los fotogramas salen a su hora y en orden: carta, avance, llegada de la carta a la pila, giro, retroceso", () => {
     const p = pantalla();
     p.llega([], vista({ posiciones: pos(0, 1, 1, 1) }));
     p.reloj.en(100);
     p.llega([{ tipo: "caballo_avanza", palo: "H", carta: c("4H") }, { tipo: "tramo_girado", indice: 0, palo: "H" }], vista({ posiciones: pos(0, 1, 1, 1), tramos: tramos("5H"), ultimaCarta: c("4H") }));
     p.reloj.avanzar(100 + RETROCESO_MS + 50);
     const horas = p.vistas.slice(1).map((v) => v.t - 100);
-    expect(horas).toEqual([0, GIRO_TRAMO_MS, RETROCESO_MS]);
-    expect(p.vistas.slice(1).map((v) => v.posiciones.H)).toEqual([1, 1, 0]);
+    expect(horas).toEqual([0, REVELADO_MS, REVELADO_MS + BAJADA_MS, GIRO_TRAMO_MS, RETROCESO_MS]);
+    // El caballo no se mueve hasta que la carta se ha visto; llega a su casilla, y el tramo se gira antes de que retroceda.
+    expect(p.vistas.slice(1).map((v) => v.posiciones.H)).toEqual([0, 1, 1, 1, 0]);
   });
 
   it("terminar() aplica lo que queda en orden y deja la cola vacía; cancelar() lo olvida", () => {
@@ -165,7 +166,8 @@ describe("ColaDeMarcos", () => {
     expect(p.cola.restante()).toBe(0);
     expect(p.escena().posiciones).toEqual(pos(0, 1, 1, 1));
     p.reloj.avanzar(5000);
-    expect(p.vistas.length).toBe(4);
+    // La vista de partida y los cinco fotogramas del paso (carta, avance, llegada a la pila, giro, retroceso).
+    expect(p.vistas.length).toBe(6);
 
     const q = pantalla();
     q.llega([], vista({ posiciones: pos(0, 1, 1, 1) }));

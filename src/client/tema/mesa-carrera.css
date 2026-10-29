@@ -1,9 +1,9 @@
-/* Mesa de la carrera (1 de 4): la rejilla de la mesa y la pista. En móvil, la pista vertical: cuatro carriles de abajo (salida)
+/* Mesa de la carrera (1 de 5): la rejilla de la mesa y la pista. En móvil, la pista vertical: cuatro carriles de abajo (salida)
    arriba (meta), la columna de los seis tramos a su lado y, debajo, las cabeceras donde se apuesta con el mazo en la esquina.
    Las medidas (paso, tamaño de caballos y tramos) las pone la pantalla en píxeles como variables: --paso, --cab-ancho,
    --cab-alto, --cab-largo, --salida, --meta, --tramo-ancho, --tramo-alto, --mazo-ancho y --franja. Todo lo que se mueve usa
-   solo `transform` y `opacity`. Las otras partes: mesa-carrera-caballos.css (caballos, tramos, mazo), mesa-carrera-apuestas.css
-   (cabeceras y panel) y mesa-carrera-ordenador.css (la vista de ordenador). */
+   solo `transform` y `opacity`. Las otras partes: mesa-carrera-caballos.css (caballos, tramos, mazo), mesa-carrera-carta.css (la
+   carta de cada paso), mesa-carrera-apuestas.css (cabeceras y panel) y mesa-carrera-ordenador.css (la vista de ordenador). */
 
 .carrera {
   --avance: 400ms;

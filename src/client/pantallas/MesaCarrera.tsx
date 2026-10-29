@@ -42,6 +42,7 @@ export function MesaCarrera({ codigo }: { codigo: string }) {
   const ordenador = useAnchoVentana() >= ORDENADOR_PX;
 
   const mazo = useRef<HTMLDivElement>(null);
+  const descarte = useRef<HTMLDivElement>(null);
   const pista = useRef<HTMLDivElement>(null);
   const refFichas = useRef<HTMLParagraphElement>(null);
   const refDesde = useRef<HTMLElement | null>(null);
@@ -167,11 +168,12 @@ export function MesaCarrera({ codigo }: { codigo: string }) {
           eligible={puedeElegir}
           onElegir={setElegido}
           caballoAncho={escena !== null && g !== null ? g.caballoAncho : null}
+          descarte={descarte}
           casillas={abiertas && vista !== null ? { mias, preparada, todo: preparada > 0 && preparada === fichas, ref: refCasilla } : null}
         />
         <Franja escena={e} tramos={vista?.tramos ?? SIN_TRAMOS} ancho={medidas.tramoAncho} />
         <Cabeceras elegido={elegido} activo={puedeElegir} ganador={e.ganador} mias={mias} mesa={vista?.totalesPorCaballo ?? SIN_CASILLAS} onElegir={setElegido} refs={cabeceras} />
-        <Esquina escena={e} mazoAncho={medidas.mazoAncho} mazo={mazo} barajando={barajando} />
+        <Esquina escena={e} mazoAncho={medidas.mazoAncho} mazo={mazo} descarte={descarte} barajando={barajando} />
       </div>
 
       <section className="carrera-panel" aria-label="Tu jugada">
