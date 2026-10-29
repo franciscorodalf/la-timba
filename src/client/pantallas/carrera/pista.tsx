@@ -95,9 +95,13 @@ interface PistaProps {
   casillas: { mias: Record<Palo, number>; preparada: number; todo: boolean; ref: RefObject<HTMLDivElement> } | null;
 }
 
-/** Los cuatro carriles con sus caballos, las líneas de cada casilla (se iluminan al girarse su tramo) y la meta a cuadros. */
+/**
+ * Los cuatro carriles con sus caballos, las líneas de cada casilla y la meta a cuadros. Hay una línea por casilla intermedia
+ * (de la 1 a la `META - 1`); las `TRAMOS` primeras se iluminan al girarse su tramo y la última es solo una línea, sin carta.
+ */
 export const Pista = forwardRef<HTMLDivElement, PistaProps>(function Pista({ escena, elegido, eligible, onElegir, caballoAncho, casillas }, ref) {
   const reducido = useMovimientoReducido();
+  const encendidas = Math.min(escena.girados, CARRERA.TRAMOS);
   return (
     <div ref={ref} className="carrera-pista">
       <div className="carrera-pista__marco">
@@ -128,8 +132,8 @@ export const Pista = forwardRef<HTMLDivElement, PistaProps>(function Pista({ esc
         </div>
         <div key={escena.epoca} className="carrera-lineas" aria-hidden="true">
           <span className="carrera-linea carrera-linea--salida" style={variable("--k", 0)} />
-          {Array.from({ length: CARRERA.TRAMOS }, (_, i) => (
-            <span key={i} className={`carrera-linea${i < escena.girados ? " carrera-linea--encendida" : ""}`} style={variable("--k", i + 1)} />
+          {Array.from({ length: CARRERA.META - 1 }, (_, i) => (
+            <span key={i} className={`carrera-linea${i < encendidas ? " carrera-linea--encendida" : ""}`} style={variable("--k", i + 1)} />
           ))}
           <span className="carrera-meta" />
         </div>
@@ -182,7 +186,7 @@ interface FranjaProps {
   ancho: number;
 }
 
-/** Los siete tramos, uno por casilla intermedia, alineados con su línea de la pista. Una pista nueva los coloca de uno en uno. */
+/** Los seis tramos, colgados de las líneas 1 a 6 de la pista (la 7 no tiene carta). Una pista nueva los coloca de uno en uno. */
 export function Franja({ escena, tramos, ancho }: FranjaProps) {
   return (
     <div className="carrera-franja" role="group" aria-label="Tramos de la pista">

@@ -18,7 +18,7 @@ function estado(parcial: Partial<EstadoCarrera> = {}): EstadoCarrera {
     finFase: null,
     mazo: [],
     descartes: [],
-    tramos: cs("2H 2D 2C 2S 3H 3D 3C"),
+    tramos: cs("2H 2D 2C 2S 3H 3D"),
     tramosGirados: 0,
     posiciones: POS0(),
     plan: [],
@@ -61,7 +61,7 @@ const enCarrera = (parcial: Partial<EstadoCarrera> = {}, rngSorteo = rng) =>
         finFase: T0,
         asientos: [asiento(1, "ana"), asiento(2, "beto")],
         apuestas: [ap(1, "H", 50), ap(2, "S", 50)],
-        tramos: cs("7D 9H 2C 4S 6D 8C KH"),
+        tramos: cs("7D 9H 2C 4S 6D 8C"),
         mazo: mazo("5H 3S 9D"),
         ...parcial,
       }),
@@ -69,10 +69,10 @@ const enCarrera = (parcial: Partial<EstadoCarrera> = {}, rngSorteo = rng) =>
       rngSorteo,
     ),
   ).estado;
-/** Las 41 cartas que no son tramos de `enCarrera`, barajadas con `semilla`: un mazo como el de una carrera de verdad. */
+/** Las 42 cartas que no son tramos de `enCarrera`, barajadas con `semilla`: un mazo como el de una carrera de verdad. */
 const mazoAlAzar = (semilla: number) =>
   barajar(
-    SIN_ASES.filter((carta) => !cs("7D 9H 2C 4S 6D 8C KH").some((tramo) => clave(tramo) === clave(carta))),
+    SIN_ASES.filter((carta) => !cs("7D 9H 2C 4S 6D 8C").some((tramo) => clave(tramo) === clave(carta))),
     rngFijo(semilla, 0.37, 0.73),
   );
 /** El instante del paso `n` (desde 1) de una carrera que sale en T0. */
@@ -97,7 +97,7 @@ describe("crear, sentar y apuestas", () => {
     expect(carrera.id).toBe("carrera");
     expect(carrera.maxJugadores).toBe(12);
     expect(CARRERA).toEqual({
-      TRAMOS: 7,
+      TRAMOS: 6,
       META: 8,
       PASO_MS: 800,
       APUESTAS_MS: 20_000,
@@ -108,7 +108,7 @@ describe("crear, sentar y apuestas", () => {
     });
   });
 
-  it("crear deja la mesa en espera con una pista nueva: 7 tramos y el resto de una baraja sin ases en el mazo", () => {
+  it("crear deja la mesa en espera con una pista nueva: 6 tramos y el resto de una baraja sin ases en el mazo", () => {
     const e = carrera.crear(T0, rngFijo(0.3));
     expect(e).toMatchObject({
       ronda: 1,
@@ -123,16 +123,23 @@ describe("crear, sentar y apuestas", () => {
       ganador: null,
       ventanasVacias: 0,
     });
-    expect(e.tramos).toHaveLength(7);
-    expect(e.mazo).toHaveLength(41);
+    expect(e.tramos).toHaveLength(6);
+    expect(e.mazo).toHaveLength(42);
     const todas = [...e.tramos, ...e.mazo];
     expect(todas.some((carta) => carta.valor === "A")).toBe(false);
     expect(new Set(todas.map(clave)).size).toBe(48);
     expect(todas).not.toEqual(SIN_ASES); // barajada
-    // determinista con el mismo rng, y los tramos son las 7 primeras cartas
+    // determinista con el mismo rng, y los tramos son las 6 primeras cartas
     const igual = carrera.crear(T0, rngFijo(0.3));
     expect(igual).toEqual(e);
     expect(todas).toEqual(barajar(SIN_ASES, rngFijo(0.3)));
+  });
+
+  it("hay 6 tramos, en las líneas 1 a 6: la línea 7 no tiene carta", () => {
+    expect(CARRERA.TRAMOS).toBe(6);
+    const e = carrera.crear(T0, rng);
+    expect(e.tramos).toHaveLength(6);
+    expect((carrera.vista(e, null, T0) as VistaCarrera).tramos).toHaveLength(6);
   });
 
   it("sentarse en mesa vacía abre apuestas 20 s", () => {
@@ -462,7 +469,7 @@ describe("la carrera", () => {
     ]);
     expect(primero.tramosGirados).toBe(1);
     expect(primero.posiciones).toEqual({ H: 1, D: 0, C: 1, S: 1 });
-    expect(e.tramos).toEqual(cs("7D 9H 2C 4S 6D 8C KH")); // los tramos no se tocan, solo se giran
+    expect(e.tramos).toEqual(cs("7D 9H 2C 4S 6D 8C")); // los tramos no se tocan, solo se giran
     expect(e.tramosGirados).toBe(0); // y la pista del estado sigue como al salir
   });
 
@@ -484,11 +491,23 @@ describe("la carrera", () => {
     expect(primero.posiciones).toEqual({ H: 2, D: 2, C: 3, S: 3 });
   });
 
-  it("nunca se giran más de 7 tramos", () => {
-    const [primero] = enCarrera({ tramosGirados: 7, posiciones: { H: 7, D: 7, C: 7, S: 6 }, mazo: mazo("2S") }).plan;
+  it("nunca se giran más de 6 tramos: con todos en la casilla 7 y los 6 girados no hay séptimo", () => {
+    const [primero] = enCarrera({ tramosGirados: 6, posiciones: { H: 7, D: 7, C: 7, S: 6 }, mazo: mazo("2S") }).plan;
     expect(primero.posiciones).toEqual({ H: 7, D: 7, C: 7, S: 7 });
-    expect(primero.tramosGirados).toBe(7);
+    expect(primero.tramosGirados).toBe(6);
     expect(primero.eventos.map((ev) => ev.tipo)).toEqual(["caballo_avanza"]);
+  });
+
+  it("con todos los caballos en la casilla 6 o más se gira el tramo 6 y no hay séptimo", () => {
+    // Con los cuatro primeros tramos ya girados, el 5 y el 6 se giran en el mismo paso; al volver C a la casilla 6 no queda más que girar.
+    const [primero] = enCarrera({ tramosGirados: 4, posiciones: { H: 7, D: 7, C: 7, S: 6 }, mazo: mazo("2S") }).plan;
+    expect(primero.eventos).toEqual([
+      { tipo: "caballo_avanza", palo: "S", carta: c("2S") },
+      { tipo: "tramo_girado", indice: 4, palo: "D" }, // tramos[4] = 6♦
+      { tipo: "tramo_girado", indice: 5, palo: "C" }, // tramos[5] = 8♣
+    ]);
+    expect(primero.tramosGirados).toBe(6);
+    expect(primero.posiciones).toEqual({ H: 7, D: 6, C: 6, S: 7 });
   });
 
   it("el primero en llegar a 8 gana: el tick de la meta da ganador, resultado y finFase de 5 s", () => {
@@ -637,12 +656,12 @@ describe("la carrera se ve con el reloj", () => {
     const e = enCarrera({ posiciones: { H: 1, D: 1, C: 1, S: 0 }, mazo: mazo("2S 3D 4C") });
     const salida = carrera.vista(e, 1, T0) as VistaCarrera;
     expect(salida).toMatchObject({ fase: "carrera", posiciones: { H: 1, D: 1, C: 1, S: 0 }, ultimaCarta: null, finFase: paso(1), ganador: null });
-    expect(salida.tramos).toEqual(Array(7).fill(null));
+    expect(salida.tramos).toEqual(Array(6).fill(null));
 
     for (const ahora of [paso(1), paso(1) + 500]) {
       const v = carrera.vista(e, 1, ahora) as VistaCarrera;
       expect(v).toMatchObject({ posiciones: { H: 1, D: 0, C: 1, S: 1 }, ultimaCarta: c("2S"), finFase: paso(2) });
-      expect(v.tramos).toEqual([c("7D"), null, null, null, null, null, null]);
+      expect(v.tramos).toEqual([c("7D"), null, null, null, null, null]);
     }
     expect(carrera.vista(e, 1, paso(2))).toMatchObject({ posiciones: { H: 1, D: 1, C: 1, S: 1 }, ultimaCarta: c("3D"), finFase: paso(3) });
   });
@@ -791,8 +810,8 @@ describe("salir y desconectar", () => {
       ganador: null,
       ventanasVacias: 0,
     });
-    expect(p.estado.tramos).toHaveLength(7);
-    expect(p.estado.mazo).toHaveLength(41);
+    expect(p.estado.tramos).toHaveLength(6);
+    expect(p.estado.mazo).toHaveLength(42);
     expect(carrera.proximaAlarma(p.estado)).toBeNull();
   });
 
@@ -908,7 +927,7 @@ describe("resultado y nueva ronda", () => {
     expect(p.estado.asientos).toEqual([asiento(1, "ana")]);
     expect(p.estado.tramos).toEqual(nueva.tramos);
     expect(p.estado.mazo).toEqual(nueva.mazo);
-    expect(p.estado.mazo).toHaveLength(41);
+    expect(p.estado.mazo).toHaveLength(42);
     expect(p.eventos).toEqual([]);
     expect(p.liquidacion).toBeUndefined();
   });
@@ -1017,7 +1036,7 @@ describe("vista", () => {
       finFase: T0 + CARRERA.RESULTADO_MS,
       ganador: "S",
       asientos: [asiento(1, "ana"), asiento(2, "beto")],
-      tramos: cs("7D 9H 2C 4S 6D 8C KH"),
+      tramos: cs("7D 9H 2C 4S 6D 8C"),
       mazo: mazo(""),
       tramosGirados: 2,
       posiciones: { H: 3, D: 3, C: 3, S: 8 },
@@ -1028,7 +1047,7 @@ describe("vista", () => {
   it("la vista no revela tramos no girados ni el mazo", () => {
     const e = conGirados();
     const v = carrera.vista(e, 1, T0) as VistaCarrera;
-    expect(v.tramos).toEqual([c("7D"), c("9H"), null, null, null, null, null]);
+    expect(v.tramos).toEqual([c("7D"), c("9H"), null, null, null, null]);
     expect(Object.keys(v).sort()).toEqual(
       ["ronda", "fase", "finFase", "posiciones", "tramos", "ultimaCarta", "misApuestas", "totalesPorCaballo", "sentados", "ganador"].sort(),
     );
@@ -1040,7 +1059,7 @@ describe("vista", () => {
 
   it("sin tramos girados todos van tapados", () => {
     const v = carrera.vista(enCarrera(), 1, T0) as VistaCarrera;
-    expect(v.tramos).toEqual(Array(7).fill(null));
+    expect(v.tramos).toEqual(Array(6).fill(null));
   });
 
   it("incluye fase, posiciones, sentados y ganador", () => {

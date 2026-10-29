@@ -6,7 +6,7 @@ import type { VistaCarrera } from "../../src/shared/juegos/carrera";
 
 const c = (texto: string): Carta => ({ palo: texto.at(-1) as Palo, valor: texto.slice(0, -1) as Carta["valor"] });
 const pos = (H: number, D: number, C: number, S: number): Record<Palo, number> => ({ H, D, C, S });
-const tramos = (...cartas: string[]): VistaCarrera["tramos"] => Array.from({ length: 7 }, (_, i) => (cartas[i] ? c(cartas[i]) : null));
+const tramos = (...cartas: string[]): VistaCarrera["tramos"] => Array.from({ length: 6 }, (_, i) => (cartas[i] ? c(cartas[i]) : null));
 
 /**
  * Un reloj de mentira que dispara los temporizadores como lo hace Chromium en el peor caso: un retraso con decimales se queda

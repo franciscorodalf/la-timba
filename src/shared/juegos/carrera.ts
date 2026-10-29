@@ -2,7 +2,7 @@ import { barajar, crearBaraja, type Carta, type Palo, type Rng } from "../cartas
 import type { CodigoError, Evento, FilaLiquidacion, Juego, JugadorId, Paso, ResumenMesa } from "./tipos";
 
 export const CARRERA = {
-  TRAMOS: 7,
+  TRAMOS: 6,
   META: 8,
   PASO_MS: 800,
   APUESTAS_MS: 20_000,
@@ -110,7 +110,7 @@ const asientoDe = (e: EstadoCarrera, jugadorId: JugadorId) => e.asientos.find((a
 const apuestaDe = (e: EstadoCarrera, jugadorId: JugadorId, caballo: Palo) =>
   e.apuestas.find((a) => a.jugadorId === jugadorId && a.caballo === caballo);
 
-/** Pista nueva: una baraja sin ases barajada; 7 cartas son los tramos y el resto es el mazo. Posiciones a 0. */
+/** Pista nueva: una baraja sin ases barajada; 6 cartas son los tramos y el resto es el mazo. Posiciones a 0. */
 function nuevaPista(e: EstadoCarrera, rng: Rng): void {
   const baraja = barajar(
     crearBaraja().filter((carta) => carta.valor !== "A"),

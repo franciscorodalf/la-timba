@@ -30,8 +30,8 @@ const hasta = <M = Estado>(conexion: Conexion, cumple: (m: M) => boolean, t = "e
 
 afterEach(cerrarAbiertas);
 
-/** Las siete cartas de la pista: ningún caballo se queda atrás de ellas en estas pruebas, así que no se gira ninguna. */
-const TRAMOS = "10C JC QC KC 10D JD QD";
+/** Las seis cartas de la pista: ningún caballo se queda atrás de ellas en estas pruebas, así que no se gira ninguna. */
+const TRAMOS = "10C JC QC KC 10D JD";
 /**
  * Mazo de una carrera de 11 pasos: H avanza ocho veces y gana en la última carta; S y D se quedan atrás y C no sale, así
  * que el caballo más rezagado nunca pasa del primer tramo.

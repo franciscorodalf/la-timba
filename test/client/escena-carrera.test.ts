@@ -15,8 +15,8 @@ import type { VistaCarrera } from "../../src/shared/juegos/carrera";
 const c = (texto: string): Carta => ({ palo: texto.at(-1) as Palo, valor: texto.slice(0, -1) as Carta["valor"] });
 const pos = (H: number, D: number, C: number, S: number): Record<Palo, number> => ({ H, D, C, S });
 
-/** Las siete cartas de los tramos, todas giradas (`n` = cuántas se ven). */
-const tramosDe = (n: number): VistaCarrera["tramos"] => Array.from({ length: 7 }, (_, i) => (i < n ? c("5H") : null));
+/** Las seis cartas de los tramos (`n` = cuántas se ven giradas). */
+const tramosDe = (n: number): VistaCarrera["tramos"] => Array.from({ length: 6 }, (_, i) => (i < n ? c("5H") : null));
 
 function vista(resto: Partial<VistaCarrera> = {}): VistaCarrera {
   return {
@@ -24,7 +24,7 @@ function vista(resto: Partial<VistaCarrera> = {}): VistaCarrera {
     fase: "carrera",
     finFase: 0,
     posiciones: pos(0, 0, 0, 0),
-    tramos: Array.from({ length: 7 }, () => null),
+    tramos: Array.from({ length: 6 }, () => null),
     ultimaCarta: null,
     misApuestas: [],
     totalesPorCaballo: pos(0, 0, 0, 0),
@@ -36,7 +36,7 @@ function vista(resto: Partial<VistaCarrera> = {}): VistaCarrera {
 
 describe("escenaDeVista", () => {
   it("la foto de una vista: casillas, tramos girados, última carta y ganador; sin pagos ni festejo", () => {
-    const e = escenaDeVista(vista({ posiciones: pos(3, 2, 4, 1), tramos: [c("5H"), c("KD"), null, null, null, null, null], ultimaCarta: c("2S"), ganador: null }));
+    const e = escenaDeVista(vista({ posiciones: pos(3, 2, 4, 1), tramos: [c("5H"), c("KD"), null, null, null, null], ultimaCarta: c("2S"), ganador: null }));
     expect(e).toMatchObject({ ronda: 4, posiciones: pos(3, 2, 4, 1), girados: 2, ganador: null, festejo: 0, festejoDe: null, reparto: true, pagos: null, epoca: 0, origen: null });
     expect(e.cartas).toEqual([{ id: e.n, carta: c("2S") }]);
   });
@@ -82,7 +82,7 @@ describe("planDeLote", () => {
   it("un paso con giro del mismo palo: avanza, después se gira el tramo y, ya visto, el caballo retrocede", () => {
     const previa = escenaDeVista(vista({ posiciones: pos(0, 1, 1, 1) }));
     // Sale un corazón: todos están en la casilla 1, se gira el tramo 0 (un corazón) y ese caballo vuelve a la 0.
-    const v = vista({ posiciones: pos(0, 1, 1, 1), tramos: [c("5H"), null, null, null, null, null, null], ultimaCarta: c("7H") });
+    const v = vista({ posiciones: pos(0, 1, 1, 1), tramos: [c("5H"), null, null, null, null, null], ultimaCarta: c("7H") });
     const plan = planDeLote(previa, [{ tipo: "caballo_avanza", palo: "H", carta: c("7H") }, { tipo: "tramo_girado", indice: 0, palo: "H" }], v);
     expect(plan.marcos.map((m) => m.en)).toEqual([0, GIRO_TRAMO_MS, RETROCESO_MS]);
     expect(GIRO_TRAMO_MS).toBeLessThan(RETROCESO_MS);
@@ -101,7 +101,7 @@ describe("planDeLote", () => {
 
   it("un giro de otro palo: el caballo que retrocede no es el que avanzó", () => {
     const previa = escenaDeVista(vista({ posiciones: pos(1, 1, 0, 1) }));
-    const v = vista({ posiciones: pos(0, 1, 1, 1), tramos: [c("5H"), null, null, null, null, null, null], ultimaCarta: c("4C") });
+    const v = vista({ posiciones: pos(0, 1, 1, 1), tramos: [c("5H"), null, null, null, null, null], ultimaCarta: c("4C") });
     const plan = planDeLote(previa, [{ tipo: "caballo_avanza", palo: "C", carta: c("4C") }, { tipo: "tramo_girado", indice: 0, palo: "H" }], v);
     let e = previa;
     for (const m of plan.marcos) e = aplicarMarco(e, m);

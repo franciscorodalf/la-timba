@@ -293,7 +293,7 @@ test.describe("botones de al menos 44 px en el móvil", () => {
       fase: "apuestas",
       finFase: Date.now() + 20_000,
       posiciones: { H: 0, D: 0, C: 0, S: 0 },
-      tramos: Array(7).fill(null),
+      tramos: Array(6).fill(null),
       ultimaCarta: null,
       misApuestas: [],
       totalesPorCaballo: { H: 0, D: 0, C: 0, S: 0 },

@@ -65,7 +65,7 @@ test("una carrera de verdad: apuesta 50 a corazones, los caballos avanzan, sale 
 
 type Casillas = Record<Palo, number>;
 const pos = (H: number, D: number, C: number, S: number): Casillas => ({ H, D, C, S });
-const tramos = (...cartas: string[]): VistaCarrera["tramos"] => Array.from({ length: 7 }, (_, i) => (cartas[i] ? c(cartas[i]) : null));
+const tramos = (...cartas: string[]): VistaCarrera["tramos"] => Array.from({ length: 6 }, (_, i) => (cartas[i] ? c(cartas[i]) : null));
 const estado = mensajeEstado<VistaCarrera>;
 const entrar = (page: Page, request: Parameters<typeof registrar>[0]) => entrarSimulada<VistaCarrera>(page, request, "mesa-carrera");
 
@@ -425,7 +425,7 @@ test.describe("mesa simulada", () => {
   test("con la carrera ya liquidada, salir no pregunta: no hay nada que perder", async ({ page, request }) => {
     const { sesion, codigo, mesa } = await entrar(page, request);
     mesa.alConectar(
-      estado(vista(sesion, { fase: "resultado", finFase: Date.now() + 4_000, posiciones: pos(8, 3, 2, 4), ganador: "H", misApuestas: [{ caballo: "D", cantidad: 50 }], tramos: tramos("5H", "6D", "7C", "8S", "9H", "4D", "3C") })),
+      estado(vista(sesion, { fase: "resultado", finFase: Date.now() + 4_000, posiciones: pos(8, 3, 2, 4), ganador: "H", misApuestas: [{ caballo: "D", cantidad: 50 }], tramos: tramos("5H", "6D", "7C", "8S", "9H", "4D") })),
     );
     await page.goto(`/p/${codigo}/carrera`);
     await expect(ganadorDe(page, "corazones")).toBeVisible();
@@ -472,8 +472,10 @@ test.describe("movimiento de la pista (mesa simulada)", () => {
     await page.goto(`/p/${codigo}/carrera`);
     await expect(caballo(page, "H")).toHaveAttribute("data-casilla", "0");
     await pistaQuieta(page);
-    await expect(tramosDeLaPista(page)).toHaveCount(7);
-    await expect(page.getByRole("group", { name: "Tramos de la pista" }).getByRole("img", { name: "Carta boca abajo" })).toHaveCount(7);
+    // Seis tramos, colgados de las líneas 1 a 6; la línea 7 es solo una línea de casilla, sin carta.
+    await expect(tramosDeLaPista(page)).toHaveCount(6);
+    await expect(page.getByRole("group", { name: "Tramos de la pista" }).getByRole("img", { name: "Carta boca abajo" })).toHaveCount(6);
+    await expect(page.locator(".carrera-linea:not(.carrera-linea--salida)")).toHaveCount(7);
     const casilla = await paso(page);
 
     await mirar(page, 1500);
@@ -623,7 +625,7 @@ test.describe("movimiento de la pista (mesa simulada)", () => {
 
   test("la carrera siguiente recoge la pista: los caballos vuelven a la salida, los tramos se tapan y el aviso del ganador se va", async ({ page, request }) => {
     const { sesion, codigo, mesa } = await entrar(page, request);
-    const final = vista(sesion, { fase: "resultado", finFase: Date.now() + 3_000, posiciones: pos(8, 3, 2, 4), ganador: "H", ultimaCarta: c("9H"), tramos: tramos("5H", "6D", "7C", "8S", "9H", "4D", "3C") });
+    const final = vista(sesion, { fase: "resultado", finFase: Date.now() + 3_000, posiciones: pos(8, 3, 2, 4), ganador: "H", ultimaCarta: c("9H"), tramos: tramos("5H", "6D", "7C", "8S", "9H", "4D") });
     mesa.alConectar(estado(final));
     await page.goto(`/p/${codigo}/carrera`);
     await expect(ganadorDe(page, "corazones")).toBeVisible();
@@ -633,7 +635,7 @@ test.describe("movimiento de la pista (mesa simulada)", () => {
     mesa.enviar(estado(vista(sesion, { ronda: 2 })));
     await expect(page.getByText("Elige un caballo y apuesta")).toBeVisible();
     await expect(ganadorDe(page, "corazones")).toHaveCount(0);
-    await expect(page.getByRole("group", { name: "Tramos de la pista" }).getByRole("img", { name: "Carta boca abajo" })).toHaveCount(7);
+    await expect(page.getByRole("group", { name: "Tramos de la pista" }).getByRole("img", { name: "Carta boca abajo" })).toHaveCount(6);
     for (const palo of ["H", "D", "C", "S"]) await expect(caballo(page, palo)).toHaveAttribute("data-casilla", "0");
     await expect(page.locator(".carrera-linea--encendida")).toHaveCount(0);
     await expect(page.locator('[data-caballo="D"]')).not.toHaveClass(/carrera-caballo--atenuado/);
@@ -781,12 +783,12 @@ test.describe("movimiento de la pista (mesa simulada)", () => {
 
     // Se cae la conexión y la carrera (la de la ronda 2) acaba mientras tanto: al volver, la mesa manda la foto del resultado, sin eventos.
     mesa.alConectar(
-      estado(vista(sesion, { ronda: 2, fase: "resultado", finFase: Date.now() + 4_000, posiciones: pos(3, 8, 2, 4), ganador: "D", ultimaCarta: c("JD"), tramos: tramos("5H", "6D", "7C", "8S", "9H", "4D", "3C") })),
+      estado(vista(sesion, { ronda: 2, fase: "resultado", finFase: Date.now() + 4_000, posiciones: pos(3, 8, 2, 4), ganador: "D", ultimaCarta: c("JD"), tramos: tramos("5H", "6D", "7C", "8S", "9H", "4D") })),
     );
     await mesa.cerrar(1001);
     await expect(ganadorDe(page, "diamantes")).toBeVisible({ timeout: 15_000 });
     await expect(caballo(page, "D")).toHaveAttribute("data-casilla", "8");
-    await expect(page.getByRole("img", { name: "3 de tréboles" })).toBeVisible();
+    await expect(page.getByRole("img", { name: "4 de diamantes" })).toBeVisible();
     // Esperar a que se asiente por si algo arranca un poco después del cambio.
     await page.waitForTimeout(800);
     const repeticiones = await repeticionesVistas(page);
