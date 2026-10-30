@@ -61,9 +61,9 @@ npm run deploy                   # build + wrangler deploy (lo hace el usuario)
 - **`Mesa` (`mesa-base.ts`):** la clase genérica de las mesas. `MesaBlackjack` y `MesaCarrera` solo le dan su `juego`. Se encarga de:
   - una cola por mesa y aplicar `tick` antes de cada acción;
   - el **cobro en dos fases**: guarda la intención (`cobroId`), llama a `Jugadores.apostar(…, rondaId, cobroId)` y confirma en la misma escritura que la jugada; los cobros a medias se anulan con `anular`;
-  - las liquidaciones idempotentes por `rondaId` (`${codigo}:${juego}:${ronda}`), que quedan pendientes y se reintentan si falla; una con `visibleEn` se guarda ya, pero se paga cuando se ve;
+  - las liquidaciones idempotentes por `rondaId` (`${codigo}:${juego}:${ronda}`), que quedan pendientes y se reintentan si falla; una con `visibleEn` se guarda ya, pero se paga cuando se ve (o ya, si el juego no tiene más avisos por delante);
   - lo que trae el reloj sin decisiones de nadie, desde memoria y sin escribir: los avisos (`proximoAviso`/`eventosEntre`) y los `tick` marcados `anunciado`, que guarda la siguiente escritura. La memoria puede ir por delante del almacenamiento, pero solo con lo que se puede rehacer igual;
-  - las alarmas, el límite de mensajes, los avisos a la sala y las tramas de error.
+  - las alarmas, el límite de mensajes, la pausa tras un `sin_fichas` (`PAUSA_SIN_FICHAS_MS`: las jugadas con coste de ese jugador se rechazan sin escribir ni preguntar), los avisos a la sala y las tramas de error.
 
 ### Reglas de los juegos (`src/shared/juegos/`)
 
