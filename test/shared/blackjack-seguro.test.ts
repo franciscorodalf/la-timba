@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { blackjack, BJ, opcionesDe, type AccionBJ, type EstadoBJ, type FaseBJ, type VistaBJ } from "../../src/shared/juegos/blackjack";
+import { blackjack, BJ, esperaDeLaMirada, opcionesDe, type AccionBJ, type EstadoBJ, type FaseBJ, type VistaBJ } from "../../src/shared/juegos/blackjack";
 import type { Paso } from "../../src/shared/juegos/tipos";
 import { c, cs } from "../ayudas";
 import { alVerseLaBanca, asiento, error, estado, exito, faseVista, mano, rng, T0, zapato } from "./ayudas-blackjack";
@@ -80,7 +80,33 @@ describe("la banca mira su carta", () => {
         { jugadorId: 2, apuesta: 50, pago: 50 },
       ],
     });
-    expect(p.estado).toMatchObject({ fase: "resultado", finFase: REPARTO + BJ.RESULTADO_MS, bancaMirada: true, seguros: [] });
+    expect(p.estado).toMatchObject({ fase: "resultado", finFase: REPARTO + esperaDeLaMirada(2) + BJ.RESULTADO_MS, bancaMirada: true, seguros: [] });
+  });
+
+  it("con blackjack de la banca tras un 10 visible, el resultado dura lo que la pantalla tarda en enseñar el reparto y la mirada: con siete manos, también el giro y el premio", () => {
+    // seis jugadores, uno con dos casillas: siete manos, 16 cartas; la pantalla las reparte de 260 en 260 ms
+    const asientos = [1, 2, 3, 4, 5, 6].map((id) => asiento(id, `j${id}`));
+    const manos = [1, 2, 3, 4, 5, 6, 1].map((id, casilla) => mano(id, `j${id}`, { casilla, indice: id === 1 && casilla === 6 ? 1 : 0 }));
+    const p = reparte(apuestas(asientos, manos, "2C 3C 4C 5C 6C 7C 8C KD 9H 9H 9H 9H 9H 9H 9H AC"));
+    expect(p.estado.manos).toHaveLength(7);
+    expect(p.eventos.filter((ev) => ev.tipo === "carta_repartida")).toHaveLength(16);
+    expect(p.eventos.at(-1)).toMatchObject({ tipo: "pago" });
+    expect(p.eventos.some((ev) => ev.tipo === "banca_mira")).toBe(true);
+
+    // La última carta sale a los 15 × 260 ms y llega 480 ms después: ahí mira la banca (700 ms), luego gira (550 ms) y 250 ms más tarde sale el premio.
+    const mira = 15 * BJ.ESCALONADO_MS + BJ.VUELO_MS;
+    const premio = mira + BJ.MIRA_MS + 550 + 250;
+    expect(esperaDeLaMirada(7)).toBe(mira + BJ.MIRA_MS);
+    expect(p.estado.finFase).toBe(REPARTO + esperaDeLaMirada(7) + BJ.RESULTADO_MS);
+    // El premio se ve con el resultado aún en pantalla, y con holgura (como en cualquier ronda).
+    expect(p.estado.finFase! - (REPARTO + premio)).toBeGreaterThanOrEqual(BJ.RESULTADO_MS - 1_000);
+    // El resultado ya es el de verdad desde el reparto (lo que ve cada cual lo cuenta la pantalla) y la ronda siguiente llega al acabar la ventana.
+    expect(faseVista(p.estado, REPARTO)).toMatchObject({ fase: "resultado" });
+    expect(faseVista(p.estado, p.estado.finFase! - 1)).toMatchObject({ fase: "resultado" });
+    expect(faseVista(p.estado, p.estado.finFase!)).toMatchObject({ fase: "apuestas" });
+    expect(blackjack.proximoAviso!(p.estado, REPARTO)).toBe(p.estado.finFase);
+    // Sin reparto (la mirada tras el seguro) solo cuenta la mirada.
+    expect(esperaDeLaMirada(0, false)).toBe(BJ.MIRA_MS);
   });
 
   it("con blackjack de la banca ninguna mano sigue «jugando» en el resultado: pierden plantadas, y el blackjack se queda como tal", () => {
@@ -227,7 +253,7 @@ describe("la banca mira con seguros", () => {
         { jugadorId: 3, apuesta: 20, pago: 0 },
       ],
     });
-    expect(final.estado).toMatchObject({ fase: "resultado", finFase: REPARTO + 3_000 + BJ.RESULTADO_MS, bancaMirada: true });
+    expect(final.estado).toMatchObject({ fase: "resultado", finFase: REPARTO + 3_000 + esperaDeLaMirada(0, false) + BJ.RESULTADO_MS, bancaMirada: true });
     expect(final.estado.manos.map((m) => m.estado)).toEqual(["plantado", "blackjack", "plantado"]);
 
     // pasado el resultado, la ronda siguiente empieza limpia
@@ -281,7 +307,7 @@ describe("la banca mira con seguros", () => {
       { jugadorId: 3, apuesta: 20, pago: 0 },
     ]);
     expect(vence.estado.seguros.map((s) => [s.jugadorId, s.cantidad, s.respondido])).toEqual([[1, 50, true], [2, 0, true], [3, 0, true]]);
-    expect(vence.estado).toMatchObject({ fase: "resultado", finFase: T0 + BJ.SEGURO_MS + BJ.RESULTADO_MS });
+    expect(vence.estado).toMatchObject({ fase: "resultado", finFase: T0 + BJ.SEGURO_MS + esperaDeLaMirada(0, false) + BJ.RESULTADO_MS });
   });
 
   it("sin blackjack empiezan las decisiones, con las manos de quien se desconectó en el seguro ya plantadas", () => {

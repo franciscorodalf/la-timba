@@ -1,4 +1,4 @@
-import { type RefObject, useEffect, useState } from "react";
+import { type RefObject, useEffect, useRef, useState } from "react";
 import type { VistaBJ } from "../../../shared/juegos/blackjack";
 import type { Evento } from "../../../shared/juegos/tipos";
 import { sonidos } from "../../efectos/sonidos";
@@ -9,6 +9,8 @@ export const hayCartas = (lote: Evento[]): boolean => lote.some((e) => e.tipo ==
 
 export interface Reloj {
   lote: Evento[];
+  /** La ronda a la que pertenece el guion en curso: pasada esa ronda, lo que le queda (texto, giro, sonidos) ya no se enseña ni suena. */
+  ronda: number;
   /** Los tiempos van en milisegundos desde `inicio`. */
   guion: Guion;
   /** `performance.now()` cuando empezó el guion en curso. */
@@ -35,7 +37,7 @@ export const claveNaipe = (reloj: Reloj, clave: string): string => `${clave}~${r
  * Un lote sin cartas (alguien apuesta, otro se sienta) no toca el guion. Cada carta suena al salir del mazo.
  */
 export function useGuion(lote: Evento[], vista: VistaBJ | null, mazo: RefObject<HTMLElement | null>): Reloj {
-  const [reloj, setReloj] = useState<Reloj>({ lote, guion: GUION_VACIO, inicio: 0, desde: 0, hito: Infinity, origen: null, generaciones: new Map() });
+  const [reloj, setReloj] = useState<Reloj>({ lote, ronda: vista?.ronda ?? 0, guion: GUION_VACIO, inicio: 0, desde: 0, hito: Infinity, origen: null, generaciones: new Map() });
   let actual = reloj;
   if (lote !== reloj.lote) {
     if (vista !== null && hayCartas(lote)) {
@@ -44,17 +46,21 @@ export function useGuion(lote: Evento[], vista: VistaBJ | null, mazo: RefObject<
       const origen = mazo.current?.getBoundingClientRect() ?? null;
       const transcurrido = ahora - reloj.inicio;
       const generaciones = sumarGeneraciones(reloj.generaciones, nuevo);
+      // Un guion de una ronda anterior no retiene las cartas de esta: se empieza de cero.
       actual =
-        reloj.guion !== GUION_VACIO && transcurrido < reloj.guion.fin
-          ? { lote, guion: encolarGuion(reloj.guion, transcurrido, nuevo), inicio: reloj.inicio, desde: transcurrido, hito: reloj.hito, origen, generaciones }
-          : { lote, guion: nuevo, inicio: ahora, desde: 0, hito: 0, origen, generaciones };
+        reloj.guion !== GUION_VACIO && reloj.ronda === vista.ronda && transcurrido < reloj.guion.fin
+          ? { lote, ronda: vista.ronda, guion: encolarGuion(reloj.guion, transcurrido, nuevo), inicio: reloj.inicio, desde: transcurrido, hito: reloj.hito, origen, generaciones }
+          : { lote, ronda: vista.ronda, guion: nuevo, inicio: ahora, desde: 0, hito: 0, origen, generaciones };
     } else {
       actual = { ...reloj, lote };
     }
     setReloj(actual);
   }
 
-  const { guion, inicio, desde } = actual;
+  // La ronda que se ve ahora: los sonidos de un guion que ya no es de esta ronda no suenan.
+  const rondaVista = useRef(vista?.ronda);
+  rondaVista.current = vista?.ronda;
+  const { guion, inicio, desde, ronda: rondaDelGuion } = actual;
   useEffect(() => {
     if (guion === GUION_VACIO) return;
     // Al cambiar el guion se cancelan los relojes del anterior: aquí se vuelven a poner los que aún no han llegado.
@@ -78,9 +84,11 @@ export function useGuion(lote: Evento[], vista: VistaBJ | null, mazo: RefObject<
     if (guion.giro !== null) salidas.push(guion.giro);
     // Al levantar la tapada también suena una carta.
     if (guion.mira !== null) salidas.push(guion.mira);
-    for (const t of salidas) if (t >= desde) relojes.push(setTimeout(() => sonidos.reproducir("carta"), Math.max(0, t - pasado)));
+    for (const t of salidas) {
+      if (t >= desde) relojes.push(setTimeout(() => rondaVista.current === rondaDelGuion && sonidos.reproducir("carta"), Math.max(0, t - pasado)));
+    }
     return () => relojes.forEach(clearTimeout);
-  }, [guion, inicio, desde]);
+  }, [guion, inicio, desde, rondaDelGuion]);
 
   return actual;
 }

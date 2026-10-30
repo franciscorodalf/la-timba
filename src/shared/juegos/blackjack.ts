@@ -18,7 +18,23 @@ export const BJ = {
   SEGURO_MS: 10_000,
   /** Lo que se alarga la ventana de decisiones con cada división. */
   DIVIDIR_EXTRA_MS: 10_000,
+  // El ritmo con el que la pantalla enseña el reparto y la mirada de la banca. Viven aquí, y no solo en el cliente, porque el
+  // servidor retrasa la jugada de la banca lo que la pantalla tarda en enseñar lo anterior (`esperaDeLaMirada`): así no se desajustan.
+  /** Entre una carta repartida y la siguiente. */
+  ESCALONADO_MS: 260,
+  /** Lo que tarda una carta en volar del mazo a su sitio. */
+  VUELO_MS: 480,
+  /** Lo que dura la mirada de la banca a su carta tapada (sube un poco y baja); con blackjack, el giro viene después. */
+  MIRA_MS: 700,
 } as const;
+
+/**
+ * Lo que tarda la pantalla en enseñar el reparto de `manos` manos (2·(manos + 1) cartas, la última a (2·manos + 1)·`ESCALONADO_MS`)
+ * y la mirada de la banca que empieza cuando esa carta ha llegado: hasta entonces la banca no gira su carta. Sin reparto
+ * (la mirada tras el seguro), `manos` es 0 y solo cuenta la mirada.
+ */
+export const esperaDeLaMirada = (manos: number, conReparto = true): number =>
+  (conReparto ? (2 * manos + 1) * BJ.ESCALONADO_MS + BJ.VUELO_MS : 0) + BJ.MIRA_MS;
 
 function valorCarta(c: Carta): number {
   if (c.valor === "A") return 1;
@@ -152,6 +168,12 @@ export interface EstadoBJ {
   seguros: SeguroBJ[];
   /** La banca ya ha mirado su carta tapada en esta ronda (solo mira con un as o un 10 visibles, y una sola vez). */
   bancaMirada: boolean;
+  /**
+   * Con blackjack de la banca al mirar, lo que ha jugado se ve en el mismo instante en que se decide la ronda (aquí, ese instante),
+   * pero el resultado dura lo que la pantalla tarda en enseñar el reparto y la mirada, más `BJ.RESULTADO_MS`. Sin él, la banca
+   * enseña su jugada `BJ.RESULTADO_MS` antes de `finFase`.
+   */
+  revelaEn?: number;
   /** Ventanas de apuestas seguidas que se cerraron sin ninguna apuesta; al llegar a 3 la mesa pasa a `esperando`. */
   ventanasVacias: number;
 }
@@ -291,13 +313,20 @@ function cerrarRonda(e: EstadoBJ, ahora: number, rng: Rng, eventos: Evento[]): L
 
 /**
  * La banca mira su carta tapada (solo con un as o un 10 visibles, y una sola vez). Con blackjack la gira y la ronda acaba
- * ya (devuelve la liquidación); sin él, los seguros se pierden y siguen las decisiones.
+ * ya (devuelve la liquidación), pero la pantalla necesita `espera` ms para enseñar lo anterior (el reparto, si lo hay, y la mirada) antes de girarla y
+ * enseñar el premio: el resultado dura esa espera más `BJ.RESULTADO_MS`, no solo desde el reparto; sin él, los seguros se pierden y siguen las decisiones.
  */
-function bancaMira(e: EstadoBJ, ahora: number, rng: Rng, eventos: Evento[]): Liquidacion | undefined {
+function bancaMira(e: EstadoBJ, ahora: number, rng: Rng, eventos: Evento[], espera: number): Liquidacion | undefined {
   const blackjack = esBlackjack(e.banca);
   e.bancaMirada = true;
   eventos.push({ tipo: "banca_mira", blackjack });
-  if (blackjack) return jugarBanca(e, ahora, rng, eventos, 0);
+  if (blackjack) {
+    const liquidacion = jugarBanca(e, ahora, rng, eventos, 0);
+    // Lo que pasa se ve ya (sin cambiar nada de lo anterior), pero el resultado se queda en pantalla `espera` más.
+    e.revelaEn = ahora;
+    e.finFase = ahora + espera + BJ.RESULTADO_MS;
+    return liquidacion;
+  }
   return abrirDecisiones(e, ahora, rng, eventos);
 }
 
@@ -310,7 +339,7 @@ function contestarNo(e: EstadoBJ, jugadorId: JugadorId): void {
 /** Si estamos en `seguro` y ya nadie queda por contestar, la banca mira sin esperar al reloj. */
 function resolverSeguroSiListo(e: EstadoBJ, ahora: number, rng: Rng, eventos: Evento[]): Liquidacion | undefined {
   if (e.fase !== "seguro" || e.seguros.some((s) => !s.respondido)) return undefined;
-  return bancaMira(e, ahora, rng, eventos);
+  return bancaMira(e, ahora, rng, eventos, esperaDeLaMirada(0, false));
 }
 
 /** Abre la fase `seguro` con una entrada por jugador con manos en juego. Quien ya está desconectado cuenta como «no». */
@@ -342,7 +371,7 @@ function repartir(e: EstadoBJ, ahora: number, rng: Rng, eventos: Evento[]): Liqu
     }
     for (const m of activas) if (esBlackjack(m.cartas)) m.estado = "blackjack";
     if (e.banca[0].valor === "A") return abrirSeguro(e, ahora, rng, eventos);
-    if (valorCarta(e.banca[0]) === 10) return bancaMira(e, ahora, rng, eventos);
+    if (valorCarta(e.banca[0]) === 10) return bancaMira(e, ahora, rng, eventos, esperaDeLaMirada(activas.length));
   }
   return abrirDecisiones(e, ahora, rng, eventos);
 }
@@ -370,7 +399,7 @@ function jugarBanca(e: EstadoBJ, ahora: number, rng: Rng, eventos: Evento[], esp
 }
 
 /** El instante en que se ve lo que ha jugado la banca, en un `resultado` que acaba en `fin`: hasta entonces, se ve la banca. */
-const revelacion = (fin: number): number => fin - BJ.RESULTADO_MS;
+const revelacion = (e: EstadoBJ): number => e.revelaEn ?? e.finFase! - BJ.RESULTADO_MS;
 
 /** Lo que se ve cuando la banca enseña su jugada: la carta girada, las que ha pedido y los pagos (con los del seguro). */
 function eventosDeLaBanca(e: EstadoBJ): Evento[] {
@@ -424,6 +453,7 @@ function rondaSiguiente(e: EstadoBJ, inicio: number): EstadoBJ {
     manos: [],
     seguros: [],
     bancaMirada: false,
+    revelaEn: undefined,
     banca: [],
     ventanasVacias: 0,
     asientos,
@@ -447,7 +477,7 @@ function nuevaRonda(e: EstadoBJ, inicio: number, rng: Rng, eventos: Evento[]): v
  */
 function aLaVista(e: EstadoBJ, ahora: number): EstadoBJ {
   if (e.fase !== "resultado" || e.finFase === null) return e;
-  const revela = revelacion(e.finFase);
+  const revela = revelacion(e);
   if (ahora < revela) return { ...e, fase: "banca", finFase: revela, banca: e.banca.slice(0, 2) };
   if (ahora >= e.finFase) return rondaSiguiente(e, e.finFase);
   return e;
@@ -632,7 +662,7 @@ function tick(e: EstadoBJ, ahora: number, rng: Rng): Paso<EstadoBJ> {
     case "seguro": {
       // Quien no ha contestado cuenta como «no».
       for (const x of s.seguros) x.respondido = true;
-      const liquidacion = bancaMira(s, ahora, rng, eventos);
+      const liquidacion = bancaMira(s, ahora, rng, eventos, esperaDeLaMirada(0, false));
       return exito(s, eventos, liquidacion);
     }
     case "apuestas":
@@ -824,14 +854,14 @@ export const blackjack: Juego<EstadoBJ, AccionBJ> = {
   /** En `resultado`, la banca enseña su jugada (`revelacion`) y, al acabar, empieza la ronda siguiente. */
   proximoAviso(e, desde) {
     if (e.fase !== "resultado" || e.finFase === null) return null;
-    return [revelacion(e.finFase), e.finFase].find((instante) => instante > desde) ?? null;
+    return [revelacion(e), e.finFase].find((instante) => instante > desde) ?? null;
   },
 
   eventosEntre(e, desde, hasta) {
     if (e.fase !== "resultado" || e.finFase === null) return [];
     const dentro = (instante: number) => desde < instante && instante <= hasta;
     const eventos: Evento[] = [];
-    if (dentro(revelacion(e.finFase))) eventos.push(...eventosDeLaBanca(e));
+    if (dentro(revelacion(e))) eventos.push(...eventosDeLaBanca(e));
     // La ronda siguiente rebaraja con menos de `BJ.MIN_ZAPATO` cartas (lo hará `nuevaRonda` al aplicarla).
     if (dentro(e.finFase) && e.zapato.length < BJ.MIN_ZAPATO) eventos.push({ tipo: "barajado" });
     return eventos;

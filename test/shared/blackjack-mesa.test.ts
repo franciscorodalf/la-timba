@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { crearBaraja } from "../../src/shared/cartas";
-import { blackjack, BJ, type AccionBJ, type EstadoBJ, type VistaBJ } from "../../src/shared/juegos/blackjack";
+import { blackjack, BJ, esperaDeLaMirada, type AccionBJ, type EstadoBJ, type VistaBJ } from "../../src/shared/juegos/blackjack";
 import type { Paso } from "../../src/shared/juegos/tipos";
 import { c, cs, rngFijo } from "../ayudas";
 import { alVerseLaBanca, asiento, error, estado, exito, faseVista, mano, RELLENO, rng, T0, zapato } from "./ayudas-blackjack";
@@ -759,10 +759,14 @@ describe("la banca y la ronda siguiente las trae el reloj", () => {
     const p = exito(blackjack.tick(e, T0, rng));
     expect(p.liquidacion).toEqual({ ronda: 1, filas: [{ jugadorId: 1, apuesta: 50, pago: 0 }] });
     expect(p.eventos.slice(-3)).toEqual([{ tipo: "banca_mira", blackjack: true }, { tipo: "carta_girada", carta: c("AD") }, { tipo: "pago", jugadorId: 1, neto: -50 }]);
-    expect(p.estado).toMatchObject({ fase: "resultado", finFase: T0 + BJ.RESULTADO_MS });
+    // el resultado dura lo que la pantalla tarda en enseñar el reparto (una mano) y la mirada, más lo de siempre
+    const fin = T0 + esperaDeLaMirada(1) + BJ.RESULTADO_MS;
+    expect(p.estado).toMatchObject({ fase: "resultado", finFase: fin });
     expect(blackjack.vista(p.estado, 1, T0)).toMatchObject({ fase: "resultado", banca: cs("KC AD") });
     // lo que ya trajo el paso no se repite: desde su instante solo queda la ronda siguiente
-    expect(blackjack.proximoAviso!(p.estado, T0)).toBe(T0 + BJ.RESULTADO_MS);
+    expect(blackjack.proximoAviso!(p.estado, T0)).toBe(fin);
+    expect(blackjack.vista(p.estado, 1, fin - 1)).toMatchObject({ fase: "resultado" });
+    expect(blackjack.vista(p.estado, 1, fin)).toMatchObject({ fase: "apuestas" });
   });
 });
 

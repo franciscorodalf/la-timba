@@ -153,6 +153,9 @@ describe("BJ", () => {
       MAX_MANOS_JUGADOR: 4,
       SEGURO_MS: 10_000,
       DIVIDIR_EXTRA_MS: 10_000,
+      ESCALONADO_MS: 260,
+      VUELO_MS: 480,
+      MIRA_MS: 700,
     });
   });
 });

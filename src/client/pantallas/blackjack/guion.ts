@@ -1,20 +1,20 @@
 import type { Carta } from "../../../shared/cartas";
-import { puntuacion, type VistaBJ } from "../../../shared/juegos/blackjack";
+import { BJ, puntuacion, type VistaBJ } from "../../../shared/juegos/blackjack";
 import type { Evento, JugadorId } from "../../../shared/juegos/tipos";
 
 // El «guion» de un lote de eventos: en qué momento sale cada carta, para que se repartan una detrás de otra como en una
 // mesa de verdad aunque el servidor mande todas a la vez. Los tiempos son milisegundos desde que llegó el lote.
 
-/** Entre una carta y la siguiente. */
-export const ESCALONADO_MS = 260;
+/** Entre una carta y la siguiente. Los tiempos del reparto y de la mirada son los de `BJ`: el servidor retrasa la jugada de la banca lo que la pantalla tarda en enseñarlos. */
+export const ESCALONADO_MS = BJ.ESCALONADO_MS;
 /** Lo que tarda una carta en volar del mazo a su sitio. */
-export const VUELO_MS = 480;
+export const VUELO_MS = BJ.VUELO_MS;
 /** Lo que tarda en girarse la carta tapada. */
 export const GIRO_MS = 550;
 /** Respiro tras girar la tapada antes de que la banca pida. */
 const PAUSA_GIRO_MS = 150;
 /** Lo que dura la mirada de la banca a su carta tapada: la tapada sube un poco y vuelve a bajar. Con blackjack, el giro viene después. */
-export const MIRA_MS = 700;
+export const MIRA_MS = BJ.MIRA_MS;
 /** Lo que tarda en deslizarse la segunda carta de una mano que se divide hasta su sitio en la mano nueva. */
 export const DESLIZE_MS = 340;
 /** Lo que se espera, desde que empieza ese deslizamiento, para que salgan del mazo las cartas nuevas: ya ha dejado libre su hueco. */

@@ -1447,7 +1447,7 @@ test.describe("mesa simulada", () => {
 
     await page.getByRole("button", { name: "Volver a la sala" }).click();
     const dialogo = page.getByRole("dialog", { name: "¿Salir de la mesa?" });
-    await expect(dialogo).toBeVisible();
+    await expect(dialogo.getByText("Si sales ahora pierdes tu apuesta")).toBeVisible();
     await dialogo.getByRole("button", { name: "Seguir jugando" }).click();
     await expect(page).toHaveURL(`/p/${codigo}/blackjack`);
     expect(mesa.recibidas).not.toContainEqual({ t: "salir" });
@@ -1456,6 +1456,7 @@ test.describe("mesa simulada", () => {
     mesa.enviar(estado(enSeguro(sesion, manos, null, { miSeguro: 50 })));
     await expect(page.getByText("Esperando a los demás…")).toBeVisible();
     await page.getByRole("button", { name: "Volver a la sala" }).click();
+    await expect(dialogo.getByText("Si sales ahora pierdes tus apuestas y el seguro")).toBeVisible();
     await dialogo.getByRole("button", { name: "Salir" }).click();
     await expect(page).toHaveURL(`/p/${codigo}`);
     await expect.poll(() => mesa.recibidas.filter((m) => (m as { t: string }).t === "salir").length).toBe(1);
@@ -1485,5 +1486,79 @@ test.describe("mesa simulada", () => {
       expect(fotogramas.filter((f) => Math.abs(f.y! - fotogramas[0].y!) > 0.01), "la tapada no se mueve").toEqual([]);
       expect(await page.locator(".bj-banca .naipe").evaluateAll((cartasBanca) => cartasBanca.map((x) => getComputedStyle(x).transform))).toEqual(["none", "none"]);
     });
+  });
+
+  // ---- Un guion de una ronda anterior no pisa a la ronda nueva ----
+
+  test("si llega la ronda siguiente con la mirada y el giro a medias, manda «Haz tu apuesta» y no suena el giro de la ronda anterior", async ({ page, request }) => {
+    // Cada fuente de sonido (oscilador o ruido) que arranca se cuenta; el audio se despierta con un toque en la página.
+    await page.addInitScript(() => {
+      const w = window as unknown as { __sonidos: number; __audio: AudioContext | null };
+      w.__sonidos = 0;
+      w.__audio = null;
+      const crear = AudioContext.prototype.createDynamicsCompressor;
+      AudioContext.prototype.createDynamicsCompressor = function (...args) {
+        w.__audio = this;
+        return crear.apply(this, args);
+      };
+      const arrancar = AudioScheduledSourceNode.prototype.start;
+      AudioScheduledSourceNode.prototype.start = function (...args) {
+        w.__sonidos++;
+        return arrancar.apply(this, args);
+      };
+    });
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    await fichasDeApi(page, 850);
+    const yo = sesion.jugador;
+    const cartas = [c("10S"), c("6D")];
+    mesa.alConectar(estado(enSeguro(sesion, [mano(yo, 0, cartas, { apuesta: 100 })], null, { miSeguro: 50 })));
+    await page.goto(`/p/${codigo}/blackjack`);
+    await expect(tuMano(page)).toHaveCount(2);
+    await page.locator("body").click({ position: { x: 5, y: 5 } });
+    await expect.poll(() => page.evaluate(() => (window as unknown as { __audio: AudioContext | null }).__audio?.state ?? "sin audio"), { timeout: 15_000 }).toBe("running");
+    const sonidos = () => page.evaluate(() => (window as unknown as { __sonidos: number }).__sonidos);
+
+    // La banca tiene blackjack: mira (0,7 s) y gira (0,55 s después). La ronda siguiente llega cuando aún está mirando.
+    await vigilarBanca(page);
+    mesa.enviar(
+      estado(
+        vista(sesion, { ronda: 1, fase: "resultado", finFase: Date.now() + 4_000, banca: [c("AS"), c("KD")], totalBanca: 21, manos: [mano(yo, 0, cartas, { apuesta: 100, estado: "plantado" })], miSeguro: 50 }),
+        [{ tipo: "banca_mira", blackjack: true }, { tipo: "carta_girada", carta: c("KD") }, { tipo: "pago", jugadorId: yo.id, neto: 0 }],
+      ),
+    );
+    await expect(page.getByText("La banca mira su carta…")).toBeVisible();
+    const antes = await sonidos();
+    mesa.enviar(estado(vista(sesion, { ronda: 2 })));
+    await expect(page.getByText("Haz tu apuesta")).toBeVisible();
+    // Ni el giro (que tocaba a los 700 ms) ni la mirada vuelven a decir nada, ni suena nada más.
+    await page.waitForTimeout(1_500);
+    await expect(page.getByText("Haz tu apuesta")).toBeVisible();
+    const fotogramas = await fotogramasBanca(page);
+    const primeroDeLaRondaNueva = fotogramas.findIndex((f, i) => i > 0 && fotogramas[i - 1].mira && !f.mira);
+    expect(primeroDeLaRondaNueva, "la mirada acabó al llegar la ronda nueva").toBeGreaterThan(0);
+    expect(fotogramas.slice(primeroDeLaRondaNueva).filter((f) => f.mira)).toEqual([]);
+    expect(await sonidos(), "no suena el giro de la ronda anterior").toBe(antes);
+  });
+
+  test("sin_fichas al responder «Sí, seguro»: sale el aviso y los botones dejan de esperar", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    await fichasDeApi(page, 900);
+    const yo = sesion.jugador;
+    mesa.alConectar(estado(enSeguro(sesion, [mano(yo, 0, [c("10S"), c("6D")], { apuesta: 100 })], 50)));
+    await page.goto(`/p/${codigo}/blackjack`);
+    await expect(botonDe(page, "Sí, seguro (50)")).toBeEnabled();
+
+    await botonDe(page, "Sí, seguro (50)").click();
+    await expect.poll(() => mesa.recibidas).toContainEqual({ t: "seguro", tomar: true });
+    await expect(botonDe(page, "No")).toBeDisabled();
+
+    // La mesa no lo cobra (las fichas del servidor no llegan): aviso y se puede volver a contestar.
+    mesa.enviar({ t: "error", codigo: "sin_fichas" });
+    await expect(page.getByText("No tienes fichas suficientes")).toBeVisible();
+    await expect(botonDe(page, "No")).toBeEnabled();
+    await expect(botonDe(page, "Sí, seguro (50)")).toBeEnabled();
+    await expect(preguntaSeguro(page, 50)).toBeVisible();
+    await botonDe(page, "No").click();
+    await expect.poll(() => mesa.recibidas.filter((m) => (m as { t: string }).t === "seguro")).toEqual([{ t: "seguro", tomar: true }, { t: "seguro", tomar: false }]);
   });
 });

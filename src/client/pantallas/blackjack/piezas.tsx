@@ -6,7 +6,7 @@ import { Ficha } from "../../componentes/Ficha";
 import { Naipe } from "../../componentes/Naipe";
 import { useMovimientoReducido } from "../../efectos/movimiento";
 import { miles } from "../../formato";
-import { claveCarta } from "./guion";
+import { claveCarta, MIRA_MS } from "./guion";
 import type { ManoVista } from "./manos";
 import { claveNaipe, type Reloj } from "./useGuion";
 
@@ -54,7 +54,7 @@ export function Mano({ cartas, de, ronda, ancho, reloj, etiqueta, mano = 0, sola
             const salida = reloj.guion.cartas.get(clave);
             // Solo cuenta para las cartas que aparecen ahora (las del último lote): esperan lo que le falta a su salida.
             const retardo = salida === undefined ? undefined : Math.max(0, salida - reloj.desde);
-            return <Naipe key={claveNaipe(reloj, clave)} clave={clave} carta={carta} ancho={ancho} retardo={retardo} origen={salida === undefined ? null : reloj.origen} espiando={espiando && i === 1 && carta === null} />;
+            return <Naipe key={claveNaipe(reloj, clave)} clave={clave} carta={carta} ancho={ancho} retardo={retardo} origen={salida === undefined ? null : reloj.origen} espiando={espiando && i === 1 && carta === null} espiadaMs={MIRA_MS} />;
           })}
         </CapaMano>
       </AnimatePresence>

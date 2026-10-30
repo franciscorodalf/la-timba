@@ -234,7 +234,7 @@ export function MesaBlackjack({ codigo }: { codigo: string }) {
 
   // Al cerrarse las decisiones la ronda ya está decidida: durante la banca (y el resultado) salir no cambia lo que cobras.
   const apuestaEnJuego = miMano !== undefined && vista?.fase !== "banca" && vista?.fase !== "resultado";
-  const salida = useSalirDeMesa({ codigo, enviar, apuestaEnJuego });
+  const salida = useSalirDeMesa({ codigo, enviar, apuestaEnJuego, perdidas: miSeguro === null ? "tu apuesta" : "tus apuestas y el seguro" });
 
   const ahora = useAhoraServidor(vista !== null && vista.finFase !== null && vista.fase !== "banca");
 
@@ -252,8 +252,10 @@ export function MesaBlackjack({ codigo }: { codigo: string }) {
       : undefined;
 
   // La banca gira su tapada cuando le toca en el guion (con blackjack, después de mirarla), no al llegar la vista que ya la trae.
-  const cartasBanca = (vista?.banca ?? []).map((carta, i) => (i === 1 && !giroIniciado(reloj) ? null : carta));
-  const miraLaBanca = mirando(reloj);
+  // Lo que le quede a un guion de una ronda anterior (la mirada, el giro) no cuenta en la ronda que se ve ahora.
+  const guionVigente = reloj.ronda === ronda;
+  const cartasBanca = (vista?.banca ?? []).map((carta, i) => (i === 1 && guionVigente && !giroIniciado(reloj) ? null : carta));
+  const miraLaBanca = guionVigente && mirando(reloj);
   const totalBanca = vista === null ? null : totalVisible(vista.banca, (i) => aterrizada(reloj, claveCarta(ronda, "banca", 0, i)) && (i !== 1 || girada(reloj)));
   const totalDe = (mano: ManoVista) => totalVisible(mano.cartas, (i) => aterrizada(reloj, claveCarta(ronda, mano.jugadorId, mano.indice, i)));
   const miTotal = miMano ? totalDe(miMano) : null;
