@@ -65,7 +65,7 @@ describe("bancaDebePedir", () => {
 });
 
 describe("pago", () => {
-  const m = (s: string, apuesta = 50, doblada = false) => ({ cartas: cs(s), apuesta, doblada });
+  const m = (s: string, apuesta = 50, doblada = false, dividida = false) => ({ cartas: cs(s), apuesta, doblada, dividida });
 
   it("pagos", () => {
     expect(pago(m("AS KH"), cs("10S 9H"))).toBe(125); // blackjack 3:2

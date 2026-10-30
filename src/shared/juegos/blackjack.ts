@@ -51,13 +51,13 @@ export function bancaDebePedir(cartas: Carta[]): boolean {
 /**
  * Fichas que se devuelven al jugador por esta mano (apuesta incluida); neto = pago - apuesta.
  * `mano.apuesta` es lo que hay en juego en la mano (ya contando el doble si se dobló).
- * La banca no mira su carta tapada: si tiene blackjack gana a toda mano salvo a otro blackjack.
- * Una mano doblada nunca cuenta como blackjack natural.
+ * Contra un blackjack de la banca solo empata otro blackjack natural y lo demás pierde (la banca lo mira antes de las decisiones).
+ * Una mano doblada o dividida nunca cuenta como blackjack natural: su 21 de dos cartas paga 1:1.
  */
-export function pago(mano: { cartas: Carta[]; apuesta: number; doblada: boolean }, banca: Carta[]): number {
+export function pago(mano: Pick<ManoBJ, "cartas" | "apuesta" | "doblada" | "dividida">, banca: Carta[]): number {
   const { apuesta } = mano;
   const jugador = puntuacion(mano.cartas).total;
-  const jugadorBlackjack = !mano.doblada && esBlackjack(mano.cartas);
+  const jugadorBlackjack = !mano.doblada && !mano.dividida && esBlackjack(mano.cartas);
 
   if (jugador > 21) return 0;
   if (esBlackjack(banca)) return jugadorBlackjack ? apuesta : 0;
@@ -138,7 +138,7 @@ export interface EstadoBJ {
   /** Instante en que vence la fase actual; `null` en `esperando` (no hay alarma). */
   finFase: number | null;
   zapato: Carta[];
-  /** La segunda carta (`banca[1]`) está tapada hasta la fase `banca`. */
+  /** La segunda carta (`banca[1]`) está tapada hasta que se gira (`carta_girada`): al pasar a `resultado`, o cuando la banca mira y tiene blackjack. */
   banca: Carta[];
   asientos: { jugadorId: JugadorId; apodo: string; conectado: boolean }[];
   manos: ManoBJ[];
@@ -217,20 +217,33 @@ function costeSeguro(e: EstadoBJ, jugadorId: JugadorId): number | null {
   return Math.floor(manosDe(e, jugadorId).reduce((suma, m) => suma + m.apuesta, 0) / 2);
 }
 
-/** Lo que permiten las reglas al jugador ahora mismo. Dividir llega con su jugada. */
+/**
+ * Dividir: dos cartas del mismo valor (el 10 y las figuras valen lo mismo, así que se dividen entre sí), con sitio en los topes:
+ * menos de `BJ.MAX_MANOS_JUGADOR` manos en total y, en esa casilla, menos de ese tope repartido entre las casillas del jugador
+ * (4 con una casilla, 2 con dos). Unos ases ya divididos no se vuelven a dividir.
+ */
+function puedeDividir(e: EstadoBJ, m: ManoBJ | undefined): boolean {
+  if (m === undefined || m.cartas.length !== 2 || valorCarta(m.cartas[0]) !== valorCarta(m.cartas[1])) return false;
+  if (m.dividida && m.cartas[0].valor === "A") return false;
+  const propias = manosDe(e, m.jugadorId);
+  const enLaCasilla = propias.filter((otra) => otra.casilla === m.casilla).length;
+  return propias.length < BJ.MAX_MANOS_JUGADOR && enLaCasilla < BJ.MAX_MANOS_JUGADOR / casillasDe(e, m.jugadorId).length;
+}
+
+/** Lo que permiten las reglas al jugador ahora mismo. */
 export function opcionesDe(e: EstadoBJ, jugadorId: JugadorId): OpcionesBJ {
   const activa = e.fase === "decisiones" ? manoActiva(e, jugadorId) : undefined;
   return {
     pedir: activa !== undefined,
     plantarse: activa !== undefined,
     doblar: activa?.cartas.length === 2,
-    dividir: false,
+    dividir: puedeDividir(e, activa),
     rendirse: puedeRendirse(activa),
     seguro: costeSeguro(e, jugadorId),
   };
 }
 
-/** Saca la siguiente carta del zapato. Si se vaciara en plena ronda (no ocurre con ≥ 78 al empezar), baraja uno nuevo. */
+/** Saca la siguiente carta del zapato. Si se vaciara en plena ronda (casi imposible con ≥ 78 al empezar, aun con divisiones), baraja uno nuevo. */
 function robar(e: EstadoBJ, rng: Rng, eventos: Evento[]): Carta {
   if (e.zapato.length === 0) {
     e.zapato = barajar(crearBaraja(BJ.BARAJAS), rng);
@@ -329,6 +342,8 @@ function repartir(e: EstadoBJ, ahora: number, rng: Rng, eventos: Evento[]): Liqu
 /** Gira la carta tapada, la banca juega su mano, y se calculan los pagos de la ronda. */
 function jugarBanca(e: EstadoBJ, ahora: number, rng: Rng, eventos: Evento[]): Liquidacion {
   if (e.banca.length >= 2) eventos.push({ tipo: "carta_girada", carta: e.banca[1] });
+  // Si la banca tiene blackjack la ronda acaba sin decisiones: lo que seguía en juego pierde y queda plantado, no «jugando».
+  for (const m of e.manos) if (m.estado === "jugando") m.estado = "plantado";
   // Las manos pasadas, rendidas y abandonadas ya están decididas: no hace falta que la banca pida por ellas.
   if (e.manos.some((m) => !m.abandonada && m.estado !== "pasado" && m.estado !== "rendido")) {
     while (bancaDebePedir(e.banca)) {
@@ -486,6 +501,48 @@ function responderSeguro(e: EstadoBJ, jugadorId: JugadorId, tomar: boolean, ahor
   return exito(s, eventos, liquidacion);
 }
 
+/**
+ * Dividir: solo en decisiones y sobre la mano activa. La segunda carta pasa a una mano nueva, justo detrás, con la misma casilla y
+ * apuesta (se renumeran los `indice` del jugador), y cada mitad recibe al momento una carta, primero la original. Con ases se
+ * plantan las dos. Cada división alarga la ventana de decisiones. Lo que cuesta (otra apuesta igual) lo cobra Mesa antes.
+ */
+function dividir(e: EstadoBJ, jugadorId: JugadorId, ahora: number, rng: Rng): Paso<EstadoBJ> {
+  if (e.fase !== "decisiones") return fallo("fase_incorrecta");
+  if (!puedeDividir(e, manoActiva(e, jugadorId))) return fallo("accion_invalida");
+
+  const s = structuredClone(e);
+  const original = manoActiva(s, jugadorId)!;
+  const eventos: Evento[] = [{ tipo: "mano_dividida", jugadorId, casilla: original.casilla, indice: original.indice }];
+  for (const otra of s.manos) if (otra.jugadorId === jugadorId && otra.indice > original.indice) otra.indice += 1;
+  const nueva: ManoBJ = {
+    jugadorId,
+    apodo: original.apodo,
+    casilla: original.casilla,
+    indice: original.indice + 1,
+    apuesta: original.apuesta,
+    cartas: [original.cartas.pop() as Carta],
+    estado: "jugando",
+    doblada: false,
+    dividida: true,
+    abandonada: false,
+  };
+  original.dividida = true;
+  s.manos.splice(s.manos.indexOf(original) + 1, 0, nueva);
+
+  for (const mitad of [original, nueva]) {
+    const carta = robar(s, rng, eventos);
+    mitad.cartas.push(carta);
+    eventos.push(cartaDeMano(mitad, carta));
+  }
+  if (original.cartas[0].valor === "A") {
+    original.estado = "plantado";
+    nueva.estado = "plantado";
+  }
+  s.finFase = (s.finFase ?? ahora) + BJ.DIVIDIR_EXTRA_MS;
+  cerrarDecisiones(s, ahora);
+  return exito(s, eventos);
+}
+
 /** Rendirse: solo en decisiones y sobre la mano activa si es la primera decisión. La mano deja de jugar y la activa pasa a la siguiente. */
 function rendirse(e: EstadoBJ, jugadorId: JugadorId, ahora: number): Paso<EstadoBJ> {
   if (e.fase !== "decisiones" || !puedeRendirse(manoActiva(e, jugadorId))) return fallo("accion_invalida");
@@ -639,10 +696,10 @@ export const blackjack: Juego<EstadoBJ, AccionBJ> = {
 
   sentar,
 
-  /** Se calcula sobre el estado ANTERIOR a `aplicar`: al doblar cuesta la apuesta original (la de la mano activa), no el doble. */
+  /** Se calcula sobre el estado ANTERIOR a `aplicar`: doblar y dividir cuestan la apuesta de la mano activa (al doblar, la original, no el doble). */
   costo(e, jugadorId, accion) {
     if (accion.t === "apostar") return apuestaValida(accion.cantidad) ? accion.cantidad : 0;
-    if (accion.t === "doblar") return manoActiva(e, jugadorId)?.apuesta ?? 0;
+    if (accion.t === "doblar" || accion.t === "dividir") return manoActiva(e, jugadorId)?.apuesta ?? 0;
     if (accion.t === "seguro") return accion.tomar === true ? costeSeguro(e, jugadorId) ?? 0 : 0;
     return 0;
   },
@@ -660,9 +717,8 @@ export const blackjack: Juego<EstadoBJ, AccionBJ> = {
         return typeof accion.tomar === "boolean" ? responderSeguro(e, jugadorId, accion.tomar, ahora, rng) : fallo("mensaje_invalido");
       case "rendirse":
         return rendirse(e, jugadorId, ahora);
-      // Todavía sin reglas: el servidor la rechaza sin cobrar.
       case "dividir":
-        return fallo("accion_invalida");
+        return dividir(e, jugadorId, ahora, rng);
       case "salir":
         return salir(e, jugadorId, ahora, rng);
       default:

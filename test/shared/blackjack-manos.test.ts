@@ -196,10 +196,10 @@ describe("mano activa", () => {
     expect(dobla.estado.fase).toBe("banca");
   });
 
-  it("dividir responde accion_invalida por ahora", () => {
-    const e = dosManosEnDecisiones();
+  it("dividir una mano que no es pareja responde accion_invalida (las manos no se tocan)", () => {
+    const e = dosManosEnDecisiones(); // la activa es 10♠ 6♥
+    expect(opcionesDe(e, 1).dividir).toBe(false);
     expect(error(blackjack.aplicar(e, 1, { t: "dividir" }, T0, rng))).toBe("accion_invalida");
-    expect(blackjack.costo(e, 1, { t: "dividir" })).toBe(0);
     expect(error(blackjack.aplicar(e, 99, { t: "dividir" }, T0, rng))).toBe("no_sentado");
   });
 });

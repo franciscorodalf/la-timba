@@ -83,6 +83,26 @@ describe("la banca mira su carta", () => {
     expect(p.estado).toMatchObject({ fase: "resultado", finFase: REPARTO + BJ.RESULTADO_MS, bancaMirada: true, seguros: [] });
   });
 
+  it("con blackjack de la banca ninguna mano sigue «jugando» en el resultado: pierden plantadas, y el blackjack se queda como tal", () => {
+    // con una figura visible: ana juega dos casillas (19 y 12), beto está desconectado (16) y carla tiene blackjack
+    const sinSeguro = apuestas(
+      [ANA, { ...BETO, conectado: false }, CARLA],
+      [mano(1, "ana", { casilla: 0 }), mano(2, "beto", { casilla: 1 }), mano(3, "carla", { casilla: 2 }), mano(1, "ana", { casilla: 3, indice: 1 })],
+      "10S 9S AH 5S KD 9H 7S KS 7C AC",
+    );
+    const p = reparte(sinSeguro);
+    expect(p.eventos.filter((ev) => ev.tipo === "banca_mira")).toEqual([{ tipo: "banca_mira", blackjack: true }]);
+    expect(p.estado.fase).toBe("resultado");
+    expect(p.estado.manos.map((m) => [m.jugadorId, m.estado])).toEqual([[1, "plantado"], [2, "plantado"], [3, "blackjack"], [1, "plantado"]]);
+    expect(vistaDe(p.estado, 1).opciones).toEqual({ pedir: false, plantarse: false, doblar: false, dividir: false, rendirse: false, seguro: null });
+
+    // con un as visible, tras el seguro: nadie que no tenga blackjack queda en juego
+    const e = apuestas([ANA, BETO], [mano(1, "ana", { casilla: 0 }), mano(2, "beto", { casilla: 1 })], "10S 8S AD 9H 7S KC");
+    const tras = aplicar(aplicar(reparte(e).estado, 1, seguro(false), REPARTO + 1_000).estado, 2, seguro(false), REPARTO + 2_000);
+    expect(tras.estado.fase).toBe("resultado");
+    expect(tras.estado.manos.map((m) => m.estado)).toEqual(["plantado", "plantado"]);
+  });
+
   it("el seguro solo se ofrece a quien tiene manos en juego: una entrada por jugador, aunque juegue dos manos", () => {
     // beto se fue durante las apuestas: sus cartas no se reparten y no tiene seguro
     const e = apuestas(
@@ -207,7 +227,7 @@ describe("la banca mira con seguros", () => {
       ],
     });
     expect(final.estado).toMatchObject({ fase: "resultado", finFase: REPARTO + 3_000 + BJ.RESULTADO_MS, bancaMirada: true });
-    expect(final.estado.manos.map((m) => m.estado)).toEqual(["jugando", "blackjack", "jugando"]);
+    expect(final.estado.manos.map((m) => m.estado)).toEqual(["plantado", "blackjack", "plantado"]);
 
     // pasado el resultado, la ronda siguiente empieza limpia
     const siguiente = exito(blackjack.tick(final.estado, final.estado.finFase!, rng)).estado;
@@ -467,5 +487,141 @@ describe("rendirse", () => {
       { jugadorId: 1, apuesta: 75, pago: 0 },
       { jugadorId: 2, apuesta: 50, pago: 100 },
     ]);
+  });
+});
+
+describe("liquidación con seguro, rendirse y dobles", () => {
+  /** Juega la banca de un estado en `banca` (todo decidido) y devuelve la liquidación. */
+  const liquida = (e: EstadoBJ) => exito(blackjack.tick(e, e.finFase!, rng));
+  /** Un estado ya en la fase `banca`: lo decidido por los jugadores y la banca que ha mirado. */
+  const enBanca = (banca: string, manos: EstadoBJ["manos"], seguros: EstadoBJ["seguros"] = []): EstadoBJ =>
+    estado({ fase: "banca", finFase: T0, asientos: [ANA, BETO], banca: cs(banca), manos, seguros, bancaMirada: true });
+
+  it("banca con blackjack: dos manos con resultados distintos y seguro (25 + 50, seguro 37)", () => {
+    // ana: blackjack de 25 (empata) y 11 de 50 (pierde); beto 100 sin seguro (pierde). La banca enseña A♦ y tapa K♣
+    const e = enSeguro({
+      banca: cs("AD KC"),
+      manos: [
+        mano(1, "ana", { casilla: 0, indice: 0, apuesta: 25, cartas: cs("AH QS"), estado: "blackjack" }),
+        mano(1, "ana", { casilla: 1, indice: 1, apuesta: 50, cartas: cs("8S 3H") }),
+        mano(2, "beto", { casilla: 2, apuesta: 100, cartas: cs("10D 6H") }),
+      ],
+    });
+    expect(blackjack.costo(e, 1, seguro(true))).toBe(37); // floor(75 / 2)
+    const ana = aplicar(e, 1, seguro(true), T0 + 1_000);
+    const final = aplicar(ana.estado, 2, seguro(false), T0 + 2_000);
+
+    expect(final.eventos.filter((ev) => ev.tipo === "seguro_pagado" || ev.tipo === "pago")).toEqual([
+      { tipo: "seguro_pagado", jugadorId: 1, cantidad: 111 }, // 3 × 37: devuelve el seguro y paga el doble
+      { tipo: "pago", jugadorId: 1, neto: 24 },
+      { tipo: "pago", jugadorId: 2, neto: -100 },
+    ]);
+    expect(final.liquidacion).toEqual({
+      ronda: 1,
+      filas: [
+        { jugadorId: 1, apuesta: 112, pago: 136 }, // 25 + 50 + 37 apostados; 25 del empate + 0 + 111 del seguro
+        { jugadorId: 2, apuesta: 100, pago: 0 },
+      ],
+    });
+  });
+
+  it("banca sin blackjack: seguro perdido, blackjack propio al 3:2 y la otra mano pierde (100 + 50, seguro 75)", () => {
+    // ana 1.ª casilla A♥ K♠ (100) y 2.ª 8♠ 3♥ (50) contra A♦ 6♣ (17 blando)
+    const e = apuestas([ANA], [mano(1, "ana", { casilla: 0, apuesta: 100 }), mano(1, "ana", { casilla: 1, indice: 1, apuesta: 50 })], "AH 8S AD KS 3H 6C");
+    const abre = reparte(e).estado;
+    expect(blackjack.costo(abre, 1, seguro(true))).toBe(75);
+    const decide = aplicar(abre, 1, seguro(true), REPARTO + 1_000);
+    expect(decide.estado.manos.map((m) => m.estado)).toEqual(["blackjack", "jugando"]);
+    const planta = aplicar(decide.estado, 1, { t: "plantarse" }, REPARTO + 2_000).estado;
+
+    const fin = liquida(planta);
+    expect(fin.estado.banca).toEqual(cs("AD 6C")); // 17 blando: la banca se planta
+    expect(fin.eventos.some((ev) => ev.tipo === "seguro_pagado")).toBe(false);
+    expect(fin.liquidacion).toEqual({ ronda: 1, filas: [{ jugadorId: 1, apuesta: 225, pago: 250 }] }); // 100 + 150 del blackjack; 8♠ 3♥ pierde; seguro perdido
+    expect(fin.eventos.at(-1)).toEqual({ tipo: "pago", jugadorId: 1, neto: 25 });
+  });
+
+  it("banca sin blackjack: el seguro (50) se pierde siempre, y la mano de 100 gana, empata o pierde", () => {
+    const seguros = [{ jugadorId: 1, cantidad: 50, respondido: true }];
+    // la banca (A♦ 6♣) suma 17
+    for (const [cartas, pagoEsperado] of [["10S 9H", 200], ["10S 7H", 100], ["10S 6H", 0]] as const) {
+      const e = enBanca("AD 6C", [mano(1, "ana", { apuesta: 100, cartas: cs(cartas), estado: "plantado" })], seguros);
+      expect(liquida(e).liquidacion, cartas).toEqual({ ronda: 1, filas: [{ jugadorId: 1, apuesta: 150, pago: pagoEsperado }] });
+    }
+    // el seguro lo pierde quien lo cogió; quien no, no pone nada
+    const mixto = enBanca(
+      "AD 6C",
+      [mano(1, "ana", { apuesta: 100, cartas: cs("10S 9H"), estado: "plantado" }), mano(2, "beto", { casilla: 1, apuesta: 100, cartas: cs("10D 9H"), estado: "plantado" })],
+      [...seguros, { jugadorId: 2, cantidad: 0, respondido: true }],
+    );
+    expect(liquida(mixto).liquidacion?.filas).toEqual([
+      { jugadorId: 1, apuesta: 150, pago: 200 },
+      { jugadorId: 2, apuesta: 100, pago: 200 },
+    ]);
+  });
+
+  it("rendirse con seguro cogido: vuelve la mitad de la mano (50 de 100) y el seguro (50) se pierde", () => {
+    const e = apuestas([ANA], [mano(1, "ana", { apuesta: 100 })], "10S AD 9H 6C");
+    const decide = aplicar(reparte(e).estado, 1, seguro(true), REPARTO + 1_000);
+    expect(decide.estado.fase).toBe("decisiones");
+    const rinde = aplicar(decide.estado, 1, { t: "rendirse" }, REPARTO + 2_000);
+    expect(rinde.estado.fase).toBe("banca");
+
+    const fin = liquida(rinde.estado);
+    expect(fin.liquidacion).toEqual({ ronda: 1, filas: [{ jugadorId: 1, apuesta: 150, pago: 50 }] });
+    expect(fin.eventos.at(-1)).toEqual({ tipo: "pago", jugadorId: 1, neto: -100 });
+  });
+
+  it("rendirse en una mano y doblar la otra: 25 → 12 y 50 doblado a 100 que gana → 200", () => {
+    // ana: 10♠ 6♥ (25) y 5♥ 6♠ (50) contra 10♣ 7♦; en la segunda pide el doble y llega 9♦ (20)
+    const e = estado({
+      fase: "decisiones",
+      finFase: T0 + BJ.DECISIONES_MS,
+      asientos: [ANA],
+      banca: cs("10C 7D"),
+      zapato: zapato("9D"),
+      manos: [
+        mano(1, "ana", { casilla: 0, indice: 0, apuesta: 25, cartas: cs("10S 6H") }),
+        mano(1, "ana", { casilla: 2, indice: 1, apuesta: 50, cartas: cs("5H 6S") }),
+      ],
+    });
+    const rinde = aplicar(e, 1, { t: "rendirse" }, T0 + 1_000).estado;
+    expect(blackjack.costo(rinde, 1, { t: "doblar" })).toBe(50);
+    const dobla = aplicar(rinde, 1, { t: "doblar" }, T0 + 2_000).estado;
+    expect(dobla.manos[1]).toMatchObject({ apuesta: 100, doblada: true, estado: "plantado", cartas: cs("5H 6S 9D") });
+
+    const fin = liquida(dobla);
+    expect(fin.liquidacion).toEqual({ ronda: 1, filas: [{ jugadorId: 1, apuesta: 125, pago: 212 }] }); // 12 + 200
+    expect(fin.eventos.at(-1)).toEqual({ tipo: "pago", jugadorId: 1, neto: 87 });
+  });
+
+  it("blackjack con importe impar y rendirse con importe impar: 15 → 37 y 25 → 12 (los dos redondean hacia abajo)", () => {
+    const e = estado({
+      fase: "decisiones",
+      finFase: T0 + BJ.DECISIONES_MS,
+      asientos: [ANA],
+      banca: cs("10C 7D"),
+      zapato: zapato("9D"),
+      manos: [
+        mano(1, "ana", { casilla: 0, indice: 0, apuesta: 15, cartas: cs("AS KH"), estado: "blackjack" }),
+        mano(1, "ana", { casilla: 1, indice: 1, apuesta: 25, cartas: cs("10S 6H") }),
+      ],
+    });
+    // el blackjack no decide: la mano activa es la segunda y se rinde
+    const rinde = aplicar(e, 1, { t: "rendirse" }, T0 + 1_000).estado;
+    const fin = liquida(rinde);
+    expect(fin.liquidacion).toEqual({ ronda: 1, filas: [{ jugadorId: 1, apuesta: 40, pago: 49 }] }); // 15 + floor(22,5) = 37; floor(25 / 2) = 12
+    expect(fin.eventos.at(-1)).toEqual({ tipo: "pago", jugadorId: 1, neto: 9 });
+  });
+
+  it("dos manos que doblan y una banca que se pasa: cada mano cobra su doble", () => {
+    // ana: 100 doblada a 200 (19 de tres cartas) y 50 sin doblar (14); la banca (10♣ 6♦) pide 9♠ y se pasa con 25
+    const e = enBanca("10C 6D", [
+      mano(1, "ana", { casilla: 0, indice: 0, apuesta: 200, doblada: true, cartas: cs("5S 4H KC"), estado: "plantado" }),
+      mano(1, "ana", { casilla: 1, indice: 1, apuesta: 50, cartas: cs("10S 4D"), estado: "plantado" }),
+    ]);
+    const fin = liquida({ ...e, zapato: zapato("9S") });
+    expect(fin.estado.banca).toEqual(cs("10C 6D 9S"));
+    expect(fin.liquidacion).toEqual({ ronda: 1, filas: [{ jugadorId: 1, apuesta: 250, pago: 500 }] }); // la banca se pasa: 1:1 a toda mano viva
   });
 });
