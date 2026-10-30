@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { activaDe, agruparOtros, disponerManos, type ManoVista } from "../../src/client/pantallas/blackjack/manos";
+import { activaDe, agruparOtros, ANCHO_LEGIBLE, anchoAcoplado, bordeInferior, disponerEnElArco, disponerManos, type ManoVista } from "../../src/client/pantallas/blackjack/manos";
 import type { Carta } from "../../src/shared/cartas";
 import type { VistaBJ } from "../../src/shared/juegos/blackjack";
 
@@ -52,7 +52,8 @@ describe("disponerManos", () => {
     expect(ocupan(muchas, 8)).toBeLessThanOrEqual(328);
     expect(muchas.ancho).toBeLessThan(52);
     expect(muchas.ancho).toBeGreaterThanOrEqual(24);
-    expect(disponerManos([12, 12, 12, 12], 90, 100, 8).ancho).toBe(24);
+    // Pero si lo que manda son los pies (ni con las cartas al mínimo caben las columnas), no se encogen hasta el mínimo: no ganarían sitio.
+    expect(disponerManos([12, 12, 12, 12], 90, 100, 8).ancho).toBe(52);
   });
 
   it("cada columna mide lo que sus cartas o, si es más, lo que necesita lo de debajo (el total y la apuesta), y la fila entera cabe", () => {
@@ -70,6 +71,105 @@ describe("disponerManos", () => {
     for (const columna of cuatro.columnas) expect(columna).toBeGreaterThanOrEqual(48);
     // Con una sola mano no hay pie debajo: la columna es la mano.
     expect(disponerManos([2], 90, 328, 8).columnas).toEqual([Math.ceil(90 * 1.58)]);
+  });
+});
+
+describe("disponerManos: sin hueco no se encoge hasta el suelo", () => {
+  it("si ni con las columnas mínimas caben, las cartas conservan un tamaño útil (encogerlas no ayudaría: lo que manda es el pie)", () => {
+    // Dos manos piden 64 px de columna cada una (136 con el hueco): en 100 px no caben, pero las cartas no pasan de 63 a 24.
+    expect(disponerManos([2, 2], 84, 100, 8).ancho).toBe(63);
+    // Con cuatro manos y un hueco ridículo, igual: el 58 % de la base, no el mínimo.
+    expect(disponerManos([2, 2, 2, 2], 84, 60, 8).ancho).toBe(49);
+    expect(disponerManos([3, 2, 2], 100, 10, 8).ancho).toBeGreaterThanOrEqual(ANCHO_LEGIBLE);
+    // Y lo que antes se encogía porque las cartas sí mandaban (muchas cartas en poco ancho) sigue encogiéndose.
+    expect(disponerManos([7, 7, 7, 7], 90, 328, 8).ancho).toBeLessThan(52);
+  });
+
+  it("`maximo` limita el ancho de carta aunque quepan más grandes", () => {
+    expect(disponerManos([2, 2], 100, 600, 8, { maximo: 40 }).ancho).toBe(40);
+    expect(disponerManos([2, 2], 100, 600, 8, { maximo: 400 }).ancho).toBe(75);
+  });
+});
+
+describe("anchoAcoplado", () => {
+  it("lo que cabe de carta bajo los asientos de los lados: el 19 % del alto del tapete menos lo de debajo de las cartas", () => {
+    // El tapete más bajo (430 px de mínimo) deja justo las cartas legibles; con más alto, más grandes.
+    expect(anchoAcoplado(430)).toBeGreaterThanOrEqual(ANCHO_LEGIBLE);
+    expect(anchoAcoplado(430)).toBeLessThan(anchoAcoplado(442));
+    expect(anchoAcoplado(442)).toBeLessThan(anchoAcoplado(622));
+    expect(anchoAcoplado(622)).toBeLessThan(anchoAcoplado(802));
+    expect(anchoAcoplado(802)).toBeGreaterThan(80);
+  });
+});
+
+describe("bordeInferior", () => {
+  it("el borde de abajo del tapete es recto en el centro y sube hacia los lados, sin pasar del alto", () => {
+    expect(bordeInferior(1180, 442, 0)).toBe(442);
+    expect(bordeInferior(1180, 442, 20)).toBe(442);
+    expect(bordeInferior(1180, 442, 160)).toBeLessThan(442);
+    expect(bordeInferior(1180, 442, 160)).toBeGreaterThan(400);
+    expect(bordeInferior(1180, 442, 400)).toBeLessThan(bordeInferior(1180, 442, 160));
+    expect(bordeInferior(1180, 442, 1e6)).toBeGreaterThan(0);
+  });
+});
+
+describe("disponerEnElArco", () => {
+  const hueco = 8;
+  /** El hueco entre tus vecinos y el alto del tapete de unas cuantas ventanas de escritorio con la mesa llena (lo que mide la pantalla). */
+  const ventanas = {
+    "960×700": { libre: 60, ancho: 904, alto: 430 },
+    "1100×700": { libre: 108, ancho: 1044, alto: 430 },
+    "1280×720": { libre: 156, ancho: 1180, alto: 442 },
+    "1440×900": { libre: 156, ancho: 1180, alto: 622 },
+    "1920×1080": { libre: 156, ancho: 1180, alto: 802 },
+  };
+
+  it("con una mano, sin medir todavía o sin vecinos, es la fila de siempre", () => {
+    expect(disponerEnElArco([2], 96, { libre: 10, ancho: 904, alto: 430 }, 640, hueco)).toMatchObject({ modo: "fila", ancho: 96 });
+    expect(disponerEnElArco([2, 2], 96, null, 640, hueco).modo).toBe("fila");
+    expect(disponerEnElArco([2, 2, 2, 2], 96, { libre: Infinity, ancho: 904, alto: 430 }, 640, hueco).modo).toBe("fila");
+  });
+
+  it("con hueco entre los vecinos, la fila: sus cartas y columnas caben en ese hueco", () => {
+    const d = disponerEnElArco([3, 2], 84, ventanas["1280×720"], 640, hueco);
+    expect(d.modo).toBe("fila");
+    expect(ocupan(d, hueco)).toBeLessThanOrEqual(156);
+    expect(d.ancho).toBeGreaterThanOrEqual(ANCHO_LEGIBLE);
+  });
+
+  it("sin hueco, las manos se acoplan debajo de los vecinos con cartas legibles en cualquier ventana, sin colapsar a 24 px", () => {
+    for (const [ventana, espacio] of Object.entries(ventanas)) {
+      for (const cartas of [[2, 2], [3, 2, 2], [2, 2, 2, 2]]) {
+        const d = disponerEnElArco(cartas, 96, espacio, 640, hueco);
+        if (d.modo === "fila") {
+          expect(ocupan(d, hueco), `${ventana}, ${cartas.length} manos en fila`).toBeLessThanOrEqual(espacio.libre);
+        } else {
+          expect(d.ancho, `${ventana}, ${cartas.length} manos acopladas`).toBeGreaterThanOrEqual(ANCHO_LEGIBLE);
+          expect(d.ancho).toBeLessThanOrEqual(anchoAcoplado(espacio.alto));
+        }
+        expect(d.ancho, `${ventana}, ${cartas.length} manos`).toBeGreaterThanOrEqual(ANCHO_LEGIBLE);
+      }
+    }
+    // El caso de la regresión: 960×700 con la mesa llena y dos manos ya no deja las cartas en 24 px.
+    const apretada = disponerEnElArco([2, 2], 82, ventanas["960×700"], 640, hueco);
+    expect(apretada.modo).toBe("acoplada");
+    expect(apretada.ancho).toBeGreaterThanOrEqual(36);
+  });
+
+  it("acoplada, la fila no depende del hueco entre vecinos: las cartas crecen con el alto del tapete hasta su tamaño normal", () => {
+    const baja = disponerEnElArco([2, 2, 2], 96, { libre: 60, ancho: 904, alto: 430 }, 640, hueco);
+    const alta = disponerEnElArco([2, 2, 2], 96, { libre: 60, ancho: 1180, alto: 802 }, 640, hueco);
+    expect(baja.modo).toBe("acoplada");
+    expect(alta.modo).toBe("acoplada");
+    expect(alta.ancho).toBeGreaterThan(baja.ancho);
+    expect(alta.ancho).toBe(56);
+  });
+
+  it("acoplada, sube la fila lo que sobra de alto para no salirse por la curva del tapete; con el alto justo, no sube", () => {
+    expect(disponerEnElArco([2, 2, 2], 96, { libre: 60, ancho: 1180, alto: 802 }, 640, hueco).sube).toBeGreaterThan(10);
+    expect(disponerEnElArco([2, 2, 2], 96, { libre: 60, ancho: 904, alto: 430 }, 640, hueco).sube).toBe(0);
+    // En fila no hay nada que subir.
+    expect(disponerEnElArco([2, 2], 96, { libre: Infinity, ancho: 1180, alto: 802 }, 640, hueco).sube).toBe(0);
   });
 });
 

@@ -1116,61 +1116,76 @@ test.describe("mesa simulada", () => {
     expect(bajos).toEqual([]);
   });
 
-  test("en el ordenador, con la mesa llena, tus dos, tres o cuatro manos (cartas, totales y apuestas) no pisan a los jugadores de al lado", async ({ page, request }) => {
-    await page.setViewportSize({ width: 1280, height: 720 });
-    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
-    await fichasDeApi(page, 5_000);
-    const yo = sesion.jugador;
-    const otro = (id: number, apodo: string, indice: number, cartas: Carta[], resto: Partial<ManoDeLaVista> = {}) => mano({ id, apodo }, indice, cartas, { casilla: indice, ...resto });
-    const demas = [
-      otro(11, "Ana", 0, [c("5H"), c("10C")], { estado: "plantado" }),
-      otro(11, "Ana", 1, [c("9S"), c("10D")], { estado: "plantado" }),
-      otro(12, "Bartolomé", 0, [c("KH"), c("QC"), c("4D")], { estado: "pasado", apuesta: 1_000 }),
-      otro(13, "Cristina", 0, [c("AH"), c("KC")], { estado: "blackjack" }),
-      otro(14, "Dani", 0, [c("6H"), c("2C")]),
-      otro(14, "Dani", 1, [c("7S"), c("2D")]),
-      otro(14, "Dani", 2, [c("8S"), c("3D")]),
-      otro(15, "Eli", 0, [c("10H"), c("7C")]),
-    ];
-    const suyas = [
-      mano(yo, 0, [c("8S"), c("3H"), c("2C")], { dividida: true, apuesta: 1_000, casilla: 0 }),
-      mano(yo, 1, [c("8C"), c("5D")], { dividida: true, apuesta: 1_000, casilla: 0 }),
-      mano(yo, 2, [c("KD"), c("7H")], { apuesta: 250, casilla: 1 }),
-      mano(yo, 3, [c("9D"), c("9S")], { apuesta: 50, casilla: 2 }),
-    ];
-    const sentados = [yo.apodo, "Ana", "Bartolomé", "Cristina", "Dani", "Eli"];
-    mesa.alConectar(estado(enDecisiones(sesion, [...suyas.slice(0, 2), ...demas], { sentados, opciones: opciones({ dividir: true }) })));
-    await page.goto(`/p/${codigo}/blackjack`);
-    await expect(page.getByText("Mano 1 de 2")).toBeVisible();
+  // Ventanas de escritorio de la más estrecha (la mesa de ordenador empieza en 900 px) a la más común (1920×1080), con alturas bajas y altas.
+  // El diseño depende del tamaño de la ventana, no del dispositivo: basta con el proyecto de escritorio.
+  for (const [ancho, alto] of [[960, 700], [1024, 768], [1100, 700], [1280, 720], [1440, 900], [1920, 1080]]) {
+    test(`ordenador ${ancho}×${alto}, mesa llena: tus 2, 3 y 4 manos no tocan a los vecinos ni a la banca, no se salen y sus cartas siguen legibles (≥ 36 px)`, async ({ page, request }, info) => {
+      test.skip(info.project.name !== "desktop", "el diseño depende del tamaño de la ventana, no del dispositivo");
+      await page.setViewportSize({ width: ancho, height: alto });
+      const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+      await fichasDeApi(page, 5_000);
+      const yo = sesion.jugador;
+      const otro = (id: number, apodo: string, indice: number, cartas: Carta[], resto: Partial<ManoDeLaVista> = {}) => mano({ id, apodo }, indice, cartas, { casilla: indice, ...resto });
+      // Cinco jugadores más: uno con dos manos a un lado, otro con una apuesta de 1.000 al otro, uno con tres manos…
+      const demas = [
+        otro(11, "Ana", 0, [c("5H"), c("10C")], { estado: "plantado" }),
+        otro(11, "Ana", 1, [c("9S"), c("10D")], { estado: "plantado" }),
+        otro(12, "Bartolomé", 0, [c("KH"), c("QC"), c("4D")], { estado: "pasado", apuesta: 1_000 }),
+        otro(13, "Cristina", 0, [c("AH"), c("KC")], { estado: "blackjack" }),
+        otro(14, "Dani", 0, [c("6H"), c("2C")]),
+        otro(14, "Dani", 1, [c("7S"), c("2D")]),
+        otro(14, "Dani", 2, [c("8S"), c("3D")]),
+        otro(15, "Eli", 0, [c("10H"), c("7C")]),
+      ];
+      const suyas = [
+        mano(yo, 0, [c("8S"), c("3H"), c("2C")], { dividida: true, apuesta: 1_000, casilla: 0 }),
+        mano(yo, 1, [c("8C"), c("5D")], { dividida: true, apuesta: 1_000, casilla: 0 }),
+        mano(yo, 2, [c("KD"), c("7H")], { apuesta: 250, casilla: 1 }),
+        mano(yo, 3, [c("9D"), c("9S")], { apuesta: 50, casilla: 2 }),
+      ];
+      const sentados = [yo.apodo, "Ana", "Bartolomé", "Cristina", "Dani", "Eli"];
+      const conManos = (n: number) => estado(enDecisiones(sesion, [...suyas.slice(0, n), ...demas], { sentados, opciones: opciones({ dividir: true }) }));
+      mesa.alConectar(conManos(2));
+      await page.goto(`/p/${codigo}/blackjack`);
+      await expect(page.getByText("Mano 1 de 2")).toBeVisible();
 
-    /** Lo que se ve en cada asiento (cartas, líneas de total y apuesta y nombres) tuyo y de los demás, en cajas de la ventana. */
-    const cajas = () =>
-      page.evaluate(() => {
-        const cajasDe = (raiz: Element) =>
-          [...raiz.querySelectorAll(".naipe, .bj-col__pie > *, .bj-etiqueta > *")].map((el) => {
-            const r = el.getBoundingClientRect();
-            return { que: el.className || el.getAttribute("aria-label") || el.tagName, x: r.x, y: r.y, ancho: r.width, alto: r.height };
-          });
-        const mias = cajasDe(document.querySelector(".bj-asiento--yo")!);
-        const ajenas = [...document.querySelectorAll(".bj-asiento:not(.bj-asiento--yo)")].flatMap((asiento) => cajasDe(asiento));
-        return { mias, ajenas };
-      });
-    for (const n of [2, 3, 4]) {
-      mesa.enviar(estado(enDecisiones(sesion, [...suyas.slice(0, n), ...demas], { sentados, opciones: opciones({ dividir: true }) })));
-      await expect(page.getByText(`Mano 1 de ${n}`)).toBeVisible();
-      await page.waitForTimeout(700);
-      const { mias, ajenas } = await cajas();
-      expect(mias.length).toBeGreaterThan(n * 2);
-      expect(ajenas.length).toBeGreaterThan(10);
-      // Ninguna caja tuya se cruza con ninguna de los demás: ni siquiera se tocan (1 px de margen).
-      const choques = mias.flatMap((a) =>
-        ajenas
-          .filter((b) => a.x < b.x + b.ancho + 1 && b.x < a.x + a.ancho + 1 && a.y < b.y + b.alto + 1 && b.y < a.y + a.alto + 1)
-          .map((b) => `${n} manos: «${a.que}» (${Math.round(a.x)},${Math.round(a.y)}) pisa «${b.que}» (${Math.round(b.x)},${Math.round(b.y)})`),
-      );
-      expect(choques).toEqual([]);
-    }
-  });
+      /** Lo que se ve (cartas, líneas de total y apuesta, nombres), en cajas de la ventana: lo tuyo, lo de los demás y lo de la banca. */
+      const cajas = () =>
+        page.evaluate(() => {
+          const cajasDe = (raiz: Element, selector: string) =>
+            [...raiz.querySelectorAll(selector)]
+              .map((el) => ({ el, r: el.getBoundingClientRect() }))
+              .filter(({ r }) => r.width > 0 && r.height > 0)
+              .map(({ el, r }) => ({ que: String(el.className || el.getAttribute("aria-label") || el.tagName), x: r.x, y: r.y, ancho: r.width, alto: r.height }));
+          const visible = ".naipe, .bj-col__pie > *, .bj-etiqueta > *";
+          return {
+            mias: cajasDe(document.querySelector(".bj-asiento--yo")!, visible),
+            ajenas: [...document.querySelectorAll(".bj-asiento:not(.bj-asiento--yo)")].flatMap((asiento) => cajasDe(asiento, visible)),
+            banca: cajasDe(document.querySelector(".bj-banca")!, ".naipe, .bj-etiqueta > *, .mazo"),
+            cartasMias: [...document.querySelectorAll(".bj-asiento--yo .naipe")].map((el) => el.getBoundingClientRect().width),
+            ventana: { ancho: window.innerWidth, desplazamiento: document.documentElement.scrollWidth - window.innerWidth },
+          };
+        });
+      const tocan = (a: { x: number; y: number; ancho: number; alto: number }, b: typeof a) => a.x < b.x + b.ancho + 1 && b.x < a.x + a.ancho + 1 && a.y < b.y + b.alto + 1 && b.y < a.y + a.alto + 1;
+      for (const n of [2, 3, 4]) {
+        mesa.enviar(conManos(n));
+        await expect(page.getByText(`Mano 1 de ${n}`)).toBeVisible();
+        await page.waitForTimeout(700);
+        const { mias, ajenas, banca, cartasMias, ventana } = await cajas();
+        expect(mias.length, `${n} manos: tus cajas`).toBeGreaterThan(n * 2);
+        expect(ajenas.length).toBeGreaterThan(10);
+        const choques = [...ajenas.map((b) => ({ b, de: "vecino" })), ...banca.map((b) => ({ b, de: "banca" }))].flatMap(({ b, de }) =>
+          mias.filter((a) => tocan(a, b)).map((a) => `${n} manos: «${a.que}» (${Math.round(a.x)},${Math.round(a.y)}) toca ${de} «${b.que}» (${Math.round(b.x)},${Math.round(b.y)})`),
+        );
+        expect(choques).toEqual([]);
+        // Las cartas siguen siendo útiles: con 36 px aún se ve el palo y el valor de la esquina; por debajo, no.
+        expect(Math.min(...cartasMias), `${n} manos: la carta más pequeña`).toBeGreaterThanOrEqual(35.5);
+        // Y nada se sale por los lados de la ventana ni la desplaza.
+        expect(mias.filter((a) => a.x < -0.5 || a.x + a.ancho > ventana.ancho + 0.5).map((a) => `${a.que}@${Math.round(a.x)}`), `${n} manos: fuera de la ventana`).toEqual([]);
+        expect(ventana.desplazamiento, `${n} manos: desplazamiento horizontal`).toBeLessThanOrEqual(0);
+      }
+    });
+  }
 
   test("las pastillas de los demás enseñan cada mano", async ({ page, request }) => {
     await page.setViewportSize({ width: 390, height: 844 });

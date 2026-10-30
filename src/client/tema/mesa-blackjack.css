@@ -689,33 +689,66 @@
   flex-direction: column-reverse;
 }
 
-/* Con tres o cuatro manos la fila es ancha y, con la mesa llena, la línea de nombre de los asientos de al lado (que cae a la altura de tus
-   cartas) la pisaría: tu asiento sube y el total y la apuesta de cada mano pasan encima de las cartas, en el centro del tapete, que
-   está libre. Así lo único que queda a la altura de esas líneas es una fila de cartas que no llega hasta ellas. */
-.bj-asiento--yo-muchas {
-  translate: -50% calc(-100% - 30px);
+/* Tus manos acopladas: cuando no caben en fila entre los asientos de al lado, bajan al borde del tapete, por debajo del fondo de esos
+   asientos (el 81 % del alto), donde no hay nadie y el ancho no importa. Lo que cabe lo manda el alto del tapete (`anchoAcoplado`): las
+   cartas y debajo, en una línea, el total y la apuesta de cada mano. Tu nombre y «Mano N de M» pasan a la izquierda de la fila. */
+.bj-asiento--yo-acoplado {
+  top: calc(100% - 4px - var(--sube, 0px));
 }
 
-.bj-asiento--yo-muchas .bj-col__pie {
-  order: -1;
+.bj-asiento--yo-acoplado .bj-yo__juego {
+  min-height: 0;
 }
 
-.bj-asiento--yo-muchas .bj-col__pie .bj-total {
-  min-width: 26px;
-  height: 22px;
+.bj-asiento--yo-acoplado .bj-col {
+  gap: 4px;
+}
+
+/* La raya de la mano activa, sin ocupar alto: una sombra recta bajo sus cartas. */
+.bj-asiento--yo-acoplado .bj-col__subrayado {
+  display: none;
+}
+
+.bj-asiento--yo-acoplado .bj-col--activa .bj-mano {
+  box-shadow: 0 3px 0 var(--oro-claro);
+}
+
+.bj-asiento--yo-acoplado .bj-col__pie {
+  flex-direction: row;
+  flex-wrap: nowrap;
+  height: 20px;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.bj-asiento--yo-acoplado .bj-col__pie .bj-total {
+  min-width: 24px;
+  height: 20px;
   padding: 0 6px;
   font-size: 0.75rem;
 }
 
-.bj-asiento--yo-muchas .bj-apuesta.bj-apuesta--corta {
-  gap: 3px;
-  font-size: 0.75rem;
+.bj-asiento--yo-acoplado .bj-apuesta.bj-apuesta--corta {
+  gap: 0;
+  font-size: 0.8125rem;
 }
 
-.bj-asiento--yo-muchas .bj-apuesta--corta .bj-apuesta__pila,
-.bj-asiento--yo-muchas .bj-apuesta--corta .bj-apuesta__pila .ficha {
-  width: 12px;
-  height: 12px;
+.bj-asiento--yo-acoplado .bj-apuesta--corta .bj-apuesta__pila {
+  display: none;
+}
+
+/* A la altura de las cartas (no de la línea de abajo): ahí el tapete aún es ancho y el nombre no se sale de él. */
+.bj-asiento--yo-acoplado .bj-etiqueta {
+  position: absolute;
+  right: calc(100% + 12px);
+  top: 0;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  min-height: 0;
+  font-size: 0.6875rem;
+  letter-spacing: 0.1em;
+  white-space: nowrap;
 }
 
 /* Tu nombre queda debajo de tus manos: lo que sobra de la altura reservada va arriba, no entre las cartas y tu nombre. */
@@ -792,11 +825,6 @@
 
 /* Y la leyenda del tapete, que quedaría justo detrás de las dos casillas, se aparta mientras se apuesta. */
 .bj--ordenador.bj--dos-casillas .bj-leyenda {
-  opacity: 0;
-}
-
-/* Y con tres o cuatro manos, los totales y las apuestas pasan por el centro del tapete: la leyenda también se aparta. */
-.bj--ordenador.bj--muchas-manos .bj-leyenda {
   opacity: 0;
 }
 

@@ -35,9 +35,10 @@ import { MesaLlena } from "./MesaLlena";
 import { Apostar, apuestaRecordada, Decidir, ElegirCasilla, textoEstado } from "./blackjack/controles";
 import { claveCarta, totalVisible } from "./blackjack/guion";
 import { AsientoOtro, MisManos, PastillaOtro } from "./blackjack/asientos";
-import { activaDe, agruparOtros, disponerManos, type ManoVista, type Otro } from "./blackjack/manos";
+import { activaDe, agruparOtros, ARCO, disponerEnElArco, type ManoVista, type Otro } from "./blackjack/manos";
 import { Apuesta, Leyenda, Mano, Rendida, Total, tonoDe } from "./blackjack/piezas";
 import { useDeslizarAlDividir } from "./blackjack/useDeslizar";
+import { useEspacioDelArco } from "./blackjack/useEspacio";
 import { aterrizada, girada, restante, useGuion } from "./blackjack/useGuion";
 
 /** Respiro entre la última carta de la ronda y el cartel del premio. */
@@ -53,8 +54,8 @@ interface Medidas {
   yo: number;
   otros: number;
   mazo: number;
-  /** El ancho en el que caben tus `manos` en fila; con `vecinos` (otros jugadores sentados en el arco) hay menos hueco. */
-  disponible(manos: number, vecinos: boolean): number;
+  /** El ancho como mucho en el que se ponen tus manos en fila (en el ordenador, el hueco entre tus vecinos lo mide `useEspacioDelArco`). */
+  disponible: number;
 }
 
 /** Entre una mano tuya y la siguiente. */
@@ -73,16 +74,13 @@ function useMedidas(): Medidas {
       yo: Math.round(96 * k),
       otros: Math.round(62 * k),
       mazo: Math.round(56 * k),
-      // Los asientos de los lados están a ~190 px del tuyo y su línea de nombre mide otros ~190: sin pisarla quedan unos 180 px. Con tres
-      // o cuatro manos tu asiento sube y el total y la apuesta pasan encima de las cartas (ver `.bj-asiento--yo-muchas`): la fila solo
-      // tiene que esquivar las cartas de los vecinos y puede ser más ancha.
-      disponible: (manos, vecinos) => (vecinos ? Math.round(tapete * (manos > 2 ? 0.19 : 0.155)) : Math.min(tapete, 640)),
+      disponible: Math.min(tapete, 640),
     };
   }
   const yo = Math.round(Math.min(Math.max(ancho * 0.25, 66), 112, alto * 0.14));
   const banca = Math.round(Math.min(Math.max(ancho * 0.185, 50), 84, alto * 0.105));
   // El marco de la mesa deja 18 px a cada lado.
-  return { ordenador: false, banca, yo, otros: 0, mazo: Math.round(banca * 0.72), disponible: () => ancho - 36 };
+  return { ordenador: false, banca, yo, otros: 0, mazo: Math.round(banca * 0.72), disponible: ancho - 36 };
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -110,6 +108,8 @@ export function MesaBlackjack({ codigo }: { codigo: string }) {
   const reloj = useGuion(lote, vista, mazo);
   // Al dividir, la segunda carta se desliza a la mano nueva (ver `useDeslizarAlDividir`).
   useDeslizarAlDividir(lote, tapete);
+  // Cuánto hueco hay entre tus vecinos y cuánto mide el tapete (en el ordenador): de ello depende dónde y cómo caben tus manos.
+  const espacio = useEspacioDelArco(tapete, medidas.ordenador);
   // Lo que llevas preparado para apostar: se ve a la vez en tus casillas del tapete y en el botón. La primera se recuerda de una
   // ronda a otra; la segunda (`null`: no la has pedido) se olvida. `elegida` es la casilla a la que van las fichas.
   const [montante, setMontante] = useState(apuestaRecordada);
@@ -252,7 +252,8 @@ export function MesaBlackjack({ codigo }: { codigo: string }) {
   // El resto de la mesa: los sentados por orden de llegada y quien se fue con una mano en juego, cada uno con todas sus manos.
   const otros = vista === null ? [] : agruparOtros(vista, yoApodo);
   const cartasPorMano = misManos.length === 0 ? [0] : misManos.map((m) => m.cartas.length);
-  const disposicion = disponerManos(cartasPorMano, medidas.yo, medidas.disponible(misManos.length, otros.length > 0), HUECO_MANOS);
+  // En el ordenador, tus manos van en fila en tu sitio si caben entre tus vecinos y, si no, acopladas bajo ellos (ver `disponerEnElArco`).
+  const disposicion = disponerEnElArco(cartasPorMano, medidas.yo, espacio, medidas.disponible, HUECO_MANOS);
 
   const fase = vista?.fase;
   const conCuenta = vista !== null && vista.finFase !== null && (fase === "apuestas" || fase === "decisiones" || fase === "resultado");
@@ -372,7 +373,7 @@ export function MesaBlackjack({ codigo }: { codigo: string }) {
   );
 
   return (
-    <main className={`marco-mesa bj${medidas.ordenador ? " bj--ordenador" : ""}${premio !== null ? " bj--premio" : ""}${conCasilla && hayDos ? " bj--dos-casillas" : ""}${misManos.length > 2 ? " bj--muchas-manos" : ""}`}>
+    <main className={`marco-mesa bj${medidas.ordenador ? " bj--ordenador" : ""}${premio !== null ? " bj--premio" : ""}${conCasilla && hayDos ? " bj--dos-casillas" : ""}`}>
       <Reconectando conectado={conectado || vista === null} />
       <BarraMesa titulo="Blackjack" onVolver={salida.alVolver} refFichas={refFichas} />
 
@@ -404,7 +405,10 @@ export function MesaBlackjack({ codigo }: { codigo: string }) {
             {asientosEnArco(otros).map(({ otro, hueco }) => (
               <AsientoOtro key={otro.apodo} otro={otro} estilo={estiloHueco(hueco)} ronda={ronda} reloj={reloj} ancho={medidas.otros} totalDe={totalDe} netos={netos} />
             ))}
-            <li className={`bj-asiento bj-asiento--yo${misManos.length > 2 ? " bj-asiento--yo-muchas" : ""}`} style={estiloHueco(0)}>
+            <li
+              className={`bj-asiento bj-asiento--yo${disposicion.modo === "acoplada" ? " bj-asiento--yo-acoplado" : ""}`}
+              style={{ ...estiloHueco(0), "--sube": `${disposicion.sube}px` } as CSSProperties}
+            >
               {miSitio}
             </li>
           </ol>
@@ -452,8 +456,8 @@ function asientosEnArco(otros: Otro[]): { otro: Otro; hueco: number }[] {
   return otros.map((otro, i) => ({ otro, hueco: (i % 2 === 0 ? -1 : 1) * (Math.floor(i / 2) + 1) }));
 }
 
-/** Coloca un asiento en el arco: cada hueco se aparta 23° del centro sobre una elipse bajo la banca. */
+/** Coloca un asiento en el arco: cada hueco se aparta `ARCO.paso` grados del centro sobre una elipse bajo la banca. */
 function estiloHueco(hueco: number): CSSProperties {
-  const angulo = (hueco * 23 * Math.PI) / 180;
-  return { "--x": `${(50 + 41 * Math.sin(angulo)).toFixed(2)}%`, "--y": `${(88 * Math.cos(angulo)).toFixed(2)}%` } as CSSProperties;
+  const angulo = (hueco * ARCO.paso * Math.PI) / 180;
+  return { "--x": `${(50 + ARCO.radioX * Math.sin(angulo)).toFixed(2)}%`, "--y": `${(ARCO.radioY * Math.cos(angulo)).toFixed(2)}%` } as CSSProperties;
 }
