@@ -55,12 +55,17 @@ export function intentarConectar(ruta: string, token?: string, cabeceras: Record
   return exports.default.fetch(url, { headers: { ...cabeceras, Upgrade: "websocket" } });
 }
 
-const ESPERA_MENSAJE_MS = 2000;
+/**
+ * Lo que se espera a un mensaje de una mesa o a un cambio en el servidor antes de dar la prueba por colgada. Con toda la
+ * batería corriendo en paralelo, un Durable Object frío puede tardar más de 2 s en contestar; una prueba sana nunca
+ * llega a este límite, solo una colgada (y `testTimeout` en `vitest.config.ts` es mayor para que lo alcance primero).
+ */
+export const ESPERA_MS = 8000;
 
 /**
  * Abre un WebSocket contra el Worker (`ruta` sin `?token=`; se añade si se pasa `token`). Lanza si no se acepta.
  * `recibir(t)` devuelve el siguiente mensaje JSON cuyo `t` coincida, descartando los anteriores; sin `t`, el siguiente.
- * Falla si en 2 s no llega ninguno, para que una prueba no se cuelgue.
+ * Falla si en `ESPERA_MS` no llega ninguno, para que una prueba no se cuelgue.
  */
 export async function conectar(
   ruta: string,
@@ -80,14 +85,14 @@ export async function conectar(
   ws.accept();
 
   async function recibir(t?: string): Promise<any> {
-    const limite = Date.now() + ESPERA_MENSAJE_MS;
+    const limite = Date.now() + ESPERA_MS;
     for (;;) {
       while (cola.length > 0) {
         const mensaje = cola.shift();
         if (t === undefined || mensaje.t === t) return mensaje;
       }
       const restante = limite - Date.now();
-      if (restante <= 0) throw new Error(`No llegó ningún mensaje${t === undefined ? "" : ` "${t}"`} en ${ESPERA_MENSAJE_MS} ms`);
+      if (restante <= 0) throw new Error(`No llegó ningún mensaje${t === undefined ? "" : ` "${t}"`} en ${ESPERA_MS} ms`);
       await new Promise<void>((resolver) => {
         despertar = resolver;
         setTimeout(resolver, restante);

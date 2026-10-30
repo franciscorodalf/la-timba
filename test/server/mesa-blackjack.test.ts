@@ -3,7 +3,7 @@ import { evictDurableObject, runDurableObjectAlarm, runInDurableObject } from "c
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { MensajeSala } from "../../src/shared/api";
 import { crearBaraja } from "../../src/shared/cartas";
-import { BJ, blackjack, type VistaBJ } from "../../src/shared/juegos/blackjack";
+import { BJ, blackjack, type EstadoBJ, type VistaBJ } from "../../src/shared/juegos/blackjack";
 import {
   abrir,
   ayudasMesa,
@@ -11,6 +11,7 @@ import {
   cerrarAbiertas,
   contiene,
   cs,
+  ESPERA_MS,
   enviar,
   fichas,
   hasta as hastaMensaje,
@@ -32,6 +33,7 @@ const {
   reloj,
   vencer,
   nuevaMesa: nuevaMesaCon,
+  preparar,
   sentarse,
   vigilarEscrituras,
 } = ayudasMesa(env.MesaBlackjack, "mesa-blackjack");
@@ -62,9 +64,9 @@ afterEach(() => {
 const nuevaMesa = (n: number, cartas?: string) =>
   nuevaMesaCon(n, cartas === undefined ? undefined : { ...blackjack.crear(T, rngFijo(0.5)), zapato: [...cs(cartas), ...crearBaraja(2)] });
 
-/** Espera (hasta 2 s) a que se cumpla una condición que depende de algo asíncrono en el servidor. */
+/** Espera (hasta `ESPERA_MS`) a que se cumpla una condición que depende de algo asíncrono en el servidor. */
 async function esperar(condicion: () => boolean | Promise<boolean>, que: string): Promise<void> {
-  const limite = Date.now() + 2000;
+  const limite = Date.now() + ESPERA_MS;
   while (!(await condicion())) {
     if (Date.now() > limite) throw new Error(`Nunca se cumplió: ${que}`);
     await new Promise((resolver) => setTimeout(resolver, 10));
@@ -791,10 +793,13 @@ describe("MesaBlackjack: Jugadores y la sala", () => {
 
 describe("MesaBlackjack: lo que se escribe y a quién se avisa", () => {
   it("una apuesta escribe dos veces el registro de la mesa (intención y jugada), sin alarma y sin avisar a la sala", async () => {
+    // Zapato sembrado: con cartas al azar, un as visible de la banca abre el seguro y un blackjack de ana o de beto los deja
+    // sin decisiones, y la prueba se colgaba esperando un «plantado» que no llegaba (~20 % de las veces).
+    // ana 10♠ 8♥ = 18, beto 9♠ 7♥ = 16; banca 9♣ 7♦.
     const {
       codigo,
       js: [ana, beto],
-    } = await nuevaMesa(2);
+    } = await nuevaMesa(2, "10S 9S 9C 8H 7H 7D");
     const sala = await abrir(`/parties/partida/${codigo}`, ana.token);
     const conexionA = await sentarse(codigo, ana.token);
     const conexionB = await sentarse(codigo, beto.token);
@@ -1192,5 +1197,448 @@ describe("MesaBlackjack: robustez", () => {
     await hasta(conexionB, (m) => m.vista.fase === "resultado");
     expect(await fichas(ana.id)).toBe(1050);
     expect(await pendientesDe(codigo)).toBe(0);
+  });
+});
+
+/** Las filas del historial (`resultados`) de las rondas de esta partida: una por jugador y ronda, en el orden en que se pagaron. */
+const resultadosDe = (codigo: string) =>
+  runInDurableObject(jugadores(), (_j, state) =>
+    state.storage.sql
+      .exec<{ jugador_id: number; ronda_id: string; apuesta: number; neto: number; resultado: string }>(
+        "SELECT jugador_id, ronda_id, apuesta, neto, resultado FROM resultados WHERE codigo_partida = ? ORDER BY id",
+        codigo,
+      )
+      .toArray(),
+  );
+
+/** Apuesta `cantidad` (en la segunda casilla si `segunda`) y espera a que la vista de esa conexión tenga `manos` manos. */
+async function apostarYEsperar(conexion: Conexion, cantidad: number, manos: number, segunda = false): Promise<Estado> {
+  enviar(conexion, segunda ? { t: "apostar", cantidad, segunda: true } : { t: "apostar", cantidad });
+  return hasta(conexion, (m) => m.vista.manos.length === manos);
+}
+
+describe("MesaBlackjack: las jugadas nuevas y las fichas", () => {
+  it("segunda casilla, dividir, doblar y seguro cobran cada uno con su cobro en dos fases", async () => {
+    // ana: 8♠ 8♥ en la casilla 0 y 5♠ 6♥ en la 1; banca A♦ y 6♦ tapada (sin blackjack). Dividir reparte 3♦ y K♣; doblar, 10♥.
+    const {
+      codigo,
+      js: [ana],
+    } = await nuevaMesa(1, "8S 5S AD 8H 6H 6D 3D KC 10H");
+    const conexion = await sentarse(codigo, ana.token);
+    await conexion.recibir();
+    const escrituras = await vigilarEscrituras(codigo);
+
+    /** Una jugada que cuesta fichas: dos escrituras del registro (la intención y la jugada), ningún cobro a medias y un cobro más pendiente. */
+    const cobra = async (accion: object, cumple: (m: Estado) => boolean, fichasTras: number, pendientesTras: number) => {
+      const desde = escrituras.length;
+      enviar(conexion, accion);
+      const mensaje = await hasta(conexion, cumple);
+      const que = JSON.stringify(accion);
+      expect(escrituras.slice(desde).filter((e) => e === "put:mesa"), que).toHaveLength(2);
+      expect(await cobroGuardado(codigo), que).toBeNull();
+      expect(await fichas(ana.id), que).toBe(fichasTras);
+      expect(await pendientesDe(codigo), que).toBe(pendientesTras);
+      return mensaje;
+    };
+
+    await cobra({ t: "apostar", cantidad: 50 }, (m) => m.vista.manos.length === 1, 950, 1);
+    const segunda = await cobra({ t: "apostar", cantidad: 30, segunda: true }, (m) => m.vista.manos.length === 2, 920, 2);
+    expect(segunda.vista.casillasLibres).toBe(BJ.CASILLAS - 2);
+    expect(segunda.vista.manos.map((m) => [m.casilla, m.indice, m.apuesta])).toEqual([
+      [0, 0, 50],
+      [1, 1, 30],
+    ]);
+
+    await vencer(codigo);
+    const repartido = await hasta(conexion, (m) => m.vista.fase === "seguro");
+    expect(repartido.vista.opciones).toMatchObject({ seguro: 40 }); // la mitad de 50 + 30
+
+    const asegurado = await cobra({ t: "seguro", tomar: true }, (m) => m.vista.fase === "decisiones", 880, 3);
+    expect(asegurado.vista.miSeguro).toBe(40);
+    expect(asegurado.eventos).toContainEqual({ tipo: "banca_mira", blackjack: false });
+
+    const dividido = await cobra({ t: "dividir" }, (m) => m.vista.manos.length === 3, 830, 4);
+    expect(dividido.eventos).toContainEqual({ tipo: "mano_dividida", jugadorId: ana.id, casilla: 0, indice: 0 });
+    expect(dividido.vista.manos).toMatchObject([
+      { casilla: 0, indice: 0, apuesta: 50, cartas: cs("8S 3D"), dividida: true },
+      { casilla: 0, indice: 1, apuesta: 50, cartas: cs("8H KC"), dividida: true },
+      { casilla: 1, indice: 2, apuesta: 30, cartas: cs("5S 6H"), dividida: false },
+    ]);
+
+    // Doblar cuesta la apuesta de la mano activa (la primera mitad, 50), no la del tapete entero.
+    const doblado = await cobra({ t: "doblar" }, (m) => m.vista.manos[0].doblada, 780, 5);
+    expect(doblado.vista.manos[0]).toMatchObject({ apuesta: 100, doblada: true, cartas: cs("8S 3D 10H"), total: 21, estado: "plantado" });
+  });
+
+  it("sin fichas para dividir → sin_fichas, sin cobro y sin cambios en la mesa", async () => {
+    // ana 8♠ 8♥ contra 9♣: con 100 fichas apuesta 60 y le quedan 40, que no llegan a dividir ni a doblar (60).
+    const {
+      codigo,
+      js: [ana],
+    } = await nuevaMesa(1, "8S 9C 8H 7D 3D KC");
+    await ponerFichas(ana.id, 100);
+    const conexion = await sentarse(codigo, ana.token);
+    await conexion.recibir();
+    enviar(conexion, { t: "apostar", cantidad: 60 });
+    await hasta(conexion, (m) => m.vista.manos.length === 1);
+    await vencer(codigo);
+    const repartido = await hasta(conexion, (m) => m.vista.fase === "decisiones");
+    // Las reglas no miran las fichas: las opciones ofrecen dividir y doblar, y es el cobro el que las rechaza.
+    expect(repartido.vista.opciones).toMatchObject({ dividir: true, doblar: true });
+    expect(await fichas(ana.id)).toBe(40);
+    const registro = await guardado(codigo);
+    const alarma = await alarmaDe(codigo);
+
+    for (const accion of ["dividir", "doblar"]) {
+      enviar(conexion, { t: accion });
+      expect(await conexion.recibir(), accion).toEqual({ t: "error", codigo: "sin_fichas" });
+    }
+    expect(await fichas(ana.id)).toBe(40);
+    expect(await pendientesDe(codigo)).toBe(1); // solo la apuesta
+    expect(await guardado(codigo)).toEqual(registro); // ni estado, ni cobros, ni pendientes
+    expect(await alarmaDe(codigo)).toBe(alarma);
+
+    // Sigue pudiendo jugar con lo que tiene, y los intentos fallidos no gastaron versión.
+    enviar(conexion, { t: "plantarse" });
+    const plantado = await conexion.recibir();
+    expect(plantado).toMatchObject({ t: "estado", vista: { fase: "banca" } });
+    expect(plantado.version).toBe(repartido.version + 1);
+  });
+
+  it("sin fichas para el seguro → sin_fichas y se puede contestar que no", async () => {
+    // ana apuesta 60 con 70 fichas; el seguro cuesta 30 y le quedan 10. Banca A♦ 6♦.
+    const {
+      codigo,
+      js: [ana],
+    } = await nuevaMesa(1, "8S AD 8H 6D");
+    await ponerFichas(ana.id, 70);
+    const conexion = await sentarse(codigo, ana.token);
+    await conexion.recibir();
+    enviar(conexion, { t: "apostar", cantidad: 60 });
+    await hasta(conexion, (m) => m.vista.manos.length === 1);
+    await vencer(codigo);
+    expect((await hasta(conexion, (m) => m.vista.fase === "seguro")).vista.opciones).toMatchObject({ seguro: 30 });
+    const registro = await guardado(codigo);
+
+    enviar(conexion, { t: "seguro", tomar: true });
+    expect(await conexion.recibir()).toEqual({ t: "error", codigo: "sin_fichas" });
+    expect(await fichas(ana.id)).toBe(10);
+    expect(await pendientesDe(codigo)).toBe(1);
+    expect(await guardado(codigo)).toEqual(registro);
+
+    enviar(conexion, { t: "seguro", tomar: false });
+    expect((await hasta(conexion, (m) => m.vista.fase === "decisiones")).vista.miSeguro).toBeNull();
+    expect(await fichas(ana.id)).toBe(10);
+  });
+
+  it("dos jugadores a por la última casilla: uno sin_casilla y una sola apuesta cobrada", async () => {
+    const { codigo, js } = await nuevaMesa(6);
+    const conexiones: Conexion[] = [];
+    for (const j of js) conexiones.push(await sentarse(codigo, j.token));
+    // Cinco primeras apuestas (casillas 0-4) y la segunda de la primera jugadora (casilla 5): solo queda la 6.
+    for (const [i, conexion] of conexiones.slice(0, 5).entries()) await apostarYEsperar(conexion, 20, i + 1);
+    await apostarYEsperar(conexiones[0], 20, 6, true);
+    expect((await estadoMesa(codigo)).manos.map((m) => m.casilla)).toEqual([0, 1, 2, 3, 4, 5]);
+    expect(await pendientesDe(codigo)).toBe(6);
+    const antes = await Promise.all(js.map((j) => fichas(j.id)));
+
+    // La sexta jugadora (primera apuesta de 40) y la segunda jugadora (segunda de 30) piden la casilla 6 a la vez.
+    enviar(conexiones[5], { t: "apostar", cantidad: 40 });
+    enviar(conexiones[1], { t: "apostar", cantidad: 30, segunda: true });
+    await esperar(async () => (await estadoMesa(codigo)).manos.length === 7, "la séptima apuesta");
+
+    const ganadora = (await estadoMesa(codigo)).manos.find((m) => m.casilla === 6)!.jugadorId;
+    const [quien, quienPierde, costo] = ganadora === js[5].id ? [5, 1, 40] : [1, 5, 30];
+    expect(await conexiones[quienPierde].recibir("error")).toEqual({ t: "error", codigo: "sin_casilla" });
+    expect(await fichas(js[quien].id)).toBe(antes[quien] - costo);
+    expect(await fichas(js[quienPierde].id)).toBe(antes[quienPierde]);
+    expect(await pendientesDe(codigo)).toBe(7);
+    expect((await estadoMesa(codigo)).manos).toHaveLength(7);
+    expect(await cobroGuardado(codigo)).toBeNull();
+  });
+
+  it("un doble envío de la segunda apuesta cobra una vez", async () => {
+    const {
+      codigo,
+      js: [ana],
+    } = await nuevaMesa(1);
+    const conexion = await sentarse(codigo, ana.token);
+    await conexion.recibir();
+    await apostarYEsperar(conexion, 50, 1);
+
+    // Dos clics seguidos en «segunda apuesta» y, ya con las dos casillas, un tercero: solo entra el primero.
+    enviar(conexion, { t: "apostar", cantidad: 30, segunda: true });
+    enviar(conexion, { t: "apostar", cantidad: 30, segunda: true });
+    enviar(conexion, { t: "apostar", cantidad: 30, segunda: true });
+    expect(((await conexion.recibir()) as Estado).vista.manos).toHaveLength(2);
+    expect(await conexion.recibir()).toEqual({ t: "error", codigo: "accion_invalida" });
+    expect(await conexion.recibir()).toEqual({ t: "error", codigo: "accion_invalida" });
+    expect(await fichas(ana.id)).toBe(920);
+    expect(await pendientesDe(codigo)).toBe(2);
+    expect((await estadoMesa(codigo)).manos.map((m) => m.apuesta)).toEqual([50, 30]);
+  });
+
+  it("la liquidación con manos divididas y seguro deja las fichas exactas", async () => {
+    // Apuestas: ana 50 (casilla 0), beto 40 (casilla 1) y la segunda de ana, 30 (casilla 2). Reparto por casillas:
+    // ana 8♠ 8♥, beto 10♠ 9♥, ana 5♠ 6♥; banca A♦ y 6♦ (17 blando, se planta). Dividir: 3♦ y K♣; doblar: 10♥.
+    const {
+      codigo,
+      js: [ana, beto],
+    } = await nuevaMesa(2, "8S 10S 5S AD 8H 9H 6H 6D 3D KC 10H");
+    const conexionA = await sentarse(codigo, ana.token);
+    const conexionB = await sentarse(codigo, beto.token);
+    await apostarYEsperar(conexionA, 50, 1);
+    await apostarYEsperar(conexionB, 40, 2);
+    await apostarYEsperar(conexionA, 30, 3, true);
+    expect([await fichas(ana.id), await fichas(beto.id), await pendientesDe(codigo)]).toEqual([920, 960, 3]);
+
+    await vencer(codigo);
+    await hasta(conexionA, (m) => m.vista.fase === "seguro");
+    enviar(conexionA, { t: "seguro", tomar: true }); // 40 = la mitad de 50 + 30
+    await hasta(conexionA, (m) => m.vista.miSeguro === 40);
+    enviar(conexionB, { t: "seguro", tomar: false });
+    await hasta(conexionA, (m) => m.vista.fase === "decisiones");
+    expect([await fichas(ana.id), await fichas(beto.id), await pendientesDe(codigo)]).toEqual([880, 960, 4]);
+
+    enviar(conexionA, { t: "dividir" }); // 50
+    await hasta(conexionA, (m) => m.vista.manos.length === 4);
+    enviar(conexionA, { t: "doblar" }); // 50: 8♠ 3♦ 10♥ = 21
+    await hasta(conexionA, (m) => m.vista.manos[0].doblada);
+    expect([await fichas(ana.id), await pendientesDe(codigo)]).toEqual([780, 6]);
+    enviar(conexionA, { t: "plantarse" }); // 8♥ K♣ = 18
+    await hasta(conexionA, (m) => m.vista.manos[1].estado === "plantado");
+    enviar(conexionA, { t: "rendirse" }); // la mano de la segunda casilla (5♠ 6♥): devuelve la mitad de 30
+    await hasta(conexionA, (m) => m.vista.manos.some((mano) => mano.estado === "rendido"));
+    enviar(conexionB, { t: "plantarse" }); // 19
+    await hasta(conexionB, (m) => m.vista.fase === "banca");
+    expect([await fichas(ana.id), await fichas(beto.id)]).toEqual([780, 960]); // hasta liquidar no se mueve nada más
+
+    await vencer(codigo);
+    const resultado = await hasta(conexionA, (m) => m.vista.fase === "resultado");
+    expect(resultado.vista.banca).toEqual(cs("AD 6D"));
+    // ana: 21 doblado (200) + 18 (100) + rendida (15) = 315 por 100 + 50 + 30 + 40 de seguro = 220 → +95. beto: 19 gana 80 de 40 → +40.
+    expect(resultado.eventos.filter((e) => e.tipo === "pago")).toEqual([
+      { tipo: "pago", jugadorId: ana.id, neto: 95 },
+      { tipo: "pago", jugadorId: beto.id, neto: 40 },
+    ]);
+    expect(resultado.eventos.some((e) => e.tipo === "seguro_pagado")).toBe(false); // la banca no tenía blackjack
+    expect(await fichas(ana.id)).toBe(1095);
+    expect(await fichas(beto.id)).toBe(1040);
+    expect(await pendientesDe(codigo)).toBe(0);
+    expect(await resultadosDe(codigo)).toEqual([
+      { jugador_id: ana.id, ronda_id: `${codigo}:blackjack:1`, apuesta: 220, neto: 95, resultado: "gana" },
+      { jugador_id: beto.id, ronda_id: `${codigo}:blackjack:1`, apuesta: 40, neto: 40, resultado: "gana" },
+    ]);
+  });
+
+  it("el seguro con blackjack de la banca y dos casillas devuelve el triple de lo asegurado y la ronda acaba al momento", async () => {
+    // ana: 9♠ 8♥ (50) y 5♠ 6♥ (50) contra A♦ K♦.
+    const {
+      codigo,
+      js: [ana],
+    } = await nuevaMesa(1, "9S 5S AD 8H 6H KD");
+    const conexion = await sentarse(codigo, ana.token);
+    await conexion.recibir();
+    await apostarYEsperar(conexion, 50, 1);
+    await apostarYEsperar(conexion, 50, 2, true);
+    await vencer(codigo);
+    expect((await hasta(conexion, (m) => m.vista.fase === "seguro")).vista.opciones).toMatchObject({ seguro: 50 });
+    expect(await fichas(ana.id)).toBe(900);
+
+    enviar(conexion, { t: "seguro", tomar: true });
+    const resultado = await hasta(conexion, (m) => m.vista.fase === "resultado");
+    expect(resultado.vista.banca).toEqual(cs("AD KD"));
+    expect(resultado.eventos).toEqual([
+      { tipo: "banca_mira", blackjack: true },
+      { tipo: "carta_girada", carta: c("KD") },
+      { tipo: "seguro_pagado", jugadorId: ana.id, cantidad: 150 },
+      { tipo: "pago", jugadorId: ana.id, neto: 0 },
+    ]);
+    // Las dos manos pierden (100) y el seguro (50) paga 150: 1000 - 100 - 50 + 150.
+    expect(await fichas(ana.id)).toBe(1000);
+    expect(await pendientesDe(codigo)).toBe(0);
+    expect(await resultadosDe(codigo)).toEqual([{ jugador_id: ana.id, ronda_id: `${codigo}:blackjack:1`, apuesta: 150, neto: 0, resultado: "empata" }]);
+  });
+
+  it("desalojo con manos divididas: al reconectar, la vista trae las mismas manos y la ronda sigue", async () => {
+    // ana 8♠ 8♥ contra A♦ 6♦: toma el seguro (25), divide (3♦ y K♣) y la mesa sale de memoria.
+    const {
+      codigo,
+      js: [ana],
+    } = await nuevaMesa(1, "8S AD 8H 6D 3D KC");
+    const conexion = await sentarse(codigo, ana.token);
+    await conexion.recibir();
+    await apostarYEsperar(conexion, 50, 1);
+    await vencer(codigo);
+    await hasta(conexion, (m) => m.vista.fase === "seguro");
+    enviar(conexion, { t: "seguro", tomar: true });
+    await hasta(conexion, (m) => m.vista.fase === "decisiones");
+    enviar(conexion, { t: "dividir" });
+    const dividido = await hasta(conexion, (m) => m.vista.manos.length === 2);
+    expect(dividido.vista.manos).toMatchObject([{ cartas: cs("8S 3D"), dividida: true }, { cartas: cs("8H KC"), dividida: true }]);
+    expect(await fichas(ana.id)).toBe(875);
+    const registro = await guardado(codigo);
+
+    await evictDurableObject(mesa(codigo));
+    await reloj(codigo, T + BJ.APUESTAS_MS);
+
+    const vuelta = await sentarse(codigo, ana.token);
+    const entrada: Estado = await vuelta.recibir();
+    expect(entrada.eventos).toEqual([]);
+    expect(entrada.vista).toEqual(dividido.vista);
+    expect(entrada.vista.miSeguro).toBe(25);
+    expect(await guardado(codigo)).toEqual(registro);
+
+    // La ronda sigue donde estaba: se juegan las dos mitades, la banca (A♦ 6♦ = 17 blando) se planta y se liquida.
+    enviar(vuelta, { t: "plantarse" }); // 8♠ 3♦ = 11
+    await hasta(vuelta, (m) => m.vista.manos[0].estado === "plantado");
+    enviar(vuelta, { t: "plantarse" }); // 8♥ K♣ = 18
+    await hasta(vuelta, (m) => m.vista.fase === "banca");
+    await vencer(codigo);
+    const resultado = await hasta(vuelta, (m) => m.vista.fase === "resultado");
+    // Apostó 50 + 50 (dividir) + 25 (seguro perdido); la mitad de 18 gana 100 y la de 11 pierde.
+    expect(resultado.eventos).toContainEqual({ tipo: "pago", jugadorId: ana.id, neto: -25 });
+    expect(await fichas(ana.id)).toBe(975);
+    expect(await pendientesDe(codigo)).toBe(0);
+    expect(await resultadosDe(codigo)).toEqual([{ jugador_id: ana.id, ronda_id: `${codigo}:blackjack:1`, apuesta: 125, neto: -25, resultado: "pierde" }]);
+  });
+
+  it("salir con dos manos y seguro: se pierde todo y la liquidación cuadra", async () => {
+    // ana 8♠ 8♥ y beto 10♠ 9♥ contra A♦ 6♦ (17 blando). ana toma el seguro (25), divide (3♦ y K♣) y se va; beto se planta con 19.
+    const {
+      codigo,
+      js: [ana, beto],
+    } = await nuevaMesa(2, "8S 10S AD 8H 9H 6D 3D KC");
+    const conexionA = await sentarse(codigo, ana.token);
+    const conexionB = await sentarse(codigo, beto.token);
+    await apostarYEsperar(conexionA, 50, 1);
+    await apostarYEsperar(conexionB, 40, 2);
+    await vencer(codigo);
+    await hasta(conexionA, (m) => m.vista.fase === "seguro");
+    enviar(conexionA, { t: "seguro", tomar: true });
+    await hasta(conexionA, (m) => m.vista.miSeguro === 25);
+    enviar(conexionB, { t: "seguro", tomar: false });
+    await hasta(conexionA, (m) => m.vista.fase === "decisiones");
+    enviar(conexionA, { t: "dividir" });
+    await hasta(conexionA, (m) => m.vista.manos.length === 3);
+    expect([await fichas(ana.id), await fichas(beto.id), await pendientesDe(codigo)]).toEqual([875, 960, 4]);
+
+    enviar(conexionA, { t: "salir" });
+    await hasta(conexionB, (m) => m.vista.sentados.length === 1);
+    const tras = await estadoMesa(codigo);
+    expect(tras.asientos.map((a) => a.jugadorId)).toEqual([beto.id]);
+    expect(tras.manos.filter((m) => m.jugadorId === ana.id).map((m) => [m.abandonada, m.estado])).toEqual([
+      [true, "plantado"],
+      [true, "plantado"],
+    ]);
+    expect(await fichas(ana.id)).toBe(875); // no recupera nada de lo cobrado
+
+    enviar(conexionB, { t: "plantarse" });
+    await hasta(conexionB, (m) => m.vista.fase === "banca");
+    await vencer(codigo);
+    const resultado = await hasta(conexionB, (m) => m.vista.fase === "resultado");
+    expect(resultado.eventos.filter((e) => e.tipo === "pago")).toEqual([
+      { tipo: "pago", jugadorId: ana.id, neto: -125 }, // 50 + 50 + 25 de seguro, sin cobrar nada
+      { tipo: "pago", jugadorId: beto.id, neto: 40 },
+    ]);
+    expect(await fichas(ana.id)).toBe(875);
+    expect(await fichas(beto.id)).toBe(1040);
+    expect(await pendientesDe(codigo)).toBe(0);
+    expect(await resultadosDe(codigo)).toEqual([
+      { jugador_id: ana.id, ronda_id: `${codigo}:blackjack:1`, apuesta: 125, neto: -125, resultado: "pierde" },
+      { jugador_id: beto.id, ronda_id: `${codigo}:blackjack:1`, apuesta: 40, neto: 40, resultado: "gana" },
+    ]);
+  });
+
+  it("salir con dos manos y seguro siendo el último: se liquida al momento, la mesa se duerme y no queda nada pendiente", async () => {
+    const {
+      codigo,
+      js: [ana],
+    } = await nuevaMesa(1, "8S AD 8H 6D 3D KC");
+    const conexion = await sentarse(codigo, ana.token);
+    await conexion.recibir();
+    await apostarYEsperar(conexion, 50, 1);
+    await vencer(codigo);
+    await hasta(conexion, (m) => m.vista.fase === "seguro");
+    enviar(conexion, { t: "seguro", tomar: true });
+    await hasta(conexion, (m) => m.vista.fase === "decisiones");
+    enviar(conexion, { t: "dividir" });
+    await hasta(conexion, (m) => m.vista.manos.length === 2);
+    expect(await fichas(ana.id)).toBe(875);
+
+    enviar(conexion, { t: "salir" });
+    const salida = await hasta(conexion, (m) => m.vista.fase === "esperando");
+    expect(salida.eventos).toContainEqual({ tipo: "pago", jugadorId: ana.id, neto: -125 });
+    expect(await fichas(ana.id)).toBe(875);
+    expect(await pendientesDe(codigo)).toBe(0);
+    expect(await alarmaDe(codigo)).toBeNull();
+    expect(await resultadosDe(codigo)).toEqual([{ jugador_id: ana.id, ronda_id: `${codigo}:blackjack:1`, apuesta: 125, neto: -125, resultado: "pierde" }]);
+  });
+});
+
+describe("MesaBlackjack: mesas guardadas por una versión anterior", () => {
+  it("el estado con la forma antigua (manos sin casilla, sin seguros) se normaliza al arrancar, sin escribir, y la ronda sigue", async () => {
+    const {
+      codigo,
+      js: [ana, beto],
+    } = await nuevaMesaCon(2);
+    // Como la dejó una mesa desplegada antes de las casillas, el seguro y dividir: en decisiones, con las apuestas ya cobradas.
+    const rondaId = `${codigo}:blackjack:1`;
+    expect(await jugadores().apostar(ana.id, 50, rondaId, crypto.randomUUID())).toBe("ok");
+    expect(await jugadores().apostar(beto.id, 20, rondaId, crypto.randomUUID())).toBe("ok");
+    const { seguros: _seguros, bancaMirada: _bancaMirada, ...base } = blackjack.crear(T, rngFijo(0.5));
+    const antiguo = {
+      ...base,
+      fase: "decisiones",
+      finFase: T + BJ.DECISIONES_MS,
+      zapato: [...cs("3C KS"), ...crearBaraja(2)],
+      banca: cs("9C 7D"),
+      asientos: [
+        { jugadorId: ana.id, apodo: ana.apodo, conectado: true },
+        { jugadorId: beto.id, apodo: beto.apodo, conectado: true },
+      ],
+      manos: [
+        { jugadorId: ana.id, apodo: ana.apodo, apuesta: 50, cartas: cs("10S 8H"), estado: "jugando", doblada: false, abandonada: false },
+        { jugadorId: beto.id, apodo: beto.apodo, apuesta: 20, cartas: cs("10H 9H"), estado: "jugando", doblada: false, abandonada: false },
+      ],
+    };
+    await preparar(codigo, antiguo as unknown as EstadoBJ);
+    expect(await pendientesDe(codigo)).toBe(2);
+    const escrituras = await vigilarEscrituras(codigo);
+
+    const conexionA = await sentarse(codigo, ana.token);
+    const conexionB = await sentarse(codigo, beto.token);
+    const entrada: Estado = await conexionA.recibir();
+    await conexionB.recibir();
+    // Normalizar es solo en memoria: arrancar y sentar a quien ya estaba sentado no escribe el registro.
+    expect(escrituras.filter((e) => e === "put:mesa")).toEqual([]);
+    expect(entrada.vista).toMatchObject({ fase: "decisiones", banca: [c("9C"), null], miSeguro: null, casillasLibres: BJ.CASILLAS - 2, yo: ana.id });
+    expect(entrada.vista.opciones).toEqual({ pedir: true, plantarse: true, doblar: true, dividir: false, rendirse: true, seguro: null });
+    expect(entrada.vista.manos).toEqual([
+      { jugadorId: ana.id, apodo: ana.apodo, casilla: 0, indice: 0, apuesta: 50, cartas: cs("10S 8H"), estado: "jugando", doblada: false, dividida: false, total: 18 },
+      { jugadorId: beto.id, apodo: beto.apodo, casilla: 1, indice: 0, apuesta: 20, cartas: cs("10H 9H"), estado: "jugando", doblada: false, dividida: false, total: 19 },
+    ]);
+
+    // ana dobla (10♠ 8♥ 3♣ = 21, cobra 50 más), beto se planta (19) y la banca (9♣ 7♦ = 16) pide K♠ y se pasa.
+    enviar(conexionA, { t: "doblar" });
+    await hasta(conexionA, (m) => m.vista.manos[0].doblada);
+    expect(await fichas(ana.id)).toBe(900);
+    // La primera escritura ya guarda el estado normalizado.
+    expect((await guardado(codigo))?.estado).toMatchObject({ seguros: [], bancaMirada: false, manos: [{ casilla: 0, indice: 0, dividida: false }, { casilla: 1, indice: 0, dividida: false }] });
+    enviar(conexionB, { t: "plantarse" });
+    await hasta(conexionB, (m) => m.vista.fase === "banca");
+    await vencer(codigo);
+    const resultado = await hasta(conexionB, (m) => m.vista.fase === "resultado");
+    expect(resultado.eventos.filter((e) => e.tipo === "pago")).toEqual([
+      { tipo: "pago", jugadorId: ana.id, neto: 100 },
+      { tipo: "pago", jugadorId: beto.id, neto: 20 },
+    ]);
+    expect(await fichas(ana.id)).toBe(1100);
+    expect(await fichas(beto.id)).toBe(1020);
+    expect(await pendientesDe(codigo)).toBe(0);
+    expect(await resultadosDe(codigo)).toEqual([
+      { jugador_id: ana.id, ronda_id: rondaId, apuesta: 100, neto: 100, resultado: "gana" },
+      { jugador_id: beto.id, ronda_id: rondaId, apuesta: 20, neto: 20, resultado: "gana" },
+    ]);
   });
 });
