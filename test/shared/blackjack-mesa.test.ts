@@ -732,6 +732,18 @@ describe("la banca y la ronda siguiente las trae el reloj", () => {
     expect(p.estado.zapato).toHaveLength(312);
   });
 
+  it("salir durante la banca no abandona nada: la ronda quedó decidida (y liquidada) al cerrarse las decisiones", () => {
+    const cierre = cerrada();
+    const sale = exito(blackjack.aplicar(cierre.estado, 1, { t: "salir" }, CIERRE + 500, rng));
+    expect(sale.liquidacion).toBeUndefined();
+    expect(sale.estado.manos.map((m) => m.abandonada)).toEqual([false, false]);
+    expect(sale.estado).toMatchObject({ fase: "resultado", finFase: NUEVA });
+    expect(sale.estado.asientos.map((a) => a.jugadorId)).toEqual([2, 3]);
+    // Lo que cobra ana es lo de la liquidación del cierre.
+    expect(cierre.liquidacion?.filas[0]).toEqual({ jugadorId: 1, apuesta: 50, pago: 100 });
+    expect(blackjack.eventosEntre!(sale.estado, CIERRE + 500, REVELA)).toContainEqual({ tipo: "pago", jugadorId: 1, neto: 50 });
+  });
+
   it("la alarma de respaldo es el fin de la ventana siguiente; el resumen sigue a la vista", () => {
     const { estado: e } = cerrada();
     expect(blackjack.proximaAlarma(e)).toBe(NUEVA + BJ.APUESTAS_MS);

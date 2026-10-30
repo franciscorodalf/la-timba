@@ -61,7 +61,7 @@ Fuera de alcance: el póker y la Bomba (cada uno tendrá su propio diseño), las
 
 ### 2.3 Salir y desconectarse
 
-- **Salir con la ronda en curso:** se pierden todas tus manos y tu seguro, como ahora con una mano.
+- **Salir con la ronda en curso:** se pierden todas tus manos y tu seguro, como ahora con una mano. La ronda cuenta como en curso hasta que se cierran las decisiones: entonces la banca juega y la ronda queda decidida, así que salir durante la banca (lo que tarda en verse su jugada) ya no cambia lo que se cobra, y la pantalla no avisa.
 - **Desconectarse en `seguro`:** cuenta como «no».
 - **Desconectarse en `decisiones`:** tus manos se plantan, como ahora.
 

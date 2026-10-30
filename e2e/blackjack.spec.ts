@@ -365,6 +365,19 @@ test.describe("mesa simulada", () => {
     await expect.poll(salidas).toBe(2);
   });
 
+  test("durante la banca la ronda ya está decidida: «← Sala» sale sin preguntar", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    const mano = { jugadorId: sesion.jugador.id, apodo: sesion.jugador.apodo, casilla: 0, indice: 0, apuesta: 50, cartas: [c("10H"), c("9C")], estado: "plantado" as const, doblada: false, dividida: false, total: 19 };
+    mesa.alConectar(estado(vista(sesion, { fase: "banca", finFase: Date.now() + 60_000, banca: [c("6S"), null], totalBanca: 6, manos: [mano] })));
+    await page.goto(`/p/${codigo}/blackjack`);
+    await expect(tuMano(page)).toHaveCount(2);
+
+    await page.getByRole("button", { name: "Volver a la sala" }).click();
+    await expect(page).toHaveURL(`/p/${codigo}`);
+    await expect(page.getByRole("dialog", { name: "¿Salir de la mesa?" })).toHaveCount(0);
+    await expect.poll(() => mesa.recibidas.filter((m) => (m as { t: string }).t === "salir").length).toBe(1);
+  });
+
   test("el contador se pone al día al reconectar con la ronda ya liquidada (sin evento de pago) y al cambiar de ronda", async ({ page, request }) => {
     const { sesion, codigo, mesa } = await entrarSimulada(page, request);
     const fichas = await fichasDeApi(page, 950);

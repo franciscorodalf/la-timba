@@ -1794,6 +1794,52 @@ describe("MesaBlackjack: la banca y la ronda siguiente llegan con el reloj, sin 
     expect(await resultadosDe(codigo)).toEqual([{ jugador_id: ana.id, ronda_id: `${codigo}:blackjack:1`, apuesta: 50, neto: 50, resultado: "gana" }]);
   });
 
+  it("salir durante la banca no cambia el pago: la ronda ya estaba decidida y se paga al verse", async () => {
+    // ana 10♠ 8♠ = 18 y beto 10♥ 9♥ = 19 contra 9♣ 7♦, que pide K♠ y se pasa: los dos cobran 100.
+    const {
+      codigo,
+      js: [ana, beto],
+    } = await nuevaMesa(2, "10S 10H 9C 8S 9H 7D KS");
+    const conexionA = await sentarse(codigo, ana.token);
+    const conexionB = await sentarse(codigo, beto.token);
+    await apostarYEsperar(conexionA, 50, 1);
+    await apostarYEsperar(conexionB, 50, 2);
+    await vencer(codigo);
+    await hasta(conexionA, (m) => m.vista.fase === "decisiones");
+    await avisosManuales(codigo);
+    enviar(conexionA, { t: "plantarse" });
+    await hasta(conexionA, (m) => m.vista.manos[0].estado === "plantado");
+    enviar(conexionB, { t: "plantarse" });
+    await hasta(conexionB, (m) => m.vista.fase === "banca");
+
+    await reloj(codigo, CIERRE + 300);
+    enviar(conexionA, { t: "salir" });
+    const sinAna = await hasta(conexionB, (m) => m.vista.sentados.length === 1);
+    expect(sinAna.vista).toMatchObject({ fase: "banca", sentados: [beto.apodo] });
+    expect(sinAna.eventos).toEqual([]);
+
+    await avisar(codigo);
+    const resultado = await hasta(conexionB, (m) => m.vista.fase === "resultado");
+    expect(resultado.eventos.filter((e) => e.tipo === "pago")).toEqual([
+      { tipo: "pago", jugadorId: ana.id, neto: 50 },
+      { tipo: "pago", jugadorId: beto.id, neto: 50 },
+    ]);
+    expect(await fichas(ana.id)).toBe(1050);
+    expect(await fichas(beto.id)).toBe(1050);
+  });
+
+  it("si el último se va durante la banca, la ronda se paga al momento (sin esperar al reintento) con una sola fila", async () => {
+    const { codigo, ana, conexion } = await rondaCerrada();
+    await reloj(codigo, CIERRE + 300);
+    enviar(conexion, { t: "salir" });
+    expect(((await conexion.recibir()) as Estado).vista).toMatchObject({ ronda: 2, fase: "esperando", sentados: [], manos: [] });
+    expect(await fichas(ana.id)).toBe(1050);
+    expect(await pendientesDe(codigo)).toBe(0);
+    expect(await pendientesGuardados(codigo)).toEqual([]);
+    expect(await alarmaDe(codigo)).toBeNull();
+    expect(await resultadosDe(codigo)).toEqual([{ jugador_id: ana.id, ronda_id: `${codigo}:blackjack:1`, apuesta: 50, neto: 50, resultado: "gana" }]);
+  });
+
   it("si nadie apuesta en la ronda siguiente, la alarma de respaldo salta al acabar su ventana y abre otra", async () => {
     const { codigo, conexion } = await rondaCerrada();
     await avisar(codigo);

@@ -463,10 +463,13 @@ export abstract class Mesa<E extends { ronda: number }, A extends { t: string }>
 
   /**
    * Paga las rondas pendientes cuyo resultado ya se ve (las que fallen quedan para el siguiente cambio) y las borra del
-   * registro con una escritura.
+   * registro con una escritura. Si el juego ya no tiene ningún aviso por delante (se fue el último en plena banca y la
+   * mesa duerme), lo que aún no se veía ya no se va a ver: se paga también, en vez de esperar al reintento.
    */
   private async liquidarPendientes(ahora: number): Promise<void> {
-    const pagadas = await this.pagar(this.pendientes.filter((l) => (l.visibleEn ?? ahora) <= ahora));
+    const sinAvisos = (this.juego.proximoAviso?.(this.estado, ahora) ?? null) === null;
+    const pagables = this.pendientes.filter((l) => l.visibleEn === undefined || l.visibleEn <= ahora || sinAvisos);
+    const pagadas = await this.pagar(pagables);
     if (pagadas.length > 0) await this.guardar({ pendientes: this.pendientes.filter((l) => !pagadas.includes(l)) });
   }
 

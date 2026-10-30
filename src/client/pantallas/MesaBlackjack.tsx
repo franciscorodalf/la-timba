@@ -148,7 +148,8 @@ export function MesaBlackjack({ codigo }: { codigo: string }) {
     marcarEnviado();
   };
 
-  const apuestaEnJuego = miMano !== undefined && vista?.fase !== "resultado";
+  // Al cerrarse las decisiones la ronda ya está decidida: durante la banca (y el resultado) salir no cambia lo que cobras.
+  const apuestaEnJuego = miMano !== undefined && vista?.fase !== "banca" && vista?.fase !== "resultado";
   const salida = useSalirDeMesa({ codigo, enviar, apuestaEnJuego });
 
   const ahora = useAhoraServidor(vista !== null && vista.finFase !== null && vista.fase !== "banca");
