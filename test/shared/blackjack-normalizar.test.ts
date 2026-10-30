@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { BJ, blackjack, opcionesDe, type EstadoBJ, type VistaBJ } from "../../src/shared/juegos/blackjack";
 import { cs } from "../ayudas";
-import { asiento, estado, exito, mano, rng, T0, zapato } from "./ayudas-blackjack";
+import { asiento, estado, exito, faseVista, mano, rng, T0, zapato } from "./ayudas-blackjack";
 
 const ANA = asiento(1, "ana");
 const BETO = asiento(2, "beto");
@@ -169,15 +169,15 @@ describe("blackjack.normalizar: la ronda sigue sobre el estado normalizado", () 
 
     const ana = exito(blackjack.aplicar(e, 1, { t: "plantarse" }, T0, rng));
     const ambos = exito(blackjack.aplicar(ana.estado, 2, { t: "plantarse" }, T0, rng));
-    expect(ambos.estado.fase).toBe("banca");
-    const resultado = exito(blackjack.tick(ambos.estado, T0 + BJ.BANCA_MS, rng));
-    expect(resultado.estado.fase).toBe("resultado");
-    expect(resultado.liquidacion).toEqual({
+    expect(faseVista(ambos.estado, T0).fase).toBe("banca");
+    expect(faseVista(ambos.estado, T0 + BJ.BANCA_MS).fase).toBe("resultado");
+    expect(ambos.liquidacion).toEqual({
       ronda: 1,
       filas: [
         { jugadorId: 1, apuesta: 50, pago: 100 },
         { jugadorId: 2, apuesta: 20, pago: 40 },
       ],
+      visibleEn: T0 + BJ.BANCA_MS,
     });
   });
 

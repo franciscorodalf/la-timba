@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { blackjack, BJ, casillasLibres, manoActiva, opcionesDe, type AccionBJ, type EstadoBJ, type VistaBJ } from "../../src/shared/juegos/blackjack";
 import { c, cs } from "../ayudas";
-import { asiento, error, estado, exito, mano, rng, T0, zapato } from "./ayudas-blackjack";
+import { asiento, error, estado, exito, faseVista, mano, rng, T0, zapato } from "./ayudas-blackjack";
 
 const SIN_OPCIONES = { pedir: false, plantarse: false, doblar: false, dividir: false, rendirse: false, seguro: null };
 
@@ -169,8 +169,7 @@ describe("mano activa", () => {
 
     const fin = exito(blackjack.aplicar(pideOtra.estado, 1, { t: "plantarse" }, T0 + 10, rng));
     expect(manoActiva(fin.estado, 1)).toBeUndefined();
-    expect(fin.estado.fase).toBe("banca");
-    expect(fin.estado.finFase).toBe(T0 + 10 + BJ.BANCA_MS);
+    expect(faseVista(fin.estado, T0 + 10)).toEqual({ fase: "banca", finFase: T0 + 10 + BJ.BANCA_MS });
   });
 
   it("al pasarse la activa también es la siguiente", () => {
@@ -193,7 +192,7 @@ describe("mano activa", () => {
     expect(dobla.estado.manos[0]).toMatchObject({ apuesta: 100, doblada: false, estado: "plantado" });
     expect(dobla.estado.manos[1]).toMatchObject({ apuesta: 100, doblada: true, estado: "plantado", cartas: cs("8S 3H 9S") });
     expect(dobla.eventos).toEqual([{ tipo: "carta_repartida", a: 1, mano: 1, oculta: false, carta: c("9S") }]);
-    expect(dobla.estado.fase).toBe("banca");
+    expect(faseVista(dobla.estado, T0).fase).toBe("banca");
   });
 
   it("dividir una mano que no es pareja responde accion_invalida (las manos no se tocan)", () => {
@@ -240,8 +239,7 @@ describe("liquidación, salir y desconectar con varias manos", () => {
     expect(sale.liquidacion).toBeUndefined();
 
     // beto se planta con 19 y la banca (10♣ 7♦) se queda en 17: él cobra y ana, que se fue con dos manos, no
-    const plantado = exito(blackjack.aplicar(sale.estado, 2, { t: "plantarse" }, T0, rng)).estado;
-    const final = exito(blackjack.tick(plantado, plantado.finFase!, rng));
+    const final = exito(blackjack.aplicar(sale.estado, 2, { t: "plantarse" }, T0, rng));
     expect(final.liquidacion?.filas).toEqual([
       { jugadorId: 1, apuesta: 150, pago: 0 },
       { jugadorId: 2, apuesta: 50, pago: 100 },
@@ -270,7 +268,7 @@ describe("varias manos al empezar y al acabar la ventana", () => {
     expect(e.manos.map((m) => m.estado)).toEqual(["jugando", "jugando"]);
     const p = exito(blackjack.tick(e, T0 + BJ.DECISIONES_MS, rng));
     expect(p.estado.manos.map((m) => m.estado)).toEqual(["plantado", "plantado"]);
-    expect(p.estado).toMatchObject({ fase: "banca", finFase: T0 + BJ.DECISIONES_MS + BJ.BANCA_MS });
+    expect(faseVista(p.estado, T0 + BJ.DECISIONES_MS)).toEqual({ fase: "banca", finFase: T0 + BJ.DECISIONES_MS + BJ.BANCA_MS });
     expect(manoActiva(p.estado, 1)).toBeUndefined();
   });
 
@@ -297,7 +295,7 @@ describe("varias manos al empezar y al acabar la ventana", () => {
     const solo = apuestasConDosCasillas([asiento(1, "ana")]);
     const sola = estado({ ...solo, manos: solo.manos.filter((m) => m.jugadorId === 1) });
     const juega = exito(blackjack.tick(exito(blackjack.desconectar(sola, 1, T0, rng)).estado, T0 + BJ.APUESTAS_MS, rng));
-    expect(juega.estado).toMatchObject({ fase: "banca", finFase: T0 + BJ.APUESTAS_MS + BJ.BANCA_MS });
+    expect(faseVista(juega.estado, T0 + BJ.APUESTAS_MS)).toEqual({ fase: "banca", finFase: T0 + BJ.APUESTAS_MS + BJ.BANCA_MS });
   });
 
   it("salir en las apuestas con dos casillas: ninguna recibe cartas y la fila es { apuesta: suma, pago: 0 }", () => {
@@ -311,8 +309,7 @@ describe("varias manos al empezar y al acabar la ventana", () => {
     expect(reparto.estado.banca).toEqual(cs("3S 5S"));
     expect(reparto.eventos.every((ev) => ev.a !== 1)).toBe(true);
 
-    const plantado = exito(blackjack.aplicar(reparto.estado, 2, { t: "plantarse" }, T0 + BJ.APUESTAS_MS, rng)).estado;
-    const final = exito(blackjack.tick(plantado, plantado.finFase!, rng));
+    const final = exito(blackjack.aplicar(reparto.estado, 2, { t: "plantarse" }, T0 + BJ.APUESTAS_MS, rng));
     expect(final.liquidacion?.filas.find((f) => f.jugadorId === 1)).toEqual({ jugadorId: 1, apuesta: 150, pago: 0 });
     expect(final.liquidacion?.filas).toHaveLength(2);
   });

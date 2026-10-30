@@ -1,6 +1,6 @@
 import { crearBaraja, type Carta } from "../../src/shared/cartas";
-import type { EstadoBJ, ManoBJ } from "../../src/shared/juegos/blackjack";
-import type { Paso } from "../../src/shared/juegos/tipos";
+import { blackjack, type EstadoBJ, type ManoBJ, type VistaBJ } from "../../src/shared/juegos/blackjack";
+import type { Evento, Paso } from "../../src/shared/juegos/tipos";
 import { cs, rngFijo } from "../ayudas";
 
 /** Instante base de los tests de las reglas del blackjack. */
@@ -35,3 +35,19 @@ export function exito(p: Paso<EstadoBJ>) {
   return p;
 }
 export const error = (p: Paso<EstadoBJ>) => (p.ok ? "ok" : p.error);
+
+/** La fase y el fin de fase que enseña la mesa a la hora `ahora` (la banca, tras cerrarse las decisiones, solo existe a la vista). */
+export function faseVista(e: EstadoBJ, ahora: number) {
+  const { fase, finFase } = blackjack.vista(e, null, ahora) as VistaBJ;
+  return { fase, finFase };
+}
+
+/**
+ * Lo que anuncia el reloj cuando se ve la jugada de la banca de la ronda que cerró `p` (la carta girada, las que pidió y
+ * los pagos): `p` ya trae la liquidación, con el instante en que se ve (`visibleEn`).
+ */
+export function alVerseLaBanca(p: Extract<Paso<EstadoBJ>, { ok: true }>): Evento[] {
+  const revela = p.liquidacion?.visibleEn;
+  if (revela === undefined) throw new Error("la ronda no se cerró con la banca a la vista");
+  return blackjack.eventosEntre!(p.estado, revela - 1, revela);
+}

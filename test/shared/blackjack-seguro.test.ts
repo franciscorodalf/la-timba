@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { blackjack, BJ, opcionesDe, type AccionBJ, type EstadoBJ, type FaseBJ, type VistaBJ } from "../../src/shared/juegos/blackjack";
 import type { Paso } from "../../src/shared/juegos/tipos";
 import { c, cs } from "../ayudas";
-import { asiento, error, estado, exito, mano, rng, T0, zapato } from "./ayudas-blackjack";
+import { alVerseLaBanca, asiento, error, estado, exito, faseVista, mano, rng, T0, zapato } from "./ayudas-blackjack";
 
 /** El instante en que vence la ventana de apuestas de los repartos de estos tests. */
 const REPARTO = T0 + BJ.APUESTAS_MS;
@@ -118,7 +118,8 @@ describe("la banca mira su carta", () => {
     const p = reparte(e);
     expect(p.eventos.at(-1)).toEqual({ tipo: "banca_mira", blackjack: false });
     // la mano de quien no está se planta sola y la banca juega
-    expect(p.estado).toMatchObject({ fase: "banca", finFase: REPARTO + BJ.BANCA_MS });
+    expect(faseVista(p.estado, REPARTO)).toEqual({ fase: "banca", finFase: REPARTO + BJ.BANCA_MS });
+    expect(p.liquidacion?.visibleEn).toBe(REPARTO + BJ.BANCA_MS);
     expect(p.estado.manos[0].estado).toBe("plantado");
   });
 });
@@ -246,11 +247,10 @@ describe("la banca mira con seguros", () => {
     expect(coge.estado.seguros).toEqual([{ jugadorId: 1, cantidad: 50, respondido: true }]);
 
     // ana se planta y la banca (17) se queda: gana la mano (+100), pero el seguro (50) ya estaba perdido
-    const planta = aplicar(coge.estado, 1, { t: "plantarse" }, REPARTO + 2_000).estado;
-    const fin = exito(blackjack.tick(planta, planta.finFase!, rng));
-    expect(fin.eventos.map((ev) => ev.tipo)).toEqual(["carta_girada", "pago"]);
-    expect(fin.liquidacion).toEqual({ ronda: 1, filas: [{ jugadorId: 1, apuesta: 150, pago: 200 }] });
-    expect(fin.eventos.at(-1)).toEqual({ tipo: "pago", jugadorId: 1, neto: 50 });
+    const fin = aplicar(coge.estado, 1, { t: "plantarse" }, REPARTO + 2_000);
+    expect(alVerseLaBanca(fin).map((ev) => ev.tipo)).toEqual(["carta_girada", "pago"]);
+    expect(fin.liquidacion).toEqual({ ronda: 1, filas: [{ jugadorId: 1, apuesta: 150, pago: 200 }], visibleEn: REPARTO + 2_000 + BJ.BANCA_MS });
+    expect(alVerseLaBanca(fin).at(-1)).toEqual({ tipo: "pago", jugadorId: 1, neto: 50 });
   });
 
   it("quien no contesta o se desconecta en el seguro no lo coge", () => {
@@ -307,7 +307,7 @@ describe("la banca mira con seguros", () => {
     expect(abre.fase).toBe("seguro");
     const ana = aplicar(abre, 1, seguro(false), REPARTO + 1_000).estado;
     const p = aplicar(ana, 2, seguro(false), REPARTO + 2_000);
-    expect(p.estado).toMatchObject({ fase: "banca", finFase: REPARTO + 2_000 + BJ.BANCA_MS });
+    expect(faseVista(p.estado, REPARTO + 2_000)).toEqual({ fase: "banca", finFase: REPARTO + 2_000 + BJ.BANCA_MS });
   });
 
   it("quien sale en el seguro pierde el suyo aunque la banca tenga blackjack", () => {
@@ -420,11 +420,10 @@ describe("rendirse", () => {
     expect(opcionesDe(rinde.estado, 1)).toMatchObject({ pedir: true, rendirse: true });
 
     // se planta la segunda (19 contra 17): gana 100 y de la primera vuelven 12
-    const planta = aplicar(rinde.estado, 1, { t: "plantarse" }, T0 + 5_000).estado;
-    expect(planta).toMatchObject({ fase: "banca", finFase: T0 + 5_000 + BJ.BANCA_MS });
-    const fin = exito(blackjack.tick(planta, planta.finFase!, rng));
-    expect(fin.liquidacion).toEqual({ ronda: 1, filas: [{ jugadorId: 1, apuesta: 75, pago: 112 }] });
-    expect(fin.eventos.at(-1)).toEqual({ tipo: "pago", jugadorId: 1, neto: 37 });
+    const fin = aplicar(rinde.estado, 1, { t: "plantarse" }, T0 + 5_000);
+    expect(faseVista(fin.estado, T0 + 5_000)).toEqual({ fase: "banca", finFase: T0 + 5_000 + BJ.BANCA_MS });
+    expect(fin.liquidacion).toEqual({ ronda: 1, filas: [{ jugadorId: 1, apuesta: 75, pago: 112 }], visibleEn: T0 + 5_000 + BJ.BANCA_MS });
+    expect(alVerseLaBanca(fin).at(-1)).toEqual({ tipo: "pago", jugadorId: 1, neto: 37 });
   });
 
   it("si todas las manos se rinden o se pasan, la banca no pide carta", () => {
@@ -437,11 +436,10 @@ describe("rendirse", () => {
       zapato: zapato("9S"),
       manos: [mano(1, "ana", { apuesta: 25, cartas: cs("10S 6H") })],
     });
-    const rinde = aplicar(e, 1, { t: "rendirse" }, T0 + 1_000);
-    expect(rinde.estado).toMatchObject({ fase: "banca", finFase: T0 + 1_000 + BJ.BANCA_MS }); // nadie más decide
-    const fin = exito(blackjack.tick(rinde.estado, rinde.estado.finFase!, rng));
+    const fin = aplicar(e, 1, { t: "rendirse" }, T0 + 1_000);
+    expect(faseVista(fin.estado, T0 + 1_000)).toEqual({ fase: "banca", finFase: T0 + 1_000 + BJ.BANCA_MS }); // nadie más decide
     expect(fin.estado.banca).toEqual(cs("6D 5C"));
-    expect(fin.liquidacion).toEqual({ ronda: 1, filas: [{ jugadorId: 1, apuesta: 25, pago: 12 }] });
+    expect(fin.liquidacion?.filas).toEqual([{ jugadorId: 1, apuesta: 25, pago: 12 }]);
   });
 
   it("rendirse después de pedir, en una mano doblada o fuera de decisiones → accion_invalida", () => {
@@ -480,8 +478,7 @@ describe("rendirse", () => {
   it("quien se va después de rendirse pierde también lo que le devolvían", () => {
     const e = dosManos({ asientos: [ANA, BETO], manos: [...dosManos().manos, mano(2, "beto", { casilla: 1, cartas: cs("10D 8H") })] });
     const sale = aplicar(aplicar(e, 1, { t: "rendirse" }).estado, 1, { t: "salir" }).estado;
-    const planta = aplicar(sale, 2, { t: "plantarse" }).estado;
-    const fin = exito(blackjack.tick(planta, planta.finFase!, rng));
+    const fin = aplicar(sale, 2, { t: "plantarse" });
     // beto (18) gana a la banca (17); ana, que se rindió y se fue, no recupera nada
     expect(fin.liquidacion?.filas).toEqual([
       { jugadorId: 1, apuesta: 75, pago: 0 },
@@ -491,9 +488,9 @@ describe("rendirse", () => {
 });
 
 describe("liquidación con seguro, rendirse y dobles", () => {
-  /** Juega la banca de un estado en `banca` (todo decidido) y devuelve la liquidación. */
+  /** Juega la banca de un estado guardado en `banca` (una mesa de antes; todo decidido) y devuelve la liquidación. */
   const liquida = (e: EstadoBJ) => exito(blackjack.tick(e, e.finFase!, rng));
-  /** Un estado ya en la fase `banca`: lo decidido por los jugadores y la banca que ha mirado. */
+  /** Un estado guardado en la fase `banca` (como lo dejaba una versión anterior): lo decidido y la banca que ha mirado. */
   const enBanca = (banca: string, manos: EstadoBJ["manos"], seguros: EstadoBJ["seguros"] = []): EstadoBJ =>
     estado({ fase: "banca", finFase: T0, asientos: [ANA, BETO], banca: cs(banca), manos, seguros, bancaMirada: true });
 
@@ -532,13 +529,11 @@ describe("liquidación con seguro, rendirse y dobles", () => {
     expect(blackjack.costo(abre, 1, seguro(true))).toBe(75);
     const decide = aplicar(abre, 1, seguro(true), REPARTO + 1_000);
     expect(decide.estado.manos.map((m) => m.estado)).toEqual(["blackjack", "jugando"]);
-    const planta = aplicar(decide.estado, 1, { t: "plantarse" }, REPARTO + 2_000).estado;
-
-    const fin = liquida(planta);
+    const fin = aplicar(decide.estado, 1, { t: "plantarse" }, REPARTO + 2_000);
     expect(fin.estado.banca).toEqual(cs("AD 6C")); // 17 blando: la banca se planta
-    expect(fin.eventos.some((ev) => ev.tipo === "seguro_pagado")).toBe(false);
-    expect(fin.liquidacion).toEqual({ ronda: 1, filas: [{ jugadorId: 1, apuesta: 225, pago: 250 }] }); // 100 + 150 del blackjack; 8♠ 3♥ pierde; seguro perdido
-    expect(fin.eventos.at(-1)).toEqual({ tipo: "pago", jugadorId: 1, neto: 25 });
+    expect(alVerseLaBanca(fin).some((ev) => ev.tipo === "seguro_pagado")).toBe(false);
+    expect(fin.liquidacion?.filas).toEqual([{ jugadorId: 1, apuesta: 225, pago: 250 }]); // 100 + 150 del blackjack; 8♠ 3♥ pierde; seguro perdido
+    expect(alVerseLaBanca(fin).at(-1)).toEqual({ tipo: "pago", jugadorId: 1, neto: 25 });
   });
 
   it("banca sin blackjack: el seguro (50) se pierde siempre, y la mano de 100 gana, empata o pierde", () => {
@@ -564,12 +559,10 @@ describe("liquidación con seguro, rendirse y dobles", () => {
     const e = apuestas([ANA], [mano(1, "ana", { apuesta: 100 })], "10S AD 9H 6C");
     const decide = aplicar(reparte(e).estado, 1, seguro(true), REPARTO + 1_000);
     expect(decide.estado.fase).toBe("decisiones");
-    const rinde = aplicar(decide.estado, 1, { t: "rendirse" }, REPARTO + 2_000);
-    expect(rinde.estado.fase).toBe("banca");
-
-    const fin = liquida(rinde.estado);
-    expect(fin.liquidacion).toEqual({ ronda: 1, filas: [{ jugadorId: 1, apuesta: 150, pago: 50 }] });
-    expect(fin.eventos.at(-1)).toEqual({ tipo: "pago", jugadorId: 1, neto: -100 });
+    const fin = aplicar(decide.estado, 1, { t: "rendirse" }, REPARTO + 2_000);
+    expect(faseVista(fin.estado, REPARTO + 2_000).fase).toBe("banca");
+    expect(fin.liquidacion?.filas).toEqual([{ jugadorId: 1, apuesta: 150, pago: 50 }]);
+    expect(alVerseLaBanca(fin).at(-1)).toEqual({ tipo: "pago", jugadorId: 1, neto: -100 });
   });
 
   it("rendirse en una mano y doblar la otra: 25 → 12 y 50 doblado a 100 que gana → 200", () => {
@@ -587,12 +580,10 @@ describe("liquidación con seguro, rendirse y dobles", () => {
     });
     const rinde = aplicar(e, 1, { t: "rendirse" }, T0 + 1_000).estado;
     expect(blackjack.costo(rinde, 1, { t: "doblar" })).toBe(50);
-    const dobla = aplicar(rinde, 1, { t: "doblar" }, T0 + 2_000).estado;
-    expect(dobla.manos[1]).toMatchObject({ apuesta: 100, doblada: true, estado: "plantado", cartas: cs("5H 6S 9D") });
-
-    const fin = liquida(dobla);
-    expect(fin.liquidacion).toEqual({ ronda: 1, filas: [{ jugadorId: 1, apuesta: 125, pago: 212 }] }); // 12 + 200
-    expect(fin.eventos.at(-1)).toEqual({ tipo: "pago", jugadorId: 1, neto: 87 });
+    const fin = aplicar(rinde, 1, { t: "doblar" }, T0 + 2_000);
+    expect(fin.estado.manos[1]).toMatchObject({ apuesta: 100, doblada: true, estado: "plantado", cartas: cs("5H 6S 9D") });
+    expect(fin.liquidacion?.filas).toEqual([{ jugadorId: 1, apuesta: 125, pago: 212 }]); // 12 + 200
+    expect(alVerseLaBanca(fin).at(-1)).toEqual({ tipo: "pago", jugadorId: 1, neto: 87 });
   });
 
   it("blackjack con importe impar y rendirse con importe impar: 15 → 37 y 25 → 12 (los dos redondean hacia abajo)", () => {
@@ -608,10 +599,9 @@ describe("liquidación con seguro, rendirse y dobles", () => {
       ],
     });
     // el blackjack no decide: la mano activa es la segunda y se rinde
-    const rinde = aplicar(e, 1, { t: "rendirse" }, T0 + 1_000).estado;
-    const fin = liquida(rinde);
-    expect(fin.liquidacion).toEqual({ ronda: 1, filas: [{ jugadorId: 1, apuesta: 40, pago: 49 }] }); // 15 + floor(22,5) = 37; floor(25 / 2) = 12
-    expect(fin.eventos.at(-1)).toEqual({ tipo: "pago", jugadorId: 1, neto: 9 });
+    const fin = aplicar(e, 1, { t: "rendirse" }, T0 + 1_000);
+    expect(fin.liquidacion?.filas).toEqual([{ jugadorId: 1, apuesta: 40, pago: 49 }]); // 15 + floor(22,5) = 37; floor(25 / 2) = 12
+    expect(alVerseLaBanca(fin).at(-1)).toEqual({ tipo: "pago", jugadorId: 1, neto: 9 });
   });
 
   it("dos manos que doblan y una banca que se pasa: cada mano cobra su doble", () => {

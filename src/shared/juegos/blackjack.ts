@@ -132,8 +132,14 @@ export interface OpcionesBJ {
   seguro: number | null;
 }
 
+/**
+ * El estado guardado de la mesa. En `resultado` la ronda ya está decidida y liquidada (la banca juega al cerrarse las
+ * decisiones), pero el reloj enseña antes `BJ.BANCA_MS` de banca y, al acabar, la ronda siguiente, sin cambiar el estado:
+ * ver `aLaVista`.
+ */
 export interface EstadoBJ {
   ronda: number;
+  /** `banca` solo queda guardada en mesas de una versión anterior, con la banca aún sin jugar: ahora es solo lo que se ve. */
   fase: FaseBJ;
   /** Instante en que vence la fase actual; `null` en `esperando` (no hay alarma). */
   finFase: number | null;
@@ -167,7 +173,7 @@ export interface VistaBJ {
   casillasLibres: number;
 }
 
-type Liquidacion = { ronda: number; filas: FilaLiquidacion[] };
+type Liquidacion = { ronda: number; filas: FilaLiquidacion[]; visibleEn?: number };
 
 /** Ventanas de apuestas vacías seguidas tras las que la mesa deja de programar alarmas (los asientos se conservan). */
 const MAX_VENTANAS_VACIAS = 3;
@@ -259,24 +265,28 @@ const cartaDeMano = (m: Pick<ManoBJ, "jugadorId" | "indice">, carta: Carta): Eve
 /** La carta visible de la banca: no lleva `mano`. */
 const cartaDeBanca = (carta: Carta): Evento => ({ tipo: "carta_repartida", a: "banca", oculta: false, carta });
 
-/** Si ya nadie puede decidir, las decisiones terminan sin esperar al reloj. */
-function cerrarDecisiones(e: EstadoBJ, ahora: number): void {
-  if (e.fase === "decisiones" && !hayJugando(e)) {
-    e.fase = "banca";
-    e.finFase = ahora + BJ.BANCA_MS;
-  }
+/** Si ya nadie puede decidir, las decisiones terminan sin esperar al reloj: juega la banca (`cerrarRonda`). */
+function cerrarDecisiones(e: EstadoBJ, ahora: number, rng: Rng, eventos: Evento[]): Liquidacion | undefined {
+  if (e.fase === "decisiones" && !hayJugando(e)) return cerrarRonda(e, ahora, rng, eventos);
+  return undefined;
 }
 
-/** Abre las decisiones, o pasa directamente a la banca si nadie juega. Quien se desconectó antes planta sus manos. */
-function abrirDecisiones(e: EstadoBJ, ahora: number): void {
+/** Abre las decisiones, o juega ya la banca si nadie juega. Quien se desconectó antes planta sus manos. */
+function abrirDecisiones(e: EstadoBJ, ahora: number, rng: Rng, eventos: Evento[]): Liquidacion | undefined {
   for (const m of e.manos) if (m.estado === "jugando" && asientoDe(e, m.jugadorId)?.conectado === false) m.estado = "plantado";
-  if (hayJugando(e)) {
-    e.fase = "decisiones";
-    e.finFase = ahora + BJ.DECISIONES_MS;
-  } else {
-    e.fase = "banca";
-    e.finFase = ahora + BJ.BANCA_MS;
-  }
+  if (!hayJugando(e)) return cerrarRonda(e, ahora, rng, eventos);
+  e.fase = "decisiones";
+  e.finFase = ahora + BJ.DECISIONES_MS;
+  return undefined;
+}
+
+/**
+ * Cierra las decisiones. La banca juega ya su mano (solo depende del zapato guardado) y la ronda se liquida en este mismo
+ * cambio, pero lo que ha jugado no se ve hasta `BJ.BANCA_MS` después: hasta entonces la vista es la de la banca, y el reloj
+ * lo enseña a su hora (`proximoAviso`/`eventosEntre`) sin escribir nada. La liquidación lleva ese instante (`visibleEn`).
+ */
+function cerrarRonda(e: EstadoBJ, ahora: number, rng: Rng, eventos: Evento[]): Liquidacion {
+  return jugarBanca(e, ahora, rng, eventos, BJ.BANCA_MS);
 }
 
 /**
@@ -287,9 +297,8 @@ function bancaMira(e: EstadoBJ, ahora: number, rng: Rng, eventos: Evento[]): Liq
   const blackjack = esBlackjack(e.banca);
   e.bancaMirada = true;
   eventos.push({ tipo: "banca_mira", blackjack });
-  if (blackjack) return jugarBanca(e, ahora, rng, eventos);
-  abrirDecisiones(e, ahora);
-  return undefined;
+  if (blackjack) return jugarBanca(e, ahora, rng, eventos, 0);
+  return abrirDecisiones(e, ahora, rng, eventos);
 }
 
 /** Quien no contesta el seguro cuenta como «no»: su entrada queda respondida con lo que tuviera (0 si no había cogido). */
@@ -335,27 +344,41 @@ function repartir(e: EstadoBJ, ahora: number, rng: Rng, eventos: Evento[]): Liqu
     if (e.banca[0].valor === "A") return abrirSeguro(e, ahora, rng, eventos);
     if (valorCarta(e.banca[0]) === 10) return bancaMira(e, ahora, rng, eventos);
   }
-  abrirDecisiones(e, ahora);
-  return undefined;
+  return abrirDecisiones(e, ahora, rng, eventos);
 }
 
-/** Gira la carta tapada, la banca juega su mano, y se calculan los pagos de la ronda. */
-function jugarBanca(e: EstadoBJ, ahora: number, rng: Rng, eventos: Evento[]): Liquidacion {
-  if (e.banca.length >= 2) eventos.push({ tipo: "carta_girada", carta: e.banca[1] });
+/**
+ * La banca juega su mano, se calculan los pagos y la ronda pasa a `resultado`, que acaba `espera + BJ.RESULTADO_MS` después.
+ * Lo que se ve (`eventosDeLaBanca`) llega a los `espera` ms: con 0, en estos mismos eventos; si no, lo anuncia el reloj, y
+ * la liquidación lleva ese instante en `visibleEn`. (Un rebarajado en plena jugada, casi imposible, sale con este cambio.)
+ */
+function jugarBanca(e: EstadoBJ, ahora: number, rng: Rng, eventos: Evento[], espera: number): Liquidacion {
   // Si la banca tiene blackjack la ronda acaba sin decisiones: lo que seguía en juego pierde y queda plantado, no «jugando».
   for (const m of e.manos) if (m.estado === "jugando") m.estado = "plantado";
   // Las manos pasadas, rendidas y abandonadas ya están decididas: no hace falta que la banca pida por ellas.
   if (e.manos.some((m) => !m.abandonada && m.estado !== "pasado" && m.estado !== "rendido")) {
-    while (bancaDebePedir(e.banca)) {
-      const carta = robar(e, rng, eventos);
-      e.banca.push(carta);
-      eventos.push(cartaDeBanca(carta));
-    }
+    while (bancaDebePedir(e.banca)) e.banca.push(robar(e, rng, eventos));
   }
-  const liquidacion = liquidar(e, eventos);
   e.fase = "resultado";
-  e.finFase = ahora + BJ.RESULTADO_MS;
-  return liquidacion;
+  e.finFase = ahora + espera + BJ.RESULTADO_MS;
+  const liquidacion = liquidar(e, []);
+  if (espera === 0) {
+    eventos.push(...eventosDeLaBanca(e));
+    return liquidacion;
+  }
+  return { ...liquidacion, visibleEn: ahora + espera };
+}
+
+/** El instante en que se ve lo que ha jugado la banca, en un `resultado` que acaba en `fin`: hasta entonces, se ve la banca. */
+const revelacion = (fin: number): number => fin - BJ.RESULTADO_MS;
+
+/** Lo que se ve cuando la banca enseña su jugada: la carta girada, las que ha pedido y los pagos (con los del seguro). */
+function eventosDeLaBanca(e: EstadoBJ): Evento[] {
+  const eventos: Evento[] = [];
+  if (e.banca.length >= 2) eventos.push({ tipo: "carta_girada", carta: { ...e.banca[1] } });
+  for (const carta of e.banca.slice(2)) eventos.push(cartaDeBanca({ ...carta }));
+  liquidar(e, eventos);
+  return eventos;
 }
 
 /**
@@ -388,26 +411,46 @@ function liquidar(e: EstadoBJ, eventos: Evento[]): Liquidacion {
   return { ronda: e.ronda, filas };
 }
 
-/** Cierra la ronda: limpia la mesa, retira a los desconectados, rebaraja si hace falta y abre apuestas si queda alguien. */
-function nuevaRonda(e: EstadoBJ, ahora: number, rng: Rng, eventos: Evento[]): void {
-  e.ronda += 1;
-  e.manos = [];
-  e.seguros = [];
-  e.bancaMirada = false;
-  e.banca = [];
-  e.ventanasVacias = 0;
-  e.asientos = e.asientos.filter((a) => a.conectado);
+/**
+ * La ronda siguiente, que empieza en `inicio`: la mesa limpia, sin los desconectados y con apuestas abiertas si queda
+ * alguien. Sin rebarajar (eso lo hace `nuevaRonda`, que tiene el azar): el zapato no se ve.
+ */
+function rondaSiguiente(e: EstadoBJ, inicio: number): EstadoBJ {
+  const asientos = e.asientos.filter((a) => a.conectado);
+  const abierta = asientos.length > 0;
+  return {
+    ...e,
+    ronda: e.ronda + 1,
+    manos: [],
+    seguros: [],
+    bancaMirada: false,
+    banca: [],
+    ventanasVacias: 0,
+    asientos,
+    fase: abierta ? "apuestas" : "esperando",
+    finFase: abierta ? inicio + BJ.APUESTAS_MS : null,
+  };
+}
+
+/** Cierra la ronda: pasa a la siguiente (`rondaSiguiente`), que empieza en `inicio`, y rebaraja si hace falta. */
+function nuevaRonda(e: EstadoBJ, inicio: number, rng: Rng, eventos: Evento[]): void {
+  Object.assign(e, rondaSiguiente(e, inicio));
   if (e.zapato.length < BJ.MIN_ZAPATO) {
     e.zapato = barajar(crearBaraja(BJ.BARAJAS), rng);
     eventos.push({ tipo: "barajado" });
   }
-  if (e.asientos.length > 0) {
-    e.fase = "apuestas";
-    e.finFase = ahora + BJ.APUESTAS_MS;
-  } else {
-    e.fase = "esperando";
-    e.finFase = null;
-  }
+}
+
+/**
+ * El estado tal como se ve a la hora `ahora`: lo guardado más lo que el reloj ha traído sin cambiarlo. En `resultado`, antes
+ * de `revelacion` se ve la banca (con la carta tapada y sin las que ha pedido) y desde `finFase`, la ronda siguiente.
+ */
+function aLaVista(e: EstadoBJ, ahora: number): EstadoBJ {
+  if (e.fase !== "resultado" || e.finFase === null) return e;
+  const revela = revelacion(e.finFase);
+  if (ahora < revela) return { ...e, fase: "banca", finFase: revela, banca: e.banca.slice(0, 2) };
+  if (ahora >= e.finFase) return rondaSiguiente(e, e.finFase);
+  return e;
 }
 
 /** Abre una ventana de apuestas nueva desde `esperando`. */
@@ -480,8 +523,8 @@ function decidir(
       m.estado = "pasado";
     }
   }
-  cerrarDecisiones(s, ahora);
-  return exito(s, eventos);
+  const liquidacion = cerrarDecisiones(s, ahora, rng, eventos);
+  return exito(s, eventos, liquidacion);
 }
 
 /**
@@ -539,18 +582,19 @@ function dividir(e: EstadoBJ, jugadorId: JugadorId, ahora: number, rng: Rng): Pa
     nueva.estado = "plantado";
   }
   s.finFase = (s.finFase ?? ahora) + BJ.DIVIDIR_EXTRA_MS;
-  cerrarDecisiones(s, ahora);
-  return exito(s, eventos);
+  const liquidacion = cerrarDecisiones(s, ahora, rng, eventos);
+  return exito(s, eventos, liquidacion);
 }
 
 /** Rendirse: solo en decisiones y sobre la mano activa si es la primera decisión. La mano deja de jugar y la activa pasa a la siguiente. */
-function rendirse(e: EstadoBJ, jugadorId: JugadorId, ahora: number): Paso<EstadoBJ> {
+function rendirse(e: EstadoBJ, jugadorId: JugadorId, ahora: number, rng: Rng): Paso<EstadoBJ> {
   if (e.fase !== "decisiones" || !puedeRendirse(manoActiva(e, jugadorId))) return fallo("accion_invalida");
   const s = structuredClone(e);
   const m = manoActiva(s, jugadorId)!;
   m.estado = "rendido";
-  cerrarDecisiones(s, ahora);
-  return exito(s, [{ tipo: "rendido", jugadorId, indice: m.indice }]);
+  const eventos: Evento[] = [{ tipo: "rendido", jugadorId, indice: m.indice }];
+  const liquidacion = cerrarDecisiones(s, ahora, rng, eventos);
+  return exito(s, eventos, liquidacion);
 }
 
 function salir(e: EstadoBJ, jugadorId: JugadorId, ahora: number, rng: Rng): Paso<EstadoBJ> {
@@ -568,8 +612,7 @@ function salir(e: EstadoBJ, jugadorId: JugadorId, ahora: number, rng: Rng): Paso
   }
   if (s.asientos.length > 0) {
     const eventos: Evento[] = [];
-    const liquidacion = resolverSeguroSiListo(s, ahora, rng, eventos);
-    cerrarDecisiones(s, ahora);
+    const liquidacion = resolverSeguroSiListo(s, ahora, rng, eventos) ?? cerrarDecisiones(s, ahora, rng, eventos);
     return exito(s, eventos, liquidacion);
   }
   // Se fue el último: no queda nadie para ver la ronda. Se liquida ya (pierden las manos abandonadas) y la mesa duerme.
@@ -610,18 +653,27 @@ function tick(e: EstadoBJ, ahora: number, rng: Rng): Paso<EstadoBJ> {
         }
       }
       return exito(s, eventos);
-    case "decisiones":
-      for (const m of s.manos) if (m.estado === "jugando") m.estado = "plantado";
-      s.fase = "banca";
-      s.finFase = ahora + BJ.BANCA_MS;
-      return exito(s);
-    case "banca": {
-      const liquidacion = jugarBanca(s, ahora, rng, eventos);
+    case "decisiones": {
+      // Quien no ha decidido se planta (lo hace `jugarBanca`) y juega la banca.
+      const liquidacion = cerrarRonda(s, ahora, rng, eventos);
       return exito(s, eventos, liquidacion);
     }
-    case "resultado":
-      nuevaRonda(s, ahora, rng, eventos);
-      return exito(s, eventos);
+    case "banca": {
+      // Solo en una mesa guardada por una versión anterior, con la banca aún sin jugar: juega y se ve ya.
+      const liquidacion = jugarBanca(s, ahora, rng, eventos, 0);
+      return exito(s, eventos, liquidacion);
+    }
+    case "resultado": {
+      // La ronda siguiente ya se ve desde `finFase` (`aLaVista`) y el reloj la anunció: se aplica sin prisa, con la siguiente
+      // escritura que haya. Empieza a su hora y no a la del tick, para que sea la misma que se ha visto.
+      nuevaRonda(s, e.finFase, rng, eventos);
+      if (s.finFase !== null && ahora >= s.finFase) {
+        // También ha vencido su ventana de apuestas: eso sí cambia el estado, como siempre.
+        const despues = tick(s, ahora, rng);
+        if (despues.ok && despues.estado !== s) return despues;
+      }
+      return { ok: true, estado: s, eventos, anunciado: true };
+    }
   }
 }
 
@@ -640,8 +692,7 @@ function desconectar(e: EstadoBJ, jugadorId: JugadorId, ahora: number, rng: Rng)
   // En el seguro, irse es contestar «no» (sus manos se plantan cuando empiecen las decisiones).
   contestarNo(s, jugadorId);
   const eventos: Evento[] = [];
-  const liquidacion = resolverSeguroSiListo(s, ahora, rng, eventos);
-  cerrarDecisiones(s, ahora);
+  const liquidacion = resolverSeguroSiListo(s, ahora, rng, eventos) ?? cerrarDecisiones(s, ahora, rng, eventos);
   return exito(s, eventos, liquidacion);
 }
 
@@ -679,7 +730,9 @@ function normalizar(e: EstadoBJ): EstadoBJ {
   return { ...antiguo, manos, seguros: antiguo.seguros ?? [], bancaMirada: antiguo.bancaMirada ?? false };
 }
 
-function vista(e: EstadoBJ, jugadorId: JugadorId | null): VistaBJ {
+/** Lo que ve `jugadorId` a la hora `ahora` (ver `aLaVista`): ni el zapato ni lo que la banca aún no ha enseñado. */
+function vista(guardado: EstadoBJ, jugadorId: JugadorId | null, ahora: number): VistaBJ {
+  const e = aLaVista(guardado, ahora);
   // La carta tapada no sale del servidor hasta que se gira (evento `carta_girada`): en `resultado`, o cuando la banca mira
   // y tiene blackjack. Ante cualquier otro caso, tapada: las fases nuevas no pueden filtrarla por descuido.
   const girada = e.fase === "resultado" || (e.bancaMirada && esBlackjack(e.banca));
@@ -746,7 +799,7 @@ export const blackjack: Juego<EstadoBJ, AccionBJ> = {
       case "seguro":
         return typeof accion.tomar === "boolean" ? responderSeguro(e, jugadorId, accion.tomar, ahora, rng) : fallo("mensaje_invalido");
       case "rendirse":
-        return rendirse(e, jugadorId, ahora);
+        return rendirse(e, jugadorId, ahora, rng);
       case "dividir":
         return dividir(e, jugadorId, ahora, rng);
       case "salir":
@@ -760,14 +813,35 @@ export const blackjack: Juego<EstadoBJ, AccionBJ> = {
 
   tick,
 
+  /**
+   * El fin de la fase. En `resultado`, el de la ventana de apuestas siguiente: la jugada de la banca y la ronda nueva las
+   * enseña el reloj sin cambiar el estado (`proximoAviso`), y la alarma solo hace falta si nadie apuesta.
+   */
   proximaAlarma(e) {
-    return e.finFase;
+    return e.fase === "resultado" && e.finFase !== null ? e.finFase + BJ.APUESTAS_MS : e.finFase;
+  },
+
+  /** En `resultado`, la banca enseña su jugada (`revelacion`) y, al acabar, empieza la ronda siguiente. */
+  proximoAviso(e, desde) {
+    if (e.fase !== "resultado" || e.finFase === null) return null;
+    return [revelacion(e.finFase), e.finFase].find((instante) => instante > desde) ?? null;
+  },
+
+  eventosEntre(e, desde, hasta) {
+    if (e.fase !== "resultado" || e.finFase === null) return [];
+    const dentro = (instante: number) => desde < instante && instante <= hasta;
+    const eventos: Evento[] = [];
+    if (dentro(revelacion(e.finFase))) eventos.push(...eventosDeLaBanca(e));
+    // La ronda siguiente rebaraja con menos de `BJ.MIN_ZAPATO` cartas (lo hará `nuevaRonda` al aplicarla).
+    if (dentro(e.finFase) && e.zapato.length < BJ.MIN_ZAPATO) eventos.push({ tipo: "barajado" });
+    return eventos;
   },
 
   vista,
 
-  /** La banca dura un instante y la sala no le enseña cuenta atrás (`finFase` a `null`). */
-  resumen(e): ResumenMesa {
+  /** Lo que se ve a esa hora (`aLaVista`). La banca dura un instante y la sala no le enseña cuenta atrás (`finFase` a `null`). */
+  resumen(guardado, ahora): ResumenMesa {
+    const e = aLaVista(guardado, ahora);
     return { jugadores: e.asientos.map((a) => a.apodo), fase: e.fase, finFase: e.fase === "banca" ? null : e.finFase };
   },
 };

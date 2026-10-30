@@ -1021,10 +1021,10 @@ describe("costo, alarma y resumen", () => {
   });
 
   it("resumen lista los apodos sentados, la fase y el fin de fase", () => {
-    expect(carrera.resumen(enApuestas())).toEqual({ jugadores: ["ana", "beto"], fase: "apuestas", finFase: T0 + CARRERA.APUESTAS_MS });
+    expect(carrera.resumen(enApuestas(), T0)).toEqual({ jugadores: ["ana", "beto"], fase: "apuestas", finFase: T0 + CARRERA.APUESTAS_MS });
     // en plena carrera, sin cuenta atrás: el resumen no cambia hasta la meta
-    expect(carrera.resumen(enCarrera())).toEqual({ jugadores: ["ana", "beto"], fase: "carrera", finFase: null });
-    expect(carrera.resumen(estado())).toEqual({ jugadores: [], fase: "esperando", finFase: null });
+    expect(carrera.resumen(enCarrera(), T0)).toEqual({ jugadores: ["ana", "beto"], fase: "carrera", finFase: null });
+    expect(carrera.resumen(estado(), T0)).toEqual({ jugadores: [], fase: "esperando", finFase: null });
   });
 });
 
@@ -1174,7 +1174,7 @@ describe("estado puro y serializable", () => {
     expect(() => carrera.vista(congelar(enCarrera()), 1, T0 + CARRERA.PASO_MS)).not.toThrow();
     expect(() => carrera.proximoAviso!(congelar(enCarrera()), T0)).not.toThrow();
     expect(() => carrera.eventosEntre!(congelar(enCarrera()), T0, T0 + 10 ** 6)).not.toThrow();
-    expect(() => carrera.resumen(congelar(enCarrera()))).not.toThrow();
+    expect(() => carrera.resumen(congelar(enCarrera()), T0)).not.toThrow();
     expect(() => carrera.costo(congelar(enCarrera()), 1, apostar("H", 50))).not.toThrow();
   });
 

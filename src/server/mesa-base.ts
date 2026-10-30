@@ -37,6 +37,8 @@ interface Liquidacion {
   rondaId: string;
   filas: FilaLiquidacion[];
   momento: number;
+  /** Desde cuándo se ve su resultado (`Paso.liquidacion.visibleEn`): antes no se paga. Sin él, se paga al guardarla. */
+  visibleEn?: number;
 }
 
 /**
@@ -89,6 +91,11 @@ function leerAccion<A extends { t: string }>(mensaje: WSMessage): A | null {
  * Hiberna: lo necesario vive en el almacenamiento (el registro `{ estado, pendientes, cobro }` en una sola clave) o en el
  * estado de cada conexión; los campos de la instancia son copias que `onStart` vuelve a cargar. Lo demás (la versión, la
  * hora de la alarma, el último resumen de la sala, los avisos) vive en memoria y se rehace al despertar.
+ *
+ * Lo que trae el reloj sin decisiones de nadie se anuncia desde memoria, sin escribir: los cambios de la vista
+ * (`Juego.proximoAviso`), el pago de una ronda cuando su resultado se ve (`visibleEn`) y los `tick` ya anunciados. Así la
+ * memoria puede ir por delante del almacenamiento, pero solo con cosas que se pueden rehacer igual si la mesa sale de
+ * memoria: un `tick` anunciado se vuelve a aplicar, y una ronda ya pagada que siga guardada se paga otra vez sin efecto.
  */
 export abstract class Mesa<E extends { ronda: number }, A extends { t: string }> extends Server<Env> {
   static options = { hibernate: true };
@@ -115,6 +122,11 @@ export abstract class Mesa<E extends { ronda: number }, A extends { t: string }>
   private alarmaEn: number | null = null;
   /** El último resumen que aceptó la sala (en JSON): no se le vuelve a mandar si no cambia. `null` al despertar. */
   private resumenEnSala: string | null = null;
+  /**
+   * Hay rondas pagadas al verse (fuera de una escritura) que solo se han quitado de `pendientes` en memoria: las borra del
+   * almacenamiento la siguiente escritura o, si tras una alarma no la hay, la propia alarma.
+   */
+  private pagadasSinBorrar = false;
   /** Rondas pagadas cuyos netos aún no ha recibido la sala (ranking de la noche). Solo en memoria. */
   private rondasPorAvisar: RondaLiquidada[] = [];
   /** Tareas de una conexión seguidas que han fallado de forma inesperada. Solo en memoria. */
@@ -233,11 +245,14 @@ export abstract class Mesa<E extends { ronda: number }, A extends { t: string }>
     return this.encolar(async () => {
       const ahora = this.ahora();
       await this.anularCobro();
-      if (await this.alDia(ahora)) return;
-      // Nada que hacer en el juego (alarma adelantada, o solo para reintentar): reintentar pagos y volver a programar.
-      await this.liquidarPendientes();
-      await this.avisarSala();
-      await this.programarAlarma(ahora);
+      if (!(await this.alDia(ahora))) {
+        // Nada que confirmar en el juego (alarma adelantada, o solo para reintentar): reintentar pagos y volver a programar.
+        await this.liquidarPendientes(ahora);
+        await this.avisarSala(ahora);
+        await this.programarAlarma(ahora);
+      }
+      // Lo pagado al verse se borra ya del almacenamiento: tras la alarma puede que la mesa no vuelva a escribir.
+      if (this.pagadasSinBorrar) await this.guardar();
     });
   }
 
@@ -317,13 +332,19 @@ export abstract class Mesa<E extends { ronda: number }, A extends { t: string }>
   }
 
   /**
-   * Aplica lo que el reloj ya ha decidido: primero anuncia lo que ha vencido sin cambiar el estado (`avisar`) y después
-   * el `tick`, que se confirma si cambió algo. Devuelve si cambió.
+   * Aplica lo que el reloj ya ha decidido: primero anuncia lo que ha vencido sin cambiar el estado (`avisar`), pagando lo
+   * que con eso se ve, y después el `tick`. Un `tick` ya anunciado se queda en memoria (lo guarda la siguiente escritura);
+   * cualquier otro cambio se confirma. Devuelve si se confirmó alguno.
    */
   private async alDia(ahora: number, excluir?: string): Promise<boolean> {
-    this.avisar(ahora, excluir);
+    if (this.avisar(ahora, excluir)) await this.pagarLoQueSeVe(ahora);
     const p = this.juego.tick(this.estado, ahora, this.rng);
     if (!p.ok || p.estado === this.estado) {
+      this.programarAviso(ahora);
+      return false;
+    }
+    if (p.anunciado === true && p.liquidacion === undefined) {
+      this.estado = p.estado;
       this.programarAviso(ahora);
       return false;
     }
@@ -333,12 +354,13 @@ export abstract class Mesa<E extends { ronda: number }, A extends { t: string }>
 
   /**
    * Envía, un mensaje por cada uno y en orden, los cambios que el reloj ha traído hasta `ahora` sin cambiar el estado
-   * (los pasos de la carrera): cada conexión recibe la vista de ese instante con sus eventos. No guarda nada.
+   * (los pasos de la carrera, la jugada de la banca): cada conexión recibe la vista de ese instante con sus eventos. No
+   * guarda nada. Devuelve si ha anunciado algo.
    */
-  private avisar(ahora: number, excluir?: string): void {
-    for (;;) {
+  private avisar(ahora: number, excluir?: string): boolean {
+    for (let avisado = false; ; avisado = true) {
       const momento = this.juego.proximoAviso?.(this.estado, this.avisadoHasta) ?? null;
-      if (momento === null || momento > ahora) return;
+      if (momento === null || momento > ahora) return avisado;
       const eventos = this.juego.eventosEntre?.(this.estado, this.avisadoHasta, momento) ?? [];
       this.avisadoHasta = momento;
       this.difundir(eventos, momento, excluir);
@@ -360,8 +382,10 @@ export abstract class Mesa<E extends { ronda: number }, A extends { t: string }>
       this.encolar(async () => {
         // Si el temporizador se adelanta al reloj de la mesa, no hay nada que anunciar y se vuelve a programar.
         const ahora = this.ahora();
-        this.avisar(ahora);
+        const avisado = this.avisar(ahora);
         this.programarAviso(ahora);
+        if (avisado) await this.pagarLoQueSeVe(ahora);
+        await this.avisarSala(ahora);
       }).catch(ignorar);
     }, Math.max(0, cuando - ahora));
     this.aviso = { cuando, quitar };
@@ -369,8 +393,8 @@ export abstract class Mesa<E extends { ronda: number }, A extends { t: string }>
 
   /**
    * Hace efectivo un cambio: lo guarda (con la ronda a pagar, si cerró una, y borrando el cobro de la jugada si
-   * `cerrarCobro`, todo en una sola escritura), paga lo pendiente, programa la alarma, envía a cada conexión su vista con
-   * los eventos (salvo a `excluir`, que la recibe aparte) y avisa a la sala.
+   * `cerrarCobro`, todo en una sola escritura), paga lo pendiente que ya se ve, programa la alarma, envía a cada conexión su
+   * vista con los eventos (salvo a `excluir`, que la recibe aparte) y avisa a la sala.
    */
   private async confirmar(
     p: PasoOk<E>,
@@ -379,19 +403,21 @@ export abstract class Mesa<E extends { ronda: number }, A extends { t: string }>
   ): Promise<void> {
     const cambios: Partial<Registro<E>> = { estado: p.estado };
     if (p.liquidacion !== undefined) {
-      const { ronda, filas } = p.liquidacion;
-      cambios.pendientes = [...this.pendientes, { rondaId: this.rondaId(ronda), filas, momento: ahora }];
+      const { ronda, filas, visibleEn } = p.liquidacion;
+      const liquidacion: Liquidacion = { rondaId: this.rondaId(ronda), filas, momento: ahora };
+      if (visibleEn !== undefined) liquidacion.visibleEn = visibleEn;
+      cambios.pendientes = [...this.pendientes, liquidacion];
     }
     if (cerrarCobro) cambios.cobro = null;
     await this.guardar(cambios);
-    await this.liquidarPendientes();
+    await this.liquidarPendientes(ahora);
     await this.programarAlarma(ahora);
 
     // La vista nueva enseña todo lo vencido hasta `ahora`: los avisos siguen desde aquí.
     this.avisadoHasta = Math.max(this.avisadoHasta, ahora);
     this.difundir(p.eventos, ahora, excluir);
     this.programarAviso(ahora);
-    await this.avisarSala();
+    await this.avisarSala(ahora);
   }
 
   /** Envía a cada conexión (salvo a `excluir`) su vista en el instante `momento` con `eventos`. */
@@ -403,21 +429,42 @@ export abstract class Mesa<E extends { ronda: number }, A extends { t: string }>
   }
 
   /**
-   * Paga en Jugadores las rondas pendientes (idempotente por `rondaId`); las que fallen quedan para el siguiente cambio.
-   * Los netos de las que se pagan quedan para el siguiente aviso a la sala (el ranking de la noche).
+   * Paga las rondas pendientes cuyo resultado ya se ve (las que fallen quedan para el siguiente cambio) y las borra del
+   * registro con una escritura.
    */
-  private async liquidarPendientes(): Promise<void> {
-    if (this.pendientes.length === 0) return;
+  private async liquidarPendientes(ahora: number): Promise<void> {
+    const pagadas = await this.pagar(this.pendientes.filter((l) => (l.visibleEn ?? ahora) <= ahora));
+    if (pagadas.length > 0) await this.guardar({ pendientes: this.pendientes.filter((l) => !pagadas.includes(l)) });
+  }
+
+  /**
+   * Paga las rondas cuyo resultado acaba de verse con un anuncio del reloj (`visibleEn` ≤ `ahora`). Se quitan de
+   * `pendientes` solo en memoria (`pagadasSinBorrar`): anunciar no escribe nada.
+   */
+  private async pagarLoQueSeVe(ahora: number): Promise<void> {
+    const pagadas = await this.pagar(this.pendientes.filter((l) => l.visibleEn !== undefined && l.visibleEn <= ahora));
+    if (pagadas.length === 0) return;
+    this.pendientes = this.pendientes.filter((l) => !pagadas.includes(l));
+    this.pagadasSinBorrar = true;
+  }
+
+  /**
+   * Paga en Jugadores esas rondas (idempotente por `rondaId`) y devuelve las que se han pagado. Los netos de las pagadas
+   * quedan para el siguiente aviso a la sala (el ranking de la noche).
+   */
+  private async pagar(liquidaciones: Liquidacion[]): Promise<Liquidacion[]> {
+    if (liquidaciones.length === 0) return [];
     // Liquidar borra todas las apuestas pendientes de la ronda: un cobro a medias se anula antes, o sus fichas se
     // perderían. (El cobro de una jugada recién guardada ya no cuenta: `confirmar` lo cierra antes de llegar aquí.)
-    if (this.cobro !== null && !(await this.anularCobro())) return;
-    const restantes: Liquidacion[] = [];
-    for (const liquidacion of this.pendientes) {
+    if (this.cobro !== null && !(await this.anularCobro())) return [];
+    const pagadas: Liquidacion[] = [];
+    for (const liquidacion of liquidaciones) {
       const netos = await this.liquidar(liquidacion);
-      if (netos === null) restantes.push(liquidacion);
-      else this.rondasPorAvisar.push({ rondaId: liquidacion.rondaId, netos });
+      if (netos === null) continue;
+      pagadas.push(liquidacion);
+      this.rondasPorAvisar.push({ rondaId: liquidacion.rondaId, netos });
     }
-    if (restantes.length < this.pendientes.length) await this.guardar({ pendientes: restantes });
+    return pagadas;
   }
 
   /** Paga una ronda en Jugadores (con reintentos) y devuelve el neto de cada jugador; `null` si no se pudo. */
@@ -454,8 +501,8 @@ export abstract class Mesa<E extends { ronda: number }, A extends { t: string }>
    * desde lo último que aceptó: cada aviso es una petición y una escritura en la sala. Si la sala falla se registra, la
    * mesa sigue y el siguiente cambio lo vuelve a intentar (las rondas también: la sala no suma dos veces la misma).
    */
-  private async avisarSala(): Promise<void> {
-    const resumen = this.juego.resumen(this.estado);
+  private async avisarSala(ahora: number): Promise<void> {
+    const resumen = this.juego.resumen(this.estado, ahora);
     const clave = JSON.stringify(resumen);
     const rondas = this.rondasPorAvisar;
     if (clave === this.resumenEnSala && rondas.length === 0) return;
@@ -501,12 +548,14 @@ export abstract class Mesa<E extends { ronda: number }, A extends { t: string }>
 
   /**
    * Guarda el registro de la mesa (una sola clave, una fila escrita) con `cambios` sobre lo que hay en memoria y, ya
-   * guardado, lo aplica en memoria: si la escritura falla, la memoria sigue igual que el almacenamiento.
+   * guardado, lo aplica en memoria: si la escritura falla, la memoria sigue como estaba (y lo que llevara por delante del
+   * almacenamiento, también).
    */
   private async guardar(cambios: Partial<Registro<E>> = {}): Promise<void> {
     const registro: Registro<E> = { estado: this.estado, pendientes: this.pendientes, cobro: this.cobro, ...cambios };
     await this.ctx.storage.put(CLAVE_MESA, registro);
     ({ estado: this.estado, pendientes: this.pendientes, cobro: this.cobro } = registro);
+    this.pagadasSinBorrar = false;
   }
 
   private rondaId(ronda: number): string {
