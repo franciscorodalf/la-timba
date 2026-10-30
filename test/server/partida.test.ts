@@ -570,8 +570,8 @@ describe("Partida: los resúmenes de las mesas, en memoria", () => {
     expect((await conexion.recibir("sala")).mesas).toEqual({ blackjack: { jugadores: [jugador.apodo], fase: "apuestas", finFase: 5 }, carrera: MESA_VACIA });
   });
 
-  it("lo que manda una mesa no lo pisa la respuesta, más vieja, a lo que la sala le preguntó", async () => {
-    const { token, codigo } = await nuevaPartida();
+  it("lo que manda una mesa no lo pisa la respuesta, más vieja, a lo que la sala le preguntó; y el ranking sale al día", async () => {
+    const { token, jugador, codigo } = await nuevaPartida();
     // La carrera tarda en contestar y entretanto avisa con su resumen nuevo: se queda el aviso.
     // (La respuesta se resuelve con temporizadores de la propia sala: una promesa no se puede resolver desde otro contexto.)
     let preguntada = false;
@@ -594,10 +594,15 @@ describe("Partida: los resúmenes de las mesas, en memoria", () => {
     const conectando = abrir(codigo, token);
     const nuevo: ResumenMesa = { jugadores: ["beto"], fase: "carrera", finFase: null };
     await esperar(() => preguntada, "la sala pregunta a la carrera");
-    await sala(codigo).actualizarMesa("carrera", nuevo);
+    await sala(codigo).actualizarMesa("carrera", nuevo, [ronda([jugador.apodo, 30])]);
     contestar = true;
     const conexion = await conectando;
-    for (let i = 0; i < 2; i++) expect((await conexion.recibir("sala")).mesas.carrera).toEqual(nuevo);
+    // Los dos mensajes (el del aviso y el de la conexión, que sale después) llevan lo último: el resumen y el ranking.
+    for (let i = 0; i < 2; i++) {
+      const mensaje: MensajeSala = await conexion.recibir("sala");
+      expect(mensaje.mesas.carrera).toEqual(nuevo);
+      expect(mensaje.rankingNoche).toEqual([{ apodo: jugador.apodo, neto: 30 }]);
+    }
     await runInDurableObject(sala(codigo), (partida) => {
       (partida as unknown as { env: Env }).env = real;
     });

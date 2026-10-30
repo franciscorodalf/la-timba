@@ -211,9 +211,13 @@ export class Partida extends Server<Env> {
     return espacio.get(espacio.idFromName(this.name)) as unknown as Pick<Mesa<any, any>, "resumenSala">;
   }
 
-  /** Envía a todas las conexiones el estado actual de la sala. */
+  /**
+   * Envía a todas las conexiones el estado actual de la sala. El ranking se lee después de preguntar a las mesas: si
+   * entretanto ha cambiado, este mensaje (que puede salir después que otro) ya lleva el nuevo.
+   */
   private async difundir(): Promise<void> {
-    const [mesas, { ranking }] = await Promise.all([this.mesasAlDia(), this.leerNoche()]);
+    const mesas = await this.mesasAlDia();
+    const { ranking } = await this.leerNoche();
     const mensaje: MensajeSala = { t: "sala", codigo: this.name, ahora: this.ahora(), conectados: this.conectados(), mesas, rankingNoche: ranking };
     this.broadcast(JSON.stringify(mensaje));
   }
