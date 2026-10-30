@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { evictDurableObject, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { PAUSA_SIN_FICHAS_MS } from "../../src/server/mesa-base";
 import type { MensajeSala } from "../../src/shared/api";
 import { crearBaraja } from "../../src/shared/cartas";
 import { BJ, blackjack, type EstadoBJ, type VistaBJ } from "../../src/shared/juegos/blackjack";
@@ -278,7 +279,8 @@ describe("MesaBlackjack: rondas y fichas", () => {
     expect(await pendientesDe(codigo)).toBe(0);
     expect(await estadoMesa(codigo)).toEqual(antes);
 
-    // Lo que sí tiene, sí puede apostarlo; y la versión no avanzó con el intento fallido.
+    // Pasada la pausa tras el sin_fichas, lo que sí tiene, sí puede apostarlo; y la versión no avanzó con el intento fallido.
+    await reloj(codigo, T + PAUSA_SIN_FICHAS_MS);
     enviar(conexion, { t: "apostar", cantidad: 30 });
     const apostado: Estado = await conexion.recibir();
     expect(apostado.version).toBe(inicial.version + 1);
@@ -1339,11 +1341,20 @@ describe("MesaBlackjack: las jugadas nuevas y las fichas", () => {
     expect(await fichas(ana.id)).toBe(40);
     const registro = await guardado(codigo);
     const alarma = await alarmaDe(codigo);
+    let cobros = 0;
+    await cambiarJugadores(codigo, (stub) => ({
+      apostar: (...a: Parameters<StubJugadores["apostar"]>) => {
+        cobros++;
+        return stub.apostar(...a);
+      },
+    }));
 
     for (const accion of ["dividir", "doblar"]) {
       enviar(conexion, { t: accion });
       expect(await conexion.recibir(), accion).toEqual({ t: "error", codigo: "sin_fichas" });
     }
+    // Doblar llega en la pausa tras el sin_fichas de dividir: se rechaza sin preguntar a Jugadores.
+    expect(cobros).toBe(1);
     expect(await fichas(ana.id)).toBe(40);
     expect(await pendientesDe(codigo)).toBe(1); // solo la apuesta
     expect(await guardado(codigo)).toEqual(registro); // ni estado, ni cobros, ni pendientes
@@ -1354,6 +1365,54 @@ describe("MesaBlackjack: las jugadas nuevas y las fichas", () => {
     const plantado = await conexion.recibir();
     expect(plantado).toMatchObject({ t: "estado", vista: { fase: "banca" } });
     expect(plantado.version).toBe(repartido.version + 1);
+  });
+
+  it("tras un sin_fichas, insistir durante la pausa no escribe ni pregunta a Jugadores; pasada la pausa se cobra con normalidad", async () => {
+    const {
+      codigo,
+      js: [ana],
+    } = await nuevaMesa(1);
+    await ponerFichas(ana.id, 30);
+    const conexion = await sentarse(codigo, ana.token);
+    await conexion.recibir();
+    let cobros = 0;
+    await cambiarJugadores(codigo, (stub) => ({
+      apostar: (...a: Parameters<StubJugadores["apostar"]>) => {
+        cobros++;
+        return stub.apostar(...a);
+      },
+    }));
+    const escrituras = await vigilarEscrituras(codigo);
+    const alarma = await alarmaDe(codigo);
+
+    // El primer intento pregunta a Jugadores, como siempre: guarda la intención y la olvida.
+    enviar(conexion, { t: "apostar", cantidad: 50 });
+    expect(await conexion.recibir()).toEqual({ t: "error", codigo: "sin_fichas" });
+    expect(escrituras).toEqual(["put:mesa", "put:mesa"]);
+    expect(cobros).toBe(1);
+
+    // Durante la pausa, cualquier jugada con coste (aunque ahora le llegara) se rechaza sin escribir ni preguntar.
+    for (const cantidad of [40, 30]) {
+      enviar(conexion, { t: "apostar", cantidad });
+      expect(await conexion.recibir()).toEqual({ t: "error", codigo: "sin_fichas" });
+    }
+    await reloj(codigo, T + PAUSA_SIN_FICHAS_MS - 1);
+    enviar(conexion, { t: "apostar", cantidad: 30 });
+    expect(await conexion.recibir()).toEqual({ t: "error", codigo: "sin_fichas" });
+    expect(escrituras).toEqual(["put:mesa", "put:mesa"]);
+    expect(cobros).toBe(1);
+    expect(await alarmaDe(codigo)).toBe(alarma);
+    // Lo que no cuesta nada no espera: las reglas lo atienden como siempre.
+    enviar(conexion, { t: "pedir" });
+    expect(await conexion.recibir()).toEqual({ t: "error", codigo: "fase_incorrecta" });
+
+    // Pasada la pausa, se pregunta otra vez y se cobra.
+    await reloj(codigo, T + PAUSA_SIN_FICHAS_MS);
+    enviar(conexion, { t: "apostar", cantidad: 30 });
+    expect(((await conexion.recibir()) as Estado).vista.manos).toMatchObject([{ jugadorId: ana.id, apuesta: 30 }]);
+    expect(cobros).toBe(2);
+    expect(await fichas(ana.id)).toBe(0);
+    expect(await pendientesDe(codigo)).toBe(1);
   });
 
   it("sin fichas para el seguro → sin_fichas y se puede contestar que no", async () => {

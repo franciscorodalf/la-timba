@@ -19,6 +19,11 @@ const INTENTOS_LIQUIDAR = 3;
 const REINTENTO_MS = 60_000;
 /** Fallos inesperados seguidos (no se puede guardar, Jugadores no responde) a partir de los cuales se avisa de que La Timba descansa. */
 const FALLOS_PARA_DESCANSAR = 3;
+/**
+ * Tras un `sin_fichas` de Jugadores, lo que dura la pausa en que las jugadas con coste de ese jugador se rechazan con
+ * `sin_fichas` sin más: cada intento costaría dos escrituras y una llamada a Jugadores, y un cliente que insista no gasta.
+ */
+export const PAUSA_SIN_FICHAS_MS = 2_000;
 
 /** Cierre de una conexión que llega sin la identidad que inyecta el Worker. */
 const CIERRE_NO_AUTENTICADO = 4401;
@@ -131,6 +136,11 @@ export abstract class Mesa<E extends { ronda: number }, A extends { t: string }>
   private rondasPorAvisar: RondaLiquidada[] = [];
   /** Tareas de una conexión seguidas que han fallado de forma inesperada. Solo en memoria. */
   private fallosSeguidos = 0;
+  /**
+   * Hasta cuándo dura la pausa de cada jugador al que Jugadores acaba de decir `sin_fichas` (`PAUSA_SIN_FICHAS_MS`). Solo
+   * en memoria: si la mesa sale de memoria se olvida, y el siguiente intento vuelve a preguntar.
+   */
+  private sinFichasHasta = new Map<JugadorId, number>();
   private cola: Promise<void> = Promise.resolve();
   /** Mensajes de cada conexión (por id) en el segundo en curso del reloj de la mesa. Solo en memoria: hibernar lo reinicia. */
   private mensajes = new Map<string, { segundo: number; cuenta: number }>();
@@ -291,6 +301,8 @@ export abstract class Mesa<E extends { ronda: number }, A extends { t: string }>
     // El coste se mide sobre el estado anterior a la acción (al doblar cuesta la apuesta original).
     const costo = this.juego.costo(estado, yo.jugadorId, accion);
     if (costo === 0) return this.confirmar(p, ahora);
+    // Se acaba de quedar sin fichas: durante la pausa no se guarda la intención ni se pregunta a Jugadores.
+    if ((this.sinFichasHasta.get(yo.jugadorId) ?? ahora) > ahora) return this.enviarError(conn, "sin_fichas");
 
     const cobro = await this.cobrar(yo.jugadorId, costo, estado.ronda, ahora);
     if (cobro !== "ok") return this.enviarError(conn, cobro);
@@ -321,7 +333,10 @@ export abstract class Mesa<E extends { ronda: number }, A extends { t: string }>
     }
     if (respuesta === "ok") return "ok";
     await this.olvidarCobro(ahora);
-    if (respuesta === "sin_fichas") return "sin_fichas";
+    if (respuesta === "sin_fichas") {
+      this.sinFichasHasta.set(jugadorId, ahora + PAUSA_SIN_FICHAS_MS);
+      return "sin_fichas";
+    }
     return respuesta === "anulado" ? "no_disponible" : "apuesta_invalida";
   }
 
@@ -481,6 +496,8 @@ export abstract class Mesa<E extends { ronda: number }, A extends { t: string }>
       if (netos === null) continue;
       pagadas.push(liquidacion);
       this.rondasPorAvisar.push({ rondaId: liquidacion.rondaId, netos });
+      // Lo cobrado puede devolverle fichas a quien estaba en pausa: deja de estarlo.
+      for (const { jugadorId } of liquidacion.filas) this.sinFichasHasta.delete(jugadorId);
     }
     return pagadas;
   }
