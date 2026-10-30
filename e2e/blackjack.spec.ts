@@ -2,7 +2,7 @@ import { type Browser, type BrowserContext, expect, type Locator, type Page, tes
 import type { RespuestaSesion } from "../src/shared/api";
 import type { Carta } from "../src/shared/cartas";
 import type { VistaBJ } from "../src/shared/juegos/blackjack";
-import { abrirPartida, apodoUnico, carta, conSesion, entrarSimulada as baseEntrarSimulada, fichasDeApi, mensajeEstado, registrar } from "./ayudas";
+import { abrirPartida, apodoUnico, carta, conSesion, entrarSimulada as baseEntrarSimulada, fichasDeApi, mensajeEstado, registrar, sinDesplazamientoHorizontal } from "./ayudas";
 
 // La mesa anima sin parar (la barra del temporizador se vacía durante 15 s): las capturas continuas de la traza, con
 // varios trabajadores en paralelo, saturan la máquina y retrasan los clics más que la ventana de decisiones. La traza se
@@ -647,5 +647,460 @@ test.describe("mesa simulada", () => {
     await page.goto(`/p/${codigo}/blackjack`);
     await expect(page.getByText("No conseguimos sentarte en la mesa")).toBeVisible({ timeout: 15_000 });
     await expect(page.getByRole("link", { name: "Volver a la sala" })).toBeVisible();
+  });
+
+  // ---- Varias manos, dividir y rendirse ----
+
+  type ManoDeLaVista = VistaBJ["manos"][number];
+  type Opciones = NonNullable<VistaBJ["opciones"]>;
+  /** Lo que permiten las reglas: por defecto, pedir, plantarse y doblar. */
+  const opciones = (resto: Partial<Opciones> = {}): Opciones => ({ pedir: true, plantarse: true, doblar: true, dividir: false, rendirse: false, seguro: null, ...resto });
+  /** Una mano de un jugador: por defecto, tuya y de 50 fichas. */
+  const mano = (jugador: { id: number; apodo: string }, indice: number, cartas: Carta[], resto: Partial<ManoDeLaVista> = {}): ManoDeLaVista => ({
+    jugadorId: jugador.id,
+    apodo: jugador.apodo,
+    casilla: indice,
+    indice,
+    apuesta: 50,
+    cartas,
+    estado: "jugando",
+    doblada: false,
+    dividida: false,
+    total: 0,
+    ...resto,
+  });
+  /** La mesa en las decisiones, con la banca enseñando un 6. */
+  const enDecisiones = (sesion: RespuestaSesion, manos: ManoDeLaVista[], resto: Partial<VistaBJ> = {}): VistaBJ =>
+    vista(sesion, { fase: "decisiones", banca: [c("6S"), null], totalBanca: 6, manos, opciones: opciones(), ...resto });
+  const botonDe = (pagina: Page, nombre: string): Locator => pagina.getByRole("button", { name: nombre, exact: true });
+  const tuManoN = (pagina: Page, n: number): Locator => pagina.getByRole("group", { name: `Tu mano ${n}`, exact: true });
+  const nombresDe = (grupo: Locator): Promise<(string | null)[]> => grupo.getByRole("img").evaluateAll((cartas) => cartas.map((x) => x.getAttribute("aria-label")));
+
+  /**
+   * Un bucle de fotogramas que anota, en cada uno, dónde está cada carta de `nombres` (las que están en una mano de la mesa): su
+   * caja y su opacidad. Para ver si una carta se desliza, si desaparece en algún fotograma o si sale volando desde el mazo.
+   */
+  async function muestrearCartas(pagina: Page, nombres: string[]): Promise<void> {
+    await pagina.evaluate((nombresAMirar) => {
+      const w = window as unknown as { __muestras: Muestra[] };
+      w.__muestras = [];
+      const fotograma = (t: number) => {
+        const cartas: Muestra["cartas"] = {};
+        for (const nombre of nombresAMirar) {
+          cartas[nombre] = [...document.querySelectorAll(".bj-mano [role=img]")]
+            .filter((el) => el.getAttribute("aria-label") === nombre)
+            .map((el) => {
+              const r = el.getBoundingClientRect();
+              return { x: r.x + r.width / 2, y: r.y + r.height / 2, ancho: r.width, opacidad: Number(getComputedStyle(el).opacity) };
+            });
+        }
+        w.__muestras.push({ t, cartas });
+        requestAnimationFrame(fotograma);
+      };
+      requestAnimationFrame(fotograma);
+    }, nombres);
+  }
+  interface Muestra {
+    t: number;
+    cartas: Record<string, { x: number; y: number; ancho: number; opacidad: number }[]>;
+  }
+  const muestras = (pagina: Page): Promise<Muestra[]> => pagina.evaluate(() => (window as unknown as { __muestras: Muestra[] }).__muestras);
+  const cuantasMuestras = (pagina: Page): Promise<number> => pagina.evaluate(() => (window as unknown as { __muestras: unknown[] }).__muestras.length);
+  /** Las muestras de una carta desde la muestra `desde`, ya sin las vacías: dónde estaba en cada fotograma. */
+  const sitiosDe = (todas: Muestra[], nombre: string, desde = 0) => todas.slice(desde).map((m) => m.cartas[nombre]);
+
+  test("al dividir se ven dos manos: la segunda carta se desliza a la nueva y llegan las cartas nuevas", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    await fichasDeApi(page, 900);
+    const yo = sesion.jugador;
+    mesa.alConectar(estado(enDecisiones(sesion, [mano(yo, 0, [c("8S"), c("8C")], { casilla: 0 })], { opciones: opciones({ dividir: true, rendirse: true }) })));
+    await page.goto(`/p/${codigo}/blackjack`);
+    await expect(tuMano(page)).toHaveCount(2);
+    await expect(botonDe(page, "Dividir")).toBeEnabled();
+
+    // Se mira, fotograma a fotograma, la que se va a la mano nueva y las dos que llegan del mazo.
+    await muestrearCartas(page, ["8 de tréboles", "3 de corazones", "5 de diamantes"]);
+    await botonDe(page, "Dividir").click();
+    await expect.poll(() => mesa.recibidas).toContainEqual({ t: "dividir" });
+    await page.waitForTimeout(300);
+    const marca = await cuantasMuestras(page);
+    mesa.enviar(
+      estado(
+        enDecisiones(
+          sesion,
+          [mano(yo, 0, [c("8S"), c("3H")], { casilla: 0, dividida: true, apuesta: 50 }), mano(yo, 1, [c("8C"), c("5D")], { casilla: 0, dividida: true, apuesta: 50 })],
+          { opciones: opciones() },
+        ),
+        [
+          { tipo: "mano_dividida", jugadorId: yo.id, casilla: 0, indice: 0 },
+          { tipo: "carta_repartida", a: yo.id, mano: 0, oculta: false, carta: c("3H") },
+          { tipo: "carta_repartida", a: yo.id, mano: 1, oculta: false, carta: c("5D") },
+        ],
+      ),
+    );
+    await expect(tuManoN(page, 2).getByRole("img")).toHaveCount(2);
+    await expect(tuManoN(page, 1).getByRole("img")).toHaveCount(2);
+    // Cuando han llegado las cartas nuevas y se ha parado todo.
+    await page.waitForTimeout(1_800);
+
+    // Cada carta, en su mano: la que se movió (el 8 de tréboles) y la nueva (el 5 de diamantes) en la segunda; el 3 de corazones, en la primera.
+    expect(await nombresDe(tuManoN(page, 1))).toEqual(["8 de picas", "3 de corazones"]);
+    expect(await nombresDe(tuManoN(page, 2))).toEqual(["8 de tréboles", "5 de diamantes"]);
+    await expect(page.getByText("Mano 1 de 2")).toBeVisible();
+
+    const todas = await muestras(page);
+    // El 8 de tréboles existe, una sola vez y visible, en todos los fotogramas: antes, durante y después de dividir.
+    const movida = sitiosDe(todas, "8 de tréboles", Math.max(marca - 10, 0));
+    expect(movida.length).toBeGreaterThan(30);
+    for (const [i, sitios] of movida.entries()) {
+      expect(sitios, `fotograma ${i}: el 8 de tréboles debe estar una vez`).toHaveLength(1);
+      expect(sitios[0].opacidad, `fotograma ${i}: el 8 de tréboles debe verse`).toBeGreaterThan(0.99);
+    }
+    // Y se desliza: parte de un sitio, acaba en otro y pasa por sitios intermedios (no salta).
+    const trayecto = movida.map((sitios) => sitios[0]);
+    const final = trayecto.at(-1)!;
+    const distancia = (p: { x: number; y: number }) => Math.hypot(p.x - final.x, p.y - final.y);
+    const recorrido = Math.max(...trayecto.map(distancia));
+    expect(recorrido, "la carta se mueve de verdad").toBeGreaterThan(8);
+    const intermedios = trayecto.filter((p) => distancia(p) > 2 && distancia(p) < recorrido - 2);
+    expect(intermedios.length, "pasa por sitios intermedios").toBeGreaterThanOrEqual(2);
+    expect(distancia(trayecto.at(-1)!)).toBeLessThan(1);
+
+    // Las cartas nuevas vuelan desde el mazo: la primera vez que se ven, lejos de su sitio.
+    for (const nombre of ["3 de corazones", "5 de diamantes"]) {
+      const trayectoNueva = sitiosDe(todas, nombre, marca).filter((sitios) => sitios.length === 1 && sitios[0].opacidad > 0).map((sitios) => sitios[0]);
+      expect(trayectoNueva.length, `${nombre} aparece`).toBeGreaterThan(5);
+      const llegada = trayectoNueva.at(-1)!;
+      expect(Math.hypot(trayectoNueva[0].x - llegada.x, trayectoNueva[0].y - llegada.y), `${nombre} sale lejos de su sitio (el mazo)`).toBeGreaterThan(40);
+    }
+  });
+
+  test.describe("con movimiento reducido", () => {
+    test.use({ reducedMotion: "reduce" });
+
+    test("dividir no desliza ni hace volar nada: la carta cambia de mano de golpe y las nuevas aparecen en su sitio", async ({ page, request }) => {
+      const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+      await fichasDeApi(page, 900);
+      const yo = sesion.jugador;
+      mesa.alConectar(estado(enDecisiones(sesion, [mano(yo, 0, [c("8S"), c("8C")])], { opciones: opciones({ dividir: true }) })));
+      await page.goto(`/p/${codigo}/blackjack`);
+      await expect(tuMano(page)).toHaveCount(2);
+
+      await muestrearCartas(page, ["8 de tréboles", "3 de corazones", "5 de diamantes"]);
+      await page.waitForTimeout(300);
+      const marca = await cuantasMuestras(page);
+      mesa.enviar(
+        estado(
+          enDecisiones(sesion, [mano(yo, 0, [c("8S"), c("3H")], { dividida: true }), mano(yo, 1, [c("8C"), c("5D")], { dividida: true })]),
+          [
+            { tipo: "mano_dividida", jugadorId: yo.id, casilla: 0, indice: 0 },
+            { tipo: "carta_repartida", a: yo.id, mano: 0, oculta: false, carta: c("3H") },
+            { tipo: "carta_repartida", a: yo.id, mano: 1, oculta: false, carta: c("5D") },
+          ],
+        ),
+      );
+      await expect(tuManoN(page, 2).getByRole("img")).toHaveCount(2);
+      await page.waitForTimeout(1_500);
+
+      const todas = await muestras(page);
+      // La carta movida está en un sitio antes y en otro después, sin pasar por ninguno intermedio y sin dejar de verse.
+      const movida = sitiosDe(todas, "8 de tréboles", marca).map((sitios) => sitios[0]);
+      expect(movida.every((p) => p !== undefined && p.opacidad > 0.99)).toBe(true);
+      expect(new Set(movida.map((p) => `${Math.round(p.x)},${Math.round(p.y)},${Math.round(p.ancho)}`)).size, "solo el sitio de antes y el de después").toBeLessThanOrEqual(2);
+      // Las nuevas se funden donde van a quedar: no se mueven en ningún fotograma.
+      for (const nombre of ["3 de corazones", "5 de diamantes"]) {
+        const vistas = sitiosDe(todas, nombre, marca).filter((sitios) => sitios.length === 1 && sitios[0].opacidad > 0).map((sitios) => sitios[0]);
+        expect(vistas.length, `${nombre} aparece`).toBeGreaterThan(3);
+        for (const p of vistas) expect(Math.hypot(p.x - vistas[0].x, p.y - vistas[0].y) + Math.abs(p.ancho - vistas[0].ancho), `${nombre} no se mueve`).toBeLessThan(0.5);
+      }
+      expect(await page.locator(".bj-mano .naipe").evaluateAll((cartas) => cartas.map((x) => getComputedStyle(x).transform))).toEqual(["none", "none", "none", "none", "none", "none"]);
+    });
+  });
+
+  test("la mano activa va subrayada con «Mano 2 de 3» y Pedir actúa sobre ella", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    await fichasDeApi(page, 800);
+    const yo = sesion.jugador;
+    const manos = (estados: ManoDeLaVista["estado"][]) =>
+      [[c("10H"), c("9C")], [c("5S"), c("6D")], [c("8C"), c("2H")]].map((cartas, i) => mano(yo, i, cartas, { casilla: i === 2 ? 1 : 0, dividida: i < 2, estado: estados[i] }));
+    mesa.alConectar(estado(enDecisiones(sesion, manos(["plantado", "jugando", "jugando"]))));
+    await page.goto(`/p/${codigo}/blackjack`);
+
+    await expect(page.getByText("Mano 2 de 3")).toBeVisible();
+    // Solo la segunda mano lleva el subrayado dorado; las otras dos, atenuadas.
+    const columnas = page.locator(".bj-yo .bj-col, .bj-asiento--yo .bj-col");
+    await expect(columnas).toHaveCount(3);
+    await expect(columnas.nth(1)).toHaveClass(/bj-col--activa/);
+    await expect(columnas.nth(1).locator(".bj-col__subrayado")).toHaveCSS("opacity", "1");
+    await expect(columnas.nth(0).locator(".bj-col__subrayado")).toHaveCSS("opacity", "0");
+    await expect(columnas.nth(1)).toHaveCSS("opacity", "1");
+    await expect(columnas.nth(0)).toHaveCSS("opacity", "0.6");
+    await expect(columnas.nth(2)).toHaveCSS("opacity", "0.6");
+    await expect(page.locator(".bj-col--activa")).toHaveCount(1);
+
+    // Pedir no dice qué mano: el servidor la aplica a la activa.
+    await page.getByRole("button", { name: "Pedir" }).click();
+    await expect.poll(() => mesa.recibidas).toContainEqual({ t: "pedir" });
+    mesa.enviar(estado(enDecisiones(sesion, manos(["plantado", "plantado", "jugando"]))));
+    await expect(page.getByText("Mano 3 de 3")).toBeVisible();
+    await expect(columnas.nth(2)).toHaveClass(/bj-col--activa/);
+    await expect(columnas.nth(1)).toHaveCSS("opacity", "0.6");
+
+    // Sin ninguna en juego ya no hay activa: ni etiqueta ni atenuadas; los botones se quedan, apagados.
+    mesa.enviar(estado(enDecisiones(sesion, manos(["plantado", "plantado", "plantado"]), { opciones: opciones({ pedir: false, plantarse: false, doblar: false }) })));
+    await expect(page.getByText(/^Mano \d de 3$/)).toHaveCount(0);
+    await expect(page.locator(".bj-col--activa")).toHaveCount(0);
+    await expect(columnas.nth(0)).toHaveCSS("opacity", "1");
+    await expect(page.getByRole("button", { name: "Pedir" })).toBeDisabled();
+  });
+
+  test("Dividir y Rendirse solo aparecen cuando se pueden usar y si tienes fichas", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    const fichas = await fichasDeApi(page, 950);
+    const yo = sesion.jugador;
+    const conOpciones = (o: Partial<Opciones>, ronda = 1) =>
+      estado(enDecisiones(sesion, [mano(yo, 0, [c("8S"), c("8C")])], { ronda, opciones: opciones(o) }));
+    mesa.alConectar(conOpciones({ dividir: true, rendirse: true }));
+    await page.goto(`/p/${codigo}/blackjack`);
+    await expect(contador(page)).toHaveText("Tienes 950 fichas");
+    await expect(botonDe(page, "Dividir")).toBeEnabled();
+    await expect(botonDe(page, "Rendirse")).toBeEnabled();
+    await expect(botonDe(page, "Doblar")).toBeEnabled();
+    // La fila de debajo ocupa su sitio: el panel mide lo mismo con y sin ellos (la mesa no salta).
+    const altoPanel = async () => (await page.getByRole("region", { name: "Tu jugada" }).boundingBox())!.height;
+    const conAmbos = await altoPanel();
+
+    // Las reglas no los permiten: no están (y el panel no cambia).
+    mesa.enviar(conOpciones({ dividir: false, rendirse: false }));
+    await expect(botonDe(page, "Dividir")).toHaveCount(0);
+    await expect(botonDe(page, "Rendirse")).toHaveCount(0);
+    await expect(botonDe(page, "Pedir")).toBeEnabled();
+    expect(await altoPanel()).toBe(conAmbos);
+    mesa.enviar(conOpciones({ dividir: true, rendirse: false }));
+    await expect(botonDe(page, "Dividir")).toBeVisible();
+    await expect(botonDe(page, "Rendirse")).toHaveCount(0);
+    mesa.enviar(conOpciones({ dividir: false, rendirse: true }));
+    await expect(botonDe(page, "Rendirse")).toBeVisible();
+    await expect(botonDe(page, "Dividir")).toHaveCount(0);
+
+    // Las reglas sí, pero las fichas no cubren otra apuesta de 50: no se ofrece dividir (ni doblar), pero rendirse sí.
+    fichas.poner(30);
+    mesa.enviar(conOpciones({ dividir: true, rendirse: true }, 2));
+    await expect(contador(page)).toHaveText("Tienes 30 fichas");
+    await expect(botonDe(page, "Dividir")).toHaveCount(0);
+    await expect(botonDe(page, "Doblar")).toBeDisabled();
+    await expect(botonDe(page, "Rendirse")).toBeEnabled();
+    expect(await altoPanel()).toBe(conAmbos);
+
+    // Con 50 justas sí.
+    fichas.poner(50);
+    mesa.enviar(conOpciones({ dividir: true, rendirse: true }, 3));
+    await expect(contador(page)).toHaveText("Tienes 50 fichas");
+    await expect(botonDe(page, "Dividir")).toBeEnabled();
+    await expect(botonDe(page, "Doblar")).toBeEnabled();
+
+    // Dividir manda la acción y espera; si la mesa dice que no hay fichas (el cobro lo comprueba de nuevo), el botón vuelve.
+    await botonDe(page, "Dividir").click();
+    await expect.poll(() => mesa.recibidas).toContainEqual({ t: "dividir" });
+    await expect(botonDe(page, "Dividir")).toBeDisabled();
+    mesa.enviar({ t: "error", codigo: "sin_fichas" });
+    await expect(page.getByText("No tienes fichas suficientes")).toBeVisible();
+    await expect(botonDe(page, "Dividir")).toBeEnabled();
+    await botonDe(page, "Rendirse").click();
+    await expect.poll(() => mesa.recibidas).toContainEqual({ t: "rendirse" });
+  });
+
+  test("rendirse: la mano se ve rendida y al final cobra la mitad", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    const fichas = await fichasDeApi(page, 950);
+    const yo = sesion.jugador;
+    const cartas = [c("10H"), c("6D")];
+    mesa.alConectar(estado(enDecisiones(sesion, [mano(yo, 0, cartas)], { opciones: opciones({ rendirse: true }) })));
+    await page.goto(`/p/${codigo}/blackjack`);
+    await botonDe(page, "Rendirse").click();
+    await expect.poll(() => mesa.recibidas).toContainEqual({ t: "rendirse" });
+
+    // La mesa confirma: la mano queda rendida y ya no hay nada que decidir.
+    mesa.enviar(
+      estado(enDecisiones(sesion, [mano(yo, 0, cartas, { estado: "rendido" })], { opciones: opciones({ pedir: false, plantarse: false, doblar: false }) }), [
+        { tipo: "rendido", jugadorId: yo.id, indice: 0 },
+      ]),
+    );
+    await expect(page.getByText("Rendida", { exact: true })).toBeVisible();
+    await expect(page.getByText("Te has rendido. Esperando al resto")).toBeVisible();
+    await expect(botonDe(page, "Pedir")).toBeDisabled();
+    await expect(botonDe(page, "Rendirse")).toHaveCount(0);
+
+    // Al cerrarse la ronda se devuelve la mitad de 50: pierdes 25.
+    fichas.poner(975);
+    mesa.enviar(
+      estado(vista(sesion, { fase: "resultado", finFase: Date.now() + 4_000, banca: [c("6S"), c("10D")], totalBanca: 16, manos: [mano(yo, 0, cartas, { estado: "rendido" })] }), [
+        { tipo: "carta_girada", carta: c("10D") },
+        { tipo: "pago", jugadorId: yo.id, neto: -25 },
+      ]),
+    );
+    await expect(resultado(page)).toHaveText("Pierdes 25");
+    await expect(page.getByText("Rendida", { exact: true })).toBeVisible();
+    await expect(contador(page)).toHaveText("Tienes 975 fichas");
+  });
+
+  test("al reconectar con manos divididas se ven tal cual, sin animación ni sonido", async ({ page, request }) => {
+    // Cada fuente de sonido (oscilador o ruido) que arranca se cuenta; el audio se despierta con un toque en la página.
+    await page.addInitScript(() => {
+      const w = window as unknown as { __sonidos: number; __audio: AudioContext | null };
+      w.__sonidos = 0;
+      w.__audio = null;
+      const crear = AudioContext.prototype.createDynamicsCompressor;
+      AudioContext.prototype.createDynamicsCompressor = function (...args) {
+        w.__audio = this;
+        return crear.apply(this, args);
+      };
+      const arrancar = AudioScheduledSourceNode.prototype.start;
+      AudioScheduledSourceNode.prototype.start = function (...args) {
+        w.__sonidos++;
+        return arrancar.apply(this, args);
+      };
+    });
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    await fichasDeApi(page, 900);
+    const yo = sesion.jugador;
+    const dividida = (ronda: number) =>
+      enDecisiones(
+        sesion,
+        [mano(yo, 0, [c("8S"), c("3H")], { dividida: true }), mano(yo, 1, [c("8C"), c("5D")], { dividida: true }), mano(yo, 2, [c("KD"), c("7H")], { casilla: 1 })],
+        { ronda },
+      );
+    // La mesa se abre con una sola mano; mientras tanto el jugador despierta el audio.
+    mesa.alConectar(estado(enDecisiones(sesion, [mano(yo, 0, [c("8S"), c("8C")], { casilla: 0 })], { opciones: opciones({ dividir: true }) })));
+    await page.goto(`/p/${codigo}/blackjack`);
+    await expect(tuMano(page)).toHaveCount(2);
+    await page.locator("body").click({ position: { x: 5, y: 5 } });
+    await expect.poll(() => page.evaluate(() => (window as unknown as { __audio: AudioContext | null }).__audio?.state ?? "sin audio"), { timeout: 15_000 }).toBe("running");
+    const sonidos = () => page.evaluate(() => (window as unknown as { __sonidos: number }).__sonidos);
+    const antes = await sonidos();
+
+    // Se cae la conexión y al volver la mesa manda la foto con las manos ya divididas, sin eventos.
+    mesa.alConectar(estado(dividida(1)));
+    await muestrearCartas(page, ["8 de picas", "3 de corazones", "8 de tréboles", "5 de diamantes", "Rey de diamantes", "7 de corazones"]);
+    await mesa.cerrar(1001);
+    await expect(tuManoN(page, 3).getByRole("img")).toHaveCount(2, { timeout: 15_000 });
+    await expect(tuManoN(page, 1).getByRole("img")).toHaveCount(2);
+    await expect(tuManoN(page, 2).getByRole("img")).toHaveCount(2);
+    await page.waitForTimeout(1_000);
+
+    // Cada carta aparece ya en su sitio y no se mueve en ningún fotograma desde que se ve; no suena nada.
+    const todas = await muestras(page);
+    for (const nombre of ["8 de picas", "3 de corazones", "8 de tréboles", "5 de diamantes", "Rey de diamantes", "7 de corazones"]) {
+      const vistas = sitiosDe(todas, nombre).filter((sitios) => sitios.length > 0 && sitios.some((p) => p.opacidad > 0));
+      expect(vistas.length, `${nombre} se ve`).toBeGreaterThan(10);
+      const primeraEnSuSitio = vistas.find((sitios) => sitios.length === 1)!;
+      for (const sitios of vistas.slice(vistas.indexOf(primeraEnSuSitio))) {
+        // Mientras la mano vieja se retira con su fundido puede haber dos copias de la misma carta; la nueva es la última.
+        const p = sitios.at(-1)!;
+        expect(p.opacidad, `${nombre} se ve del todo`).toBe(1);
+        expect(Math.abs(p.x - sitios.at(-1)!.x) + Math.abs(p.y - sitios.at(-1)!.y)).toBeLessThan(0.5);
+      }
+      const ultimas = vistas.slice(-20).map((sitios) => sitios.at(-1)!);
+      for (const p of ultimas) expect(Math.hypot(p.x - ultimas[0].x, p.y - ultimas[0].y), `${nombre} no se mueve`).toBeLessThan(0.5);
+    }
+    expect(await sonidos(), "al reconectar no suena nada").toBe(antes);
+  });
+
+  test("cuatro manos tuyas y cinco jugadores más caben en 360×640: sin desplazamiento horizontal y botones de 44 px o más", async ({ page, request }) => {
+    await page.setViewportSize({ width: 360, height: 640 });
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    await fichasDeApi(page, 5_000);
+    const yo = sesion.jugador;
+    const otro = (id: number, apodo: string, indice: number, cartas: Carta[], resto: Partial<ManoDeLaVista> = {}) => mano({ id, apodo }, indice, cartas, { casilla: indice, ...resto });
+    const mias = [
+      mano(yo, 0, [c("8S"), c("3H"), c("2C")], { dividida: true, apuesta: 1_000, casilla: 0 }),
+      mano(yo, 1, [c("8C"), c("5D")], { dividida: true, apuesta: 1_000, casilla: 0 }),
+      mano(yo, 2, [c("KD"), c("7H"), c("AS")], { apuesta: 250, casilla: 1 }),
+      mano(yo, 3, [c("9D"), c("9S")], { apuesta: 50, casilla: 2 }),
+    ];
+    const demas = [
+      otro(11, "Ana", 0, [c("5H"), c("10C")], { estado: "plantado" }),
+      otro(11, "Ana", 1, [c("9S"), c("10D")], { estado: "plantado" }),
+      otro(12, "Bartolomé", 0, [c("KH"), c("QC"), c("4D")], { estado: "pasado" }),
+      otro(13, "Cristina", 0, [c("AH"), c("KC")], { estado: "blackjack" }),
+      otro(14, "Dani", 0, [c("6H"), c("2C")]),
+      otro(14, "Dani", 1, [c("7S"), c("2D")]),
+      otro(14, "Dani", 2, [c("8S"), c("3D")]),
+      otro(15, "Eli", 0, [c("10H"), c("7C")]),
+      otro(16, "Fran", 0, [c("3H"), c("4C")]),
+    ];
+    mesa.alConectar(
+      estado(
+        enDecisiones(sesion, [...mias, ...demas], {
+          sentados: [yo.apodo, "Ana", "Bartolomé", "Cristina", "Dani", "Eli", "Fran"],
+          opciones: opciones({ dividir: true, rendirse: true }),
+        }),
+      ),
+    );
+    await page.goto(`/p/${codigo}/blackjack`);
+    await expect(page.getByText("Mano 1 de 4")).toBeVisible();
+    await expect(tuManoN(page, 4).getByRole("img")).toHaveCount(2);
+    await expect(page.getByRole("list", { name: "Otros jugadores" }).getByRole("listitem")).toHaveCount(6);
+    for (const nombre of ["Dividir", "Rendirse", "Plantarse", "Pedir", "Doblar"]) await expect(botonDe(page, nombre)).toBeVisible();
+    await page.waitForTimeout(700);
+
+    expect(await sinDesplazamientoHorizontal(page)).toBe(true);
+    // Ninguna carta se sale de la pantalla por los lados.
+    const salidas = await page.evaluate(
+      () => [...document.querySelectorAll(".bj-mano .naipe")].map((el) => el.getBoundingClientRect()).filter((r) => r.left < -0.5 || r.right > window.innerWidth + 0.5).length,
+    );
+    expect(salidas).toBe(0);
+    // Todo lo que se pulsa mide al menos 44 px.
+    const bajos = await page.evaluate(() =>
+      [...document.querySelectorAll<HTMLElement>("button")]
+        .filter((el) => el.getBoundingClientRect().width > 0 && el.getBoundingClientRect().height > 0 && el.closest("[aria-hidden=true], [inert]") === null)
+        .map((el) => ({ nombre: el.getAttribute("aria-label") ?? el.textContent?.trim() ?? "", alto: el.getBoundingClientRect().height }))
+        .filter((b) => b.alto < 43.99),
+    );
+    expect(bajos).toEqual([]);
+  });
+
+  test("las pastillas de los demás enseñan cada mano", async ({ page, request }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    await fichasDeApi(page, 950);
+    const yo = sesion.jugador;
+    const otro = (id: number, apodo: string, indice: number, cartas: Carta[], resto: Partial<ManoDeLaVista> = {}) => mano({ id, apodo }, indice, cartas, { casilla: indice, ...resto });
+    const demas = [
+      otro(11, "Ana", 0, [c("5H"), c("10C")], { estado: "plantado" }),
+      otro(11, "Ana", 1, [c("9S"), c("10D")], { estado: "plantado" }),
+      otro(12, "Bea", 0, [c("10H"), c("6C")], { estado: "rendido" }),
+      otro(12, "Bea", 1, [c("9H"), c("9C")]),
+      otro(13, "Cris", 0, [c("KH"), c("QC"), c("4D")], { estado: "pasado" }),
+      otro(14, "Dani", 0, [c("8S"), c("3D"), c("2C")], { estado: "jugando" }),
+    ];
+    mesa.alConectar(
+      estado(enDecisiones(sesion, [mano(yo, 0, [c("10S"), c("4D")]), ...demas], { sentados: [yo.apodo, "Ana", "Bea", "Cris", "Dani", "Eli"] })),
+    );
+    await page.goto(`/p/${codigo}/blackjack`);
+    const pastilla = (nombre: string) => page.getByRole("list", { name: "Otros jugadores" }).getByRole("listitem").filter({ hasText: nombre });
+
+    // «Ana · 15 / 19 ✓»: el total de cada mano y el ✓ cuando ya no juega ninguna.
+    await expect(pastilla("Ana")).toContainText(/Ana\s*15 \/ 19\s*✓/);
+    // Con una rendida y otra en juego: «rendida / 18», sin ✓.
+    await expect(pastilla("Bea")).toContainText(/Bea\s*rendida \/ 18/);
+    await expect(pastilla("Bea")).not.toContainText("✓");
+    // Una sola mano se lee como siempre; la pasada, tachada.
+    await expect(pastilla("Dani")).toContainText(/Dani\s*13/);
+    await expect(pastilla("Cris").locator(".bj-pastilla__pasado")).toHaveText(/^24/);
+    // Quien solo mira no enseña manos.
+    await expect(pastilla("Eli")).toHaveText("Eli");
+
+    // En el ordenador, cada asiento muestra sus manos con cartas pequeñas, hasta dos.
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await expect(page.getByRole("group", { name: "Mano 1 de Ana" }).getByRole("img")).toHaveCount(2);
+    await expect(page.getByRole("group", { name: "Mano 2 de Ana" }).getByRole("img")).toHaveCount(2);
+    await expect(page.getByRole("group", { name: "Mano 1 de Bea" }).getByRole("img")).toHaveCount(2);
+    await expect(page.getByRole("group", { name: "Mano de Dani" }).getByRole("img")).toHaveCount(3);
+    const asientoAna = page.locator(".bj-asiento", { hasText: "Ana" });
+    await expect(asientoAna.locator(".bj-col__pie")).toHaveText([/^Total 15$/, /^Total 19$/]);
+    const anchoCartaAna = (await asientoAna.getByRole("img").first().boundingBox())!.width;
+    const anchoCartaDani = (await page.locator(".bj-asiento", { hasText: "Dani" }).getByRole("img").first().boundingBox())!.width;
+    expect(anchoCartaAna, "con dos manos las cartas son más pequeñas").toBeLessThan(anchoCartaDani);
   });
 });

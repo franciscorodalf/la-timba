@@ -5,7 +5,7 @@ import { Boton } from "../../componentes/Boton";
 import { FichasApuesta } from "../../componentes/FichasApuesta";
 import { sonidos } from "../../efectos/sonidos";
 import { miles } from "../../formato";
-import type { ManoVista } from "./piezas";
+import type { ManoVista } from "./manos";
 
 // Los controles de la mesa: las fichas para apostar, las decisiones y el texto de cada fase.
 
@@ -81,9 +81,27 @@ export function ElegirCasilla({ cual, elegida, onElegir }: { cual: "primera" | "
   return <button type="button" className="bj-casilla__elegir" aria-pressed={elegida} aria-label={`Casilla de la ${cual} mano`} onClick={onElegir} />;
 }
 
-export function Decidir({ mano, fichas, activo, onActuar }: { mano: ManoVista; fichas: number; activo: boolean; onActuar(accion: AccionBJ): void }) {
-  const puede = activo && mano.estado === "jugando";
-  const puedeDoblar = puede && mano.cartas.length === 2 && fichas >= mano.apuesta;
+interface DecidirProps {
+  /** La mano activa; `undefined` cuando ya no te queda ninguna en juego (los botones se quedan, apagados). */
+  mano: ManoVista | undefined;
+  /** Lo que permiten las reglas ahora mismo (lo calcula el servidor). No sabe cuántas fichas tienes. */
+  opciones: VistaBJ["opciones"];
+  fichas: number;
+  activo: boolean;
+  onActuar(accion: AccionBJ): void;
+}
+
+/**
+ * Las decisiones sobre la mano activa. Fila principal: Plantarse, Pedir y Doblar. Debajo, Dividir y Rendirse, solo cuando las
+ * reglas lo permiten (`opciones`) y, para dividir y doblar, si tus fichas cubren la apuesta de esa mano. La segunda fila reserva
+ * siempre su alto aunque no haya nada que enseñar: la mesa no salta al aparecer o desaparecer un botón.
+ */
+export function Decidir({ mano, opciones, fichas, activo, onActuar }: DecidirProps) {
+  const puede = activo && mano?.estado === "jugando";
+  const cubre = mano !== undefined && fichas >= mano.apuesta;
+  const puedeDoblar = puede && (opciones?.doblar ?? mano.cartas.length === 2) && cubre;
+  const dividir = opciones?.dividir === true && cubre;
+  const rendirse = opciones?.rendirse === true;
   return (
     <div className="bj-decidir">
       <Boton variante="secundario" disabled={!puede} onClick={() => onActuar({ t: "plantarse" })}>
@@ -102,15 +120,36 @@ export function Decidir({ mano, fichas, activo, onActuar }: { mano: ManoVista; f
       >
         Doblar
       </Boton>
+      <div className="bj-decidir__mas">
+        {dividir && (
+          <Boton
+            variante="secundario"
+            className="bj-decidir__dividir"
+            disabled={!puede}
+            onClick={() => {
+              sonidos.reproducir("fichas");
+              onActuar({ t: "dividir" });
+            }}
+          >
+            Dividir
+          </Boton>
+        )}
+        {rendirse && (
+          <Boton variante="secundario" className="bj-decidir__rendirse" disabled={!puede} onClick={() => onActuar({ t: "rendirse" })}>
+            Rendirse
+          </Boton>
+        )}
+      </div>
     </div>
   );
 }
 
 /**
  * El texto de la fase para el panel. `manoEnLaMesa` dice si tus cartas ya han llegado a su sitio: mientras alguna vuela,
- * el texto no adelanta lo que aún no se ve (tu blackjack, que te has pasado o que te toca).
+ * el texto no adelanta lo que aún no se ve (tu blackjack, que te has pasado o que te toca). `mano` es la que juega (o, si ya no
+ * juega ninguna, la última) y `manos` cuántas tienes: con varias, el desenlace de una no resume el de las demás.
  */
-export function textoEstado(vista: VistaBJ | null, mano: ManoVista | undefined, manoEnLaMesa: boolean): string {
+export function textoEstado(vista: VistaBJ | null, mano: ManoVista | undefined, manoEnLaMesa: boolean, manos = mano === undefined ? 0 : 1): string {
   if (vista === null) return "Sentándote en la mesa…";
   switch (vista.fase) {
     case "esperando":
@@ -123,8 +162,10 @@ export function textoEstado(vista: VistaBJ | null, mano: ManoVista | undefined, 
       if (!mano) return "Miras esta ronda";
       if (!manoEnLaMesa) return "Repartiendo…";
       if (mano.estado === "jugando") return "Tu turno: ¿pides o te plantas?";
+      if (manos > 1) return "Esperando al resto";
       if (mano.estado === "blackjack") return "¡Blackjack! Esperando al resto";
       if (mano.estado === "pasado") return "Te has pasado. Esperando al resto";
+      if (mano.estado === "rendido") return "Te has rendido. Esperando al resto";
       return "Esperando al resto";
     case "banca":
       return "Juega la banca";

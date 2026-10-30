@@ -20,6 +20,15 @@ describe("textoEstado", () => {
     expect(textoEstado(vista("decisiones"), mano("jugando", [c("10S"), c("6D")]), true)).toBe("Tu turno: ¿pides o te plantas?");
   });
 
+  it("rendirse y varias manos: la mano rendida lo cuenta; con varias manos ya jugadas solo espera, y mientras alguna juega, es tu turno", () => {
+    expect(textoEstado(vista("decisiones"), mano("rendido", [c("10S"), c("6D")]), true)).toBe("Te has rendido. Esperando al resto");
+    // Con varias manos, `mano` es la que juega (o, si ya no juega ninguna, la última) y el último argumento dice cuántas son.
+    expect(textoEstado(vista("decisiones"), mano("jugando", [c("8S"), c("6D")]), true, 3)).toBe("Tu turno: ¿pides o te plantas?");
+    expect(textoEstado(vista("decisiones"), mano("pasado", [c("10S"), c("6D"), c("KC")]), true, 2)).toBe("Esperando al resto");
+    expect(textoEstado(vista("decisiones"), mano("rendido", [c("10S"), c("6D")]), true, 2)).toBe("Esperando al resto");
+    expect(textoEstado(vista("decisiones"), mano("jugando", [c("8S"), c("6D")]), false, 2)).toBe("Repartiendo…");
+  });
+
   it("el resto de fases no dependen de tus cartas", () => {
     expect(textoEstado(vista("esperando"), undefined, true)).toBe("Apuesta para empezar la ronda");
     expect(textoEstado(vista("apuestas"), undefined, true)).toBe("Haz tu apuesta");

@@ -2,7 +2,7 @@ import { type RefObject, useEffect, useState } from "react";
 import type { VistaBJ } from "../../../shared/juegos/blackjack";
 import type { Evento } from "../../../shared/juegos/tipos";
 import { sonidos } from "../../efectos/sonidos";
-import { encolarGuion, GIRO_MS, type Guion, GUION_VACIO, guionDelLote, VUELO_MS } from "./guion";
+import { encolarGuion, GIRO_MS, type Guion, GUION_VACIO, guionDelLote, sumarGeneraciones, VUELO_MS } from "./guion";
 
 export const hayCartas = (lote: Evento[]): boolean => lote.some((e) => e.tipo === "carta_repartida" || e.tipo === "carta_girada");
 
@@ -18,7 +18,15 @@ export interface Reloj {
   hito: number;
   /** Dónde estaba el mazo cuando llegó el último lote: de ahí salen sus cartas. */
   origen: DOMRect | null;
+  /** Cuántas veces se ha repartido cada clave de carta en esta ronda: cada reparto es una carta nueva, aunque tenga la clave de otra. */
+  generaciones: ReadonlyMap<string, number>;
 }
+
+/**
+ * Lo que identifica en React a una carta: su clave y las veces que se ha repartido. Al dividir, la clave de la segunda carta de una
+ * mano pasa a ser la de otra carta: con la generación nueva se monta un naipe nuevo, que vuela del mazo, en vez de cambiar la cara al viejo.
+ */
+export const claveNaipe = (reloj: Reloj, clave: string): string => `${clave}~${reloj.generaciones.get(clave) ?? 0}`;
 
 /**
  * El guion de los lotes con cartas y su avance. Un lote con cartas que llega con un reparto en marcha se pone detrás
@@ -26,7 +34,7 @@ export interface Reloj {
  * Un lote sin cartas (alguien apuesta, otro se sienta) no toca el guion. Cada carta suena al salir del mazo.
  */
 export function useGuion(lote: Evento[], vista: VistaBJ | null, mazo: RefObject<HTMLElement | null>): Reloj {
-  const [reloj, setReloj] = useState<Reloj>({ lote, guion: GUION_VACIO, inicio: 0, desde: 0, hito: Infinity, origen: null });
+  const [reloj, setReloj] = useState<Reloj>({ lote, guion: GUION_VACIO, inicio: 0, desde: 0, hito: Infinity, origen: null, generaciones: new Map() });
   let actual = reloj;
   if (lote !== reloj.lote) {
     if (vista !== null && hayCartas(lote)) {
@@ -34,10 +42,11 @@ export function useGuion(lote: Evento[], vista: VistaBJ | null, mazo: RefObject<
       const nuevo = guionDelLote(lote, vista);
       const origen = mazo.current?.getBoundingClientRect() ?? null;
       const transcurrido = ahora - reloj.inicio;
+      const generaciones = sumarGeneraciones(reloj.generaciones, nuevo);
       actual =
         reloj.guion !== GUION_VACIO && transcurrido < reloj.guion.fin
-          ? { lote, guion: encolarGuion(reloj.guion, transcurrido, nuevo), inicio: reloj.inicio, desde: transcurrido, hito: reloj.hito, origen }
-          : { lote, guion: nuevo, inicio: ahora, desde: 0, hito: 0, origen };
+          ? { lote, guion: encolarGuion(reloj.guion, transcurrido, nuevo), inicio: reloj.inicio, desde: transcurrido, hito: reloj.hito, origen, generaciones }
+          : { lote, guion: nuevo, inicio: ahora, desde: 0, hito: 0, origen, generaciones };
     } else {
       actual = { ...reloj, lote };
     }

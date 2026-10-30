@@ -77,6 +77,100 @@
   margin-left: calc(var(--ancho) * var(--solape));
 }
 
+/* ---------- Varias manos en fila ---------- */
+
+/* La fila de manos de un jugador. Al cambiar de ronda, la anterior y la nueva ocupan el mismo hueco (como las cartas de una mano). */
+.bj-manos {
+  display: grid;
+  justify-items: center;
+}
+
+.bj-fila {
+  grid-area: 1 / 1;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 8px;
+  max-width: 100%;
+}
+
+.bj-col {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* La mano que no juega ahora se apaga un poco; la que juega lleva una raya dorada debajo de las cartas. */
+.bj-col--atenuada {
+  opacity: 0.6;
+}
+
+.bj-fila--varias .bj-col {
+  transition: opacity 0.2s;
+}
+
+.bj-col__subrayado {
+  align-self: stretch;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--oro-claro);
+  box-shadow: 0 0 8px rgba(245, 215, 110, 0.6);
+  opacity: 0;
+}
+
+.bj-fila--varias .bj-col__subrayado {
+  transition: opacity 0.2s;
+}
+
+.bj-col--activa .bj-col__subrayado {
+  opacity: 1;
+}
+
+/* Lo de debajo de cada mano: su total y su apuesta. */
+.bj-col__pie {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 4px 6px;
+}
+
+/* Con tres o cuatro manos cada columna es estrecha: el total encima de la apuesta. */
+.bj-fila--manos-3 .bj-col__pie,
+.bj-fila--manos-4 .bj-col__pie {
+  flex-direction: column;
+  gap: 3px;
+}
+
+.bj-col__pie .bj-total {
+  min-width: 30px;
+  height: 24px;
+  padding: 0 7px;
+  font-size: 0.8125rem;
+}
+
+/* Una mano rendida: se recupera la mitad de la apuesta. */
+.bj-rendida {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font: 700 0.6875rem/1.4 var(--fuente-ui);
+  letter-spacing: 0.02em;
+  text-transform: none;
+  color: var(--crema);
+  background: rgba(243, 231, 196, 0.1);
+  box-shadow: inset 0 0 0 1px rgba(243, 231, 196, 0.3);
+}
+
+/* «Mano 2 de 3»: en la línea de tu nombre, en el color de la raya de la mano que juegas. */
+.bj-etiqueta__mano {
+  color: var(--oro-claro);
+}
+
 .bj-etiqueta {
   display: flex;
   align-items: center;
@@ -190,6 +284,38 @@
   top: 5px;
 }
 
+/* La apuesta de una mano entre varias: solo la cantidad, sin pila de fichas ni empujón a la derecha. Más específico que lo de tu apuesta. */
+.bj-apuesta.bj-apuesta--corta,
+.bj-yo .bj-apuesta.bj-apuesta--corta,
+.bj-asiento--yo .bj-apuesta.bj-apuesta--corta {
+  margin-left: 0;
+  gap: 4px;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--oro-claro);
+  text-shadow: none;
+}
+
+.bj-apuesta--corta .bj-apuesta__pila,
+.bj-yo .bj-apuesta--corta .bj-apuesta__pila,
+.bj-asiento--yo .bj-apuesta--corta .bj-apuesta__pila {
+  width: 14px;
+  height: 14px;
+}
+
+.bj-apuesta--corta .bj-apuesta__pila .ficha,
+.bj-yo .bj-apuesta--corta .bj-apuesta__pila .ficha,
+.bj-asiento--yo .bj-apuesta--corta .bj-apuesta__pila .ficha {
+  width: 14px;
+  height: 14px;
+  left: 0;
+  top: 0;
+}
+
+.bj-apuesta--corta .bj-apuesta__pila .ficha:nth-child(n + 2) {
+  display: none;
+}
+
 /* ---------- El resto de jugadores (móvil) ---------- */
 
 .bj-otros {
@@ -243,13 +369,20 @@
   font-weight: 700;
 }
 
-.bj-pastilla--mira {
-  opacity: 0.55;
-}
-
-.bj-pastilla--pasado .bj-pastilla__total {
+/* Cada mano se pinta con su total; la que se pasa, tachada, y la rendida, apagada. */
+.bj-pastilla__pasado {
   color: var(--fallo);
   text-decoration: line-through;
+}
+
+.bj-pastilla__rendida {
+  color: var(--crema-tenue);
+  font-style: italic;
+  font-weight: 600;
+}
+
+.bj-pastilla--mira {
+  opacity: 0.55;
 }
 
 /* ---------- Leyenda del tapete ---------- */
@@ -313,6 +446,9 @@
 .bj-yo__juego {
   position: relative;
   display: grid;
+  /* Lo mismo con una mano que con cuatro: con varias, el total y la apuesta pasan debajo de cada una y la mesa no salta al dividir. */
+  min-height: calc(var(--sitio) + 14px);
+  align-content: start;
 }
 
 .bj-casilla {
@@ -324,9 +460,14 @@
   pointer-events: none;
 }
 
-/* Con la casilla puesta, el hueco de la carta no se dibuja: en ese sitio está tu apuesta. */
+/* Con la casilla puesta, el hueco de la carta no se dibuja: en ese sitio está tu apuesta. Y lo de debajo de cada mano (su total y su
+   apuesta) espera al reparto: la apuesta ya se ve en su casilla. */
 .bj-yo__juego:has(.bj-casilla) .bj-mano::before {
   opacity: 0;
+}
+
+.bj-yo__juego:has(.bj-casilla) .bj-col__pie {
+  visibility: hidden;
 }
 
 /* ---------- Apostar con dos manos ---------- */
@@ -447,6 +588,23 @@
   padding: 0 8px;
 }
 
+/* Dividir y Rendirse, debajo. La fila reserva su alto aunque no haya ninguno, y cada uno tiene su sitio (Dividir a la izquierda). */
+.bj-decidir__mas {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  min-height: 48px;
+}
+
+.bj-decidir__dividir {
+  grid-column: 1;
+}
+
+.bj-decidir__rendirse {
+  grid-column: 2;
+}
+
 /* ---------- Ordenador: la mesa entera con los asientos en semicírculo ---------- */
 
 .bj--ordenador {
@@ -530,8 +688,38 @@
   flex-direction: column-reverse;
 }
 
+/* Con tres o cuatro manos la fila es ancha: tu sitio baja un poco para quedar por debajo de los asientos de al lado, que están más arriba en el arco. */
+.bj-asiento--yo-muchas {
+  translate: -50% calc(-100% + 40px);
+}
+
+.bj-asiento--yo-muchas .bj-col__pie {
+  font-size: 0.8125rem;
+}
+
+.bj-asiento--yo-muchas .bj-apuesta.bj-apuesta--corta {
+  font-size: 0.8125rem;
+}
+
+/* Tu nombre queda debajo de tus manos: lo que sobra de la altura reservada va arriba, no entre las cartas y tu nombre. */
+.bj-asiento--yo .bj-yo__juego {
+  align-content: end;
+}
+
 .bj-asiento--mira {
   opacity: 0.55;
+}
+
+/* Quien juega varias manos: sus totales debajo de cada una y, si pasa de dos, los demás junto a su nombre. */
+.bj-asiento--varias .bj-fila {
+  gap: 6px;
+}
+
+.bj-asiento__mas {
+  color: var(--crema-tenue);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: none;
 }
 
 .bj-asiento__apodo {
@@ -595,10 +783,12 @@
   margin: 26px auto 0;
 }
 
-/* Movimiento reducido: elegir casilla cambia de aspecto sin fundidos. */
+/* Movimiento reducido: elegir casilla y cambiar de mano activa cambian de aspecto sin fundidos. */
 @media (prefers-reduced-motion: reduce) {
   .bj-casilla__sitio,
-  .bj-casilla__sitio--elegida .casilla__aro {
+  .bj-casilla__sitio--elegida .casilla__aro,
+  .bj-fila--varias .bj-col,
+  .bj-fila--varias .bj-col__subrayado {
     transition: none;
   }
 }
