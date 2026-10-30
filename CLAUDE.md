@@ -57,10 +57,12 @@ npm run deploy                   # build + wrangler deploy (lo hace el usuario)
   - El resto de rutas son la SPA, servida como estáticos.
 - **`Jugadores` (`jugadores.ts`):** una instancia global y la **única que toca las fichas**. Guarda perfiles, PIN (PBKDF2 con 10.000 iteraciones, por el límite de 10 ms de CPU del plan gratuito), bloqueos, el libro de apuestas, estadísticas en columnas de `jugadores` y rankings. Además aplica límites anti-abuso en memoria: registros por IP y partidas por jugador.
 - **`Partida` (`partida.ts`):** un objeto por código. Es la sala: quién está conectado, el resumen de cada mesa y el ranking de la noche (que se va sumando con lo que mandan las mesas). Se cierra tras 30 min sin nadie.
+  - Los resúmenes viven solo en memoria y solo se escribe al cambiar el ranking. Si la sala sale de memoria, antes de enseñar nada le pregunta su resumen a cada mesa que no sepa (`Mesa.resumenSala`).
 - **`Mesa` (`mesa-base.ts`):** la clase genérica de las mesas. `MesaBlackjack` y `MesaCarrera` solo le dan su `juego`. Se encarga de:
   - una cola por mesa y aplicar `tick` antes de cada acción;
   - el **cobro en dos fases**: guarda la intención (`cobroId`), llama a `Jugadores.apostar(…, rondaId, cobroId)` y confirma en la misma escritura que la jugada; los cobros a medias se anulan con `anular`;
-  - las liquidaciones idempotentes por `rondaId` (`${codigo}:${juego}:${ronda}`), que quedan pendientes y se reintentan si falla;
+  - las liquidaciones idempotentes por `rondaId` (`${codigo}:${juego}:${ronda}`), que quedan pendientes y se reintentan si falla; una con `visibleEn` se guarda ya, pero se paga cuando se ve;
+  - lo que trae el reloj sin decisiones de nadie, desde memoria y sin escribir: los avisos (`proximoAviso`/`eventosEntre`) y los `tick` marcados `anunciado`, que guarda la siguiente escritura. La memoria puede ir por delante del almacenamiento, pero solo con lo que se puede rehacer igual;
   - las alarmas, el límite de mensajes, los avisos a la sala y las tramas de error.
 
 ### Reglas de los juegos (`src/shared/juegos/`)
@@ -69,6 +71,7 @@ npm run deploy                   # build + wrangler deploy (lo hace el usuario)
 - El tiempo y el azar entran como parámetros.
 - `vista(estado, jugador, ahora)` es lo único que sale del servidor. Nunca incluye información oculta: la baraja, la carta tapada de la banca o los pasos futuros de la carrera.
 - La carrera se sortea entera al cerrar las apuestas. Sus pasos los anuncia un temporizador en memoria (`proximoAviso`/`eventosEntre`), sin escrituras.
+- En el blackjack, la banca juega al cerrarse las decisiones y la ronda queda liquidada en esa escritura (fase `resultado`). La vista enseña la banca durante `BANCA_MS`, después el resultado y, al acabar, la ronda siguiente, todo desde memoria. En la banca, `resumen` devuelve `null` y la sala no se entera.
 
 ### Cliente (`src/client/`)
 
@@ -99,7 +102,7 @@ npm run deploy                   # build + wrangler deploy (lo hace el usuario)
 ## Restricciones que no hay que romper
 
 - **Plan gratuito:** una noche típica (8 jugadores, 3 h) no puede pasar del **30 % de ningún límite diario** (filas escritas, peticiones, filas leídas). Lo vigila `test/server/presupuesto.test.ts`.
-  - Por eso la mesa guarda una sola clave por cambio, reprograma la alarma solo si cambia su hora y solo avisa a la sala cuando cambia lo que la sala enseña.
+  - Por eso la mesa guarda una sola clave por cambio, reprograma la alarma solo si cambia su hora y solo avisa a la sala cuando cambia lo que la sala enseña. Lo que trae el reloj sin decisiones no escribe.
   - Las lecturas de fichas, perfil y ranking son de coste constante, no recorren el historial.
 - **El libro de fichas tiene que cuadrar siempre**, también con reconexiones, desalojos, reintentos de alarmas y varias pestañas. No muevas fichas fuera de `Jugadores` ni te saltes el cobro en dos fases.
 - **El servidor manda:** el cliente solo envía intenciones. La reconexión a mitad de una ronda tiene que funcionar.
