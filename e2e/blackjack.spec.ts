@@ -678,7 +678,8 @@ test.describe("mesa simulada", () => {
 
   /**
    * Un bucle de fotogramas que anota, en cada uno, dónde está cada carta de `nombres` (las que están en una mano de la mesa): su
-   * caja y su opacidad. Para ver si una carta se desliza, si desaparece en algún fotograma o si sale volando desde el mazo.
+   * caja, su opacidad y su `transform` (una animación de transform sin cambiar la opacidad también se cuenta), y cuántas manos tuyas
+   * se ven. Para ver si una carta se desliza, si desaparece en algún fotograma o si sale volando desde el mazo.
    */
   async function muestrearCartas(pagina: Page, nombres: string[]): Promise<void> {
     await pagina.evaluate((nombresAMirar) => {
@@ -691,10 +692,12 @@ test.describe("mesa simulada", () => {
             .filter((el) => el.getAttribute("aria-label") === nombre)
             .map((el) => {
               const r = el.getBoundingClientRect();
-              return { x: r.x + r.width / 2, y: r.y + r.height / 2, ancho: r.width, opacidad: Number(getComputedStyle(el).opacity) };
+              const estilo = getComputedStyle(el);
+              return { x: r.x + r.width / 2, y: r.y + r.height / 2, ancho: r.width, opacidad: Number(estilo.opacity), transform: estilo.transform };
             });
         }
-        w.__muestras.push({ t, cartas });
+        const manos = [...document.querySelectorAll("[role=group]")].filter((el) => /^Tu mano \d/.test(el.getAttribute("aria-label") ?? "")).length;
+        w.__muestras.push({ t, manos, cartas });
         requestAnimationFrame(fotograma);
       };
       requestAnimationFrame(fotograma);
@@ -702,7 +705,9 @@ test.describe("mesa simulada", () => {
   }
   interface Muestra {
     t: number;
-    cartas: Record<string, { x: number; y: number; ancho: number; opacidad: number }[]>;
+    /** Cuántas manos tuyas («Tu mano 1», «Tu mano 2»…) se ven en ese fotograma. */
+    manos: number;
+    cartas: Record<string, { x: number; y: number; ancho: number; opacidad: number; transform: string }[]>;
   }
   const muestras = (pagina: Page): Promise<Muestra[]> => pagina.evaluate(() => (window as unknown as { __muestras: Muestra[] }).__muestras);
   const cuantasMuestras = (pagina: Page): Promise<number> => pagina.evaluate(() => (window as unknown as { __muestras: unknown[] }).__muestras.length);
@@ -910,6 +915,44 @@ test.describe("mesa simulada", () => {
     await expect.poll(() => mesa.recibidas).toContainEqual({ t: "rendirse" });
   });
 
+  test("con dos manos, Dividir y Doblar se ofrecen según la apuesta de la mano ACTIVA, no según el total de tus apuestas", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    // 60 fichas: cubren la apuesta de 50 de una mano, pero no la de 1.000 de la otra ni la suma de las dos.
+    await fichasDeApi(page, 60);
+    const yo = sesion.jugador;
+    const manos = (primera: ManoDeLaVista["estado"], segunda: ManoDeLaVista["estado"], apuestas: [number, number]) => [
+      mano(yo, 0, [c("8S"), c("8C")], { estado: primera, apuesta: apuestas[0], casilla: 0 }),
+      mano(yo, 1, [c("9D"), c("9H")], { estado: segunda, apuesta: apuestas[1], casilla: 1 }),
+    ];
+    const mesaCon = (...argumentos: Parameters<typeof manos>) => estado(enDecisiones(sesion, manos(...argumentos), { opciones: opciones({ dividir: true, rendirse: true }) }));
+    mesa.alConectar(mesaCon("jugando", "jugando", [50, 1_000]));
+    await page.goto(`/p/${codigo}/blackjack`);
+    await expect(contador(page)).toHaveText("Tienes 60 fichas");
+
+    // La activa es la de 50: se puede dividir y doblar, aunque lo apostado en total (1.050) no quepa en tus 60.
+    await expect(page.getByText("Mano 1 de 2")).toBeVisible();
+    await expect(botonDe(page, "Dividir")).toBeEnabled();
+    await expect(botonDe(page, "Doblar")).toBeEnabled();
+
+    // La activa pasa a ser la de 1.000 (la primera ya se ha plantado): ya no se ofrece dividir y doblar se apaga; rendirse sigue.
+    mesa.enviar(mesaCon("plantado", "jugando", [50, 1_000]));
+    await expect(page.getByText("Mano 2 de 2")).toBeVisible();
+    await expect(botonDe(page, "Dividir")).toHaveCount(0);
+    await expect(botonDe(page, "Doblar")).toBeDisabled();
+    await expect(botonDe(page, "Rendirse")).toBeEnabled();
+
+    // Y al revés: la activa es la primera y es la grande.
+    mesa.enviar(mesaCon("jugando", "plantado", [1_000, 50]));
+    await expect(page.getByText("Mano 1 de 2")).toBeVisible();
+    await expect(botonDe(page, "Dividir")).toHaveCount(0);
+    await expect(botonDe(page, "Doblar")).toBeDisabled();
+    // Con la segunda ya sin jugar, ni la suma ni la otra apuesta cuentan: solo la activa (50 cabe en 60).
+    mesa.enviar(mesaCon("plantado", "jugando", [1_000, 50]));
+    await expect(page.getByText("Mano 2 de 2")).toBeVisible();
+    await expect(botonDe(page, "Dividir")).toBeEnabled();
+    await expect(botonDe(page, "Doblar")).toBeEnabled();
+  });
+
   test("rendirse: la mano se ve rendida y al final cobra la mitad", async ({ page, request }) => {
     const { sesion, codigo, mesa } = await entrarSimulada(page, request);
     const fichas = await fichasDeApi(page, 950);
@@ -978,30 +1021,43 @@ test.describe("mesa simulada", () => {
     await expect.poll(() => page.evaluate(() => (window as unknown as { __audio: AudioContext | null }).__audio?.state ?? "sin audio"), { timeout: 15_000 }).toBe("running");
     const sonidos = () => page.evaluate(() => (window as unknown as { __sonidos: number }).__sonidos);
     const antes = await sonidos();
+    // Que la mesa haya acabado de entrar (su fundido de entrada y el de la ronda 0 que se retira): lo que se mide después es solo la reconexión.
+    await page.waitForFunction(() =>
+      document.getAnimations().every((a) => {
+        const objetivo = (a.effect as KeyframeEffect | null)?.target;
+        return a.playState !== "running" || !(objetivo instanceof Element) || objetivo.closest(".bj-mesa") === null;
+      }),
+    );
 
     // Se cae la conexión y al volver la mesa manda la foto con las manos ya divididas, sin eventos.
+    const nombres = ["8 de picas", "3 de corazones", "8 de tréboles", "5 de diamantes", "Rey de diamantes", "7 de corazones"];
     mesa.alConectar(estado(dividida(1)));
-    await muestrearCartas(page, ["8 de picas", "3 de corazones", "8 de tréboles", "5 de diamantes", "Rey de diamantes", "7 de corazones"]);
+    await muestrearCartas(page, nombres);
     await mesa.cerrar(1001);
     await expect(tuManoN(page, 3).getByRole("img")).toHaveCount(2, { timeout: 15_000 });
     await expect(tuManoN(page, 1).getByRole("img")).toHaveCount(2);
     await expect(tuManoN(page, 2).getByRole("img")).toHaveCount(2);
+    // La mesa sigue donde estaba: la mano activa es la primera y se puede decidir.
+    await expect(page.getByText("Mano 1 de 3")).toBeVisible();
+    await expect(page.getByText("Tu turno: ¿pides o te plantas?")).toBeVisible();
+    for (const nombre of ["Plantarse", "Pedir", "Doblar"]) await expect(botonDe(page, nombre)).toBeEnabled();
+    await expect(page.locator(".bj-col--activa")).toHaveCount(1);
     await page.waitForTimeout(1_000);
 
-    // Cada carta aparece ya en su sitio y no se mueve en ningún fotograma desde que se ve; no suena nada.
+    // Desde el primer fotograma con las tres manos a la vista, cada carta está una sola vez, del todo opaca, sin ningún transform y en el mismo
+    // sitio que en el primer fotograma, y así en todos los demás: saltó a la vista sin animar (un deslizamiento solo de transform también se vería aquí).
     const todas = await muestras(page);
-    for (const nombre of ["8 de picas", "3 de corazones", "8 de tréboles", "5 de diamantes", "Rey de diamantes", "7 de corazones"]) {
-      const vistas = sitiosDe(todas, nombre).filter((sitios) => sitios.length > 0 && sitios.some((p) => p.opacidad > 0));
-      expect(vistas.length, `${nombre} se ve`).toBeGreaterThan(10);
-      const primeraEnSuSitio = vistas.find((sitios) => sitios.length === 1)!;
-      for (const sitios of vistas.slice(vistas.indexOf(primeraEnSuSitio))) {
-        // Mientras la mano vieja se retira con su fundido puede haber dos copias de la misma carta; la nueva es la última.
-        const p = sitios.at(-1)!;
-        expect(p.opacidad, `${nombre} se ve del todo`).toBe(1);
-        expect(Math.abs(p.x - sitios.at(-1)!.x) + Math.abs(p.y - sitios.at(-1)!.y)).toBeLessThan(0.5);
+    const despues = todas.filter((m) => m.manos === 3);
+    expect(despues.length, "fotogramas con las tres manos a la vista").toBeGreaterThan(30);
+    for (const nombre of nombres) {
+      const sitios = despues.map((m) => m.cartas[nombre]);
+      for (const [i, delFotograma] of sitios.entries()) expect(delFotograma, `${nombre}, fotograma ${i}: una sola vez`).toHaveLength(1);
+      const primera = sitios[0][0];
+      for (const [i, [p]] of sitios.entries()) {
+        expect(p.opacidad, `${nombre}, fotograma ${i}: opaca`).toBe(1);
+        expect(p.transform, `${nombre}, fotograma ${i}: sin transform`).toBe("none");
+        expect(Math.abs(p.x - primera.x) + Math.abs(p.y - primera.y) + Math.abs(p.ancho - primera.ancho), `${nombre}, fotograma ${i}: no se ha movido`).toBeLessThan(0.5);
       }
-      const ultimas = vistas.slice(-20).map((sitios) => sitios.at(-1)!);
-      for (const p of ultimas) expect(Math.hypot(p.x - ultimas[0].x, p.y - ultimas[0].y), `${nombre} no se mueve`).toBeLessThan(0.5);
     }
     expect(await sonidos(), "al reconectar no suena nada").toBe(antes);
   });
@@ -1058,6 +1114,62 @@ test.describe("mesa simulada", () => {
         .filter((b) => b.alto < 43.99),
     );
     expect(bajos).toEqual([]);
+  });
+
+  test("en el ordenador, con la mesa llena, tus dos, tres o cuatro manos (cartas, totales y apuestas) no pisan a los jugadores de al lado", async ({ page, request }) => {
+    await page.setViewportSize({ width: 1280, height: 720 });
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    await fichasDeApi(page, 5_000);
+    const yo = sesion.jugador;
+    const otro = (id: number, apodo: string, indice: number, cartas: Carta[], resto: Partial<ManoDeLaVista> = {}) => mano({ id, apodo }, indice, cartas, { casilla: indice, ...resto });
+    const demas = [
+      otro(11, "Ana", 0, [c("5H"), c("10C")], { estado: "plantado" }),
+      otro(11, "Ana", 1, [c("9S"), c("10D")], { estado: "plantado" }),
+      otro(12, "Bartolomé", 0, [c("KH"), c("QC"), c("4D")], { estado: "pasado", apuesta: 1_000 }),
+      otro(13, "Cristina", 0, [c("AH"), c("KC")], { estado: "blackjack" }),
+      otro(14, "Dani", 0, [c("6H"), c("2C")]),
+      otro(14, "Dani", 1, [c("7S"), c("2D")]),
+      otro(14, "Dani", 2, [c("8S"), c("3D")]),
+      otro(15, "Eli", 0, [c("10H"), c("7C")]),
+    ];
+    const suyas = [
+      mano(yo, 0, [c("8S"), c("3H"), c("2C")], { dividida: true, apuesta: 1_000, casilla: 0 }),
+      mano(yo, 1, [c("8C"), c("5D")], { dividida: true, apuesta: 1_000, casilla: 0 }),
+      mano(yo, 2, [c("KD"), c("7H")], { apuesta: 250, casilla: 1 }),
+      mano(yo, 3, [c("9D"), c("9S")], { apuesta: 50, casilla: 2 }),
+    ];
+    const sentados = [yo.apodo, "Ana", "Bartolomé", "Cristina", "Dani", "Eli"];
+    mesa.alConectar(estado(enDecisiones(sesion, [...suyas.slice(0, 2), ...demas], { sentados, opciones: opciones({ dividir: true }) })));
+    await page.goto(`/p/${codigo}/blackjack`);
+    await expect(page.getByText("Mano 1 de 2")).toBeVisible();
+
+    /** Lo que se ve en cada asiento (cartas, líneas de total y apuesta y nombres) tuyo y de los demás, en cajas de la ventana. */
+    const cajas = () =>
+      page.evaluate(() => {
+        const cajasDe = (raiz: Element) =>
+          [...raiz.querySelectorAll(".naipe, .bj-col__pie > *, .bj-etiqueta > *")].map((el) => {
+            const r = el.getBoundingClientRect();
+            return { que: el.className || el.getAttribute("aria-label") || el.tagName, x: r.x, y: r.y, ancho: r.width, alto: r.height };
+          });
+        const mias = cajasDe(document.querySelector(".bj-asiento--yo")!);
+        const ajenas = [...document.querySelectorAll(".bj-asiento:not(.bj-asiento--yo)")].flatMap((asiento) => cajasDe(asiento));
+        return { mias, ajenas };
+      });
+    for (const n of [2, 3, 4]) {
+      mesa.enviar(estado(enDecisiones(sesion, [...suyas.slice(0, n), ...demas], { sentados, opciones: opciones({ dividir: true }) })));
+      await expect(page.getByText(`Mano 1 de ${n}`)).toBeVisible();
+      await page.waitForTimeout(700);
+      const { mias, ajenas } = await cajas();
+      expect(mias.length).toBeGreaterThan(n * 2);
+      expect(ajenas.length).toBeGreaterThan(10);
+      // Ninguna caja tuya se cruza con ninguna de los demás: ni siquiera se tocan (1 px de margen).
+      const choques = mias.flatMap((a) =>
+        ajenas
+          .filter((b) => a.x < b.x + b.ancho + 1 && b.x < a.x + a.ancho + 1 && a.y < b.y + b.alto + 1 && b.y < a.y + a.alto + 1)
+          .map((b) => `${n} manos: «${a.que}» (${Math.round(a.x)},${Math.round(a.y)}) pisa «${b.que}» (${Math.round(b.x)},${Math.round(b.y)})`),
+      );
+      expect(choques).toEqual([]);
+    }
   });
 
   test("las pastillas de los demás enseñan cada mano", async ({ page, request }) => {

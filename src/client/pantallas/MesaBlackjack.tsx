@@ -53,10 +53,8 @@ interface Medidas {
   yo: number;
   otros: number;
   mazo: number;
-  /** El ancho en el que caben tus manos en fila. */
-  disponible: number;
-  /** Lo mismo con otros jugadores sentados a tu lado en el arco: sus asientos están a ~190 px del tuyo y dejan menos hueco. */
-  disponibleConVecinos: number;
+  /** El ancho en el que caben tus `manos` en fila; con `vecinos` (otros jugadores sentados en el arco) hay menos hueco. */
+  disponible(manos: number, vecinos: boolean): number;
 }
 
 /** Entre una mano tuya y la siguiente. */
@@ -75,14 +73,16 @@ function useMedidas(): Medidas {
       yo: Math.round(96 * k),
       otros: Math.round(62 * k),
       mazo: Math.round(56 * k),
-      disponible: Math.min(tapete, 640),
-      disponibleConVecinos: Math.round(tapete * 0.2),
+      // Los asientos de los lados están a ~190 px del tuyo y su línea de nombre mide otros ~190: sin pisarla quedan unos 180 px. Con tres
+      // o cuatro manos tu asiento sube y el total y la apuesta pasan encima de las cartas (ver `.bj-asiento--yo-muchas`): la fila solo
+      // tiene que esquivar las cartas de los vecinos y puede ser más ancha.
+      disponible: (manos, vecinos) => (vecinos ? Math.round(tapete * (manos > 2 ? 0.19 : 0.155)) : Math.min(tapete, 640)),
     };
   }
   const yo = Math.round(Math.min(Math.max(ancho * 0.25, 66), 112, alto * 0.14));
   const banca = Math.round(Math.min(Math.max(ancho * 0.185, 50), 84, alto * 0.105));
   // El marco de la mesa deja 18 px a cada lado.
-  return { ordenador: false, banca, yo, otros: 0, mazo: Math.round(banca * 0.72), disponible: ancho - 36, disponibleConVecinos: ancho - 36 };
+  return { ordenador: false, banca, yo, otros: 0, mazo: Math.round(banca * 0.72), disponible: () => ancho - 36 };
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -252,7 +252,7 @@ export function MesaBlackjack({ codigo }: { codigo: string }) {
   // El resto de la mesa: los sentados por orden de llegada y quien se fue con una mano en juego, cada uno con todas sus manos.
   const otros = vista === null ? [] : agruparOtros(vista, yoApodo);
   const cartasPorMano = misManos.length === 0 ? [0] : misManos.map((m) => m.cartas.length);
-  const disposicion = disponerManos(cartasPorMano, medidas.yo, otros.length > 0 ? medidas.disponibleConVecinos : medidas.disponible, HUECO_MANOS);
+  const disposicion = disponerManos(cartasPorMano, medidas.yo, medidas.disponible(misManos.length, otros.length > 0), HUECO_MANOS);
 
   const fase = vista?.fase;
   const conCuenta = vista !== null && vista.finFase !== null && (fase === "apuestas" || fase === "decisiones" || fase === "resultado");
@@ -372,7 +372,7 @@ export function MesaBlackjack({ codigo }: { codigo: string }) {
   );
 
   return (
-    <main className={`marco-mesa bj${medidas.ordenador ? " bj--ordenador" : ""}${premio !== null ? " bj--premio" : ""}${conCasilla && hayDos ? " bj--dos-casillas" : ""}`}>
+    <main className={`marco-mesa bj${medidas.ordenador ? " bj--ordenador" : ""}${premio !== null ? " bj--premio" : ""}${conCasilla && hayDos ? " bj--dos-casillas" : ""}${misManos.length > 2 ? " bj--muchas-manos" : ""}`}>
       <Reconectando conectado={conectado || vista === null} />
       <BarraMesa titulo="Blackjack" onVolver={salida.alVolver} refFichas={refFichas} />
 

@@ -96,6 +96,7 @@
 
 .bj-col {
   position: relative;
+  flex: none;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -688,17 +689,33 @@
   flex-direction: column-reverse;
 }
 
-/* Con tres o cuatro manos la fila es ancha: tu sitio baja un poco para quedar por debajo de los asientos de al lado, que están más arriba en el arco. */
+/* Con tres o cuatro manos la fila es ancha y, con la mesa llena, la línea de nombre de los asientos de al lado (que cae a la altura de tus
+   cartas) la pisaría: tu asiento sube y el total y la apuesta de cada mano pasan encima de las cartas, en el centro del tapete, que
+   está libre. Así lo único que queda a la altura de esas líneas es una fila de cartas que no llega hasta ellas. */
 .bj-asiento--yo-muchas {
-  translate: -50% calc(-100% + 40px);
+  translate: -50% calc(-100% - 30px);
 }
 
 .bj-asiento--yo-muchas .bj-col__pie {
-  font-size: 0.8125rem;
+  order: -1;
+}
+
+.bj-asiento--yo-muchas .bj-col__pie .bj-total {
+  min-width: 26px;
+  height: 22px;
+  padding: 0 6px;
+  font-size: 0.75rem;
 }
 
 .bj-asiento--yo-muchas .bj-apuesta.bj-apuesta--corta {
-  font-size: 0.8125rem;
+  gap: 3px;
+  font-size: 0.75rem;
+}
+
+.bj-asiento--yo-muchas .bj-apuesta--corta .bj-apuesta__pila,
+.bj-asiento--yo-muchas .bj-apuesta--corta .bj-apuesta__pila .ficha {
+  width: 12px;
+  height: 12px;
 }
 
 /* Tu nombre queda debajo de tus manos: lo que sobra de la altura reservada va arriba, no entre las cartas y tu nombre. */
@@ -775,6 +792,11 @@
 
 /* Y la leyenda del tapete, que quedaría justo detrás de las dos casillas, se aparta mientras se apuesta. */
 .bj--ordenador.bj--dos-casillas .bj-leyenda {
+  opacity: 0;
+}
+
+/* Y con tres o cuatro manos, los totales y las apuestas pasan por el centro del tapete: la leyenda también se aparta. */
+.bj--ordenador.bj--muchas-manos .bj-leyenda {
   opacity: 0;
 }
 

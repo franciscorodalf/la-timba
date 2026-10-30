@@ -33,7 +33,7 @@ interface MisManosProps {
   jugadorId: JugadorId;
   ronda: number;
   reloj: Reloj;
-  /** El ancho de carta y el solape (`disponerManos`). */
+  /** El ancho de carta, el solape y lo que ocupa cada columna (`disponerManos`). */
   disposicion: Disposicion;
   /** El lugar de la mano activa en `manos`, o `-1`. */
   activa: number;
@@ -52,6 +52,7 @@ export function MisManos({ manos, jugadorId, ronda, reloj, disposicion, activa, 
       ronda={ronda}
       ancho={disposicion.ancho}
       solape={disposicion.solape}
+      columnas={disposicion.columnas}
       reloj={reloj}
       etiqueta={(lugar) => (varias ? `Tu mano ${lugar + 1}` : "Tu mano")}
       activa={activa}

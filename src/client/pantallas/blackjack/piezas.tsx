@@ -67,6 +67,8 @@ interface FilaManosProps {
   ronda: number;
   ancho: number;
   solape?: number;
+  /** Lo que mide cada columna (con varias manos): lo que sus cartas o lo que pide lo de debajo. Sin él, se ajusta al contenido. */
+  columnas?: number[];
   reloj: Reloj;
   /** El nombre de cada mano para quien no la ve (`lugar`: su posición en `manos`). */
   etiqueta(lugar: number): string;
@@ -81,7 +83,7 @@ interface FilaManosProps {
  * Las manos de un jugador en fila, cada una con lo suyo debajo. Con varias, la activa lleva un subrayado dorado y las demás se
  * atenúan. Al cambiar de ronda la fila entera se retira con un fundido, también si tenía varias manos.
  */
-export function FilaManos({ manos, de, ronda, ancho, solape, reloj, etiqueta, activa = -1, pie, className }: FilaManosProps) {
+export function FilaManos({ manos, de, ronda, ancho, solape, columnas, reloj, etiqueta, activa = -1, pie, className }: FilaManosProps) {
   const varias = manos.length > 1;
   return (
     <div className={`bj-manos${className ? ` ${className}` : ""}`}>
@@ -92,6 +94,7 @@ export function FilaManos({ manos, de, ronda, ancho, solape, reloj, etiqueta, ac
               key={m?.indice ?? 0}
               className={`bj-col${varias && activa === lugar ? " bj-col--activa" : ""}${varias && activa >= 0 && activa !== lugar ? " bj-col--atenuada" : ""}`}
               aria-current={varias && activa === lugar ? "true" : undefined}
+              style={varias && columnas?.[lugar] !== undefined ? { width: columnas[lugar] } : undefined}
             >
               <Mano cartas={m?.cartas ?? []} de={de} mano={m?.indice ?? 0} ronda={ronda} ancho={ancho} solape={solape} reloj={reloj} etiqueta={etiqueta(lugar)} />
               {varias && <span className="bj-col__subrayado" aria-hidden="true" />}
