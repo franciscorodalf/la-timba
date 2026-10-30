@@ -645,6 +645,43 @@ describe("MesaBlackjack: Jugadores y la sala", () => {
     expect(nueva.mesas.blackjack).toEqual({ jugadores: [ana.apodo], fase: "apuestas", finFase: revela + BJ.RESULTADO_MS + BJ.APUESTAS_MS });
   });
 
+  it("si la sala sale de memoria, no se queda con un resumen falso: se lo pregunta a la mesa (también en la banca)", async () => {
+    const {
+      codigo,
+      js: [ana],
+    } = await nuevaMesa(1, "10S 9C 8H 7D KS");
+    const sala = await abrir(`/parties/partida/${codigo}`, ana.token);
+    const conexion = await sentarse(codigo, ana.token);
+    const apuestas = await hasta<MensajeSala>(sala, (m) => m.mesas.blackjack.jugadores.length === 1, "sala");
+
+    // La mesa ya avisó de su resumen y no lo repetirá; la sala lo pierde, y la mesa tampoco está en memoria.
+    await evictDurableObject(env.Partida.get(env.Partida.idFromName(codigo)));
+    await evictDurableObject(mesa(codigo));
+    await reloj(codigo, T);
+    const escrituras = await vigilarEscrituras(codigo);
+    const otra = await abrir(`/parties/partida/${codigo}`, ana.token);
+    expect(((await otra.recibir("sala")) as MensajeSala).mesas.blackjack).toEqual(apuestas.mesas.blackjack);
+    expect(escrituras).toEqual([]); // la mesa contesta leyendo su registro, sin arrancar ni escribir
+
+    // En la banca no hay resumen nuevo: la mesa contesta con el último que mandó (el de las decisiones).
+    enviar(conexion, { t: "apostar", cantidad: 50 });
+    await hasta(conexion, (m) => m.vista.manos.length === 1);
+    await vencer(codigo);
+    const decisiones = await hasta<MensajeSala>(otra, (m) => m.mesas.blackjack.fase === "decisiones", "sala");
+    await avisosManuales(codigo);
+    enviar(conexion, { t: "plantarse" });
+    await hasta(conexion, (m) => m.vista.fase === "banca");
+    await evictDurableObject(env.Partida.get(env.Partida.idFromName(codigo)));
+    const tercera = await abrir(`/parties/partida/${codigo}`, ana.token);
+    expect(((await tercera.recibir("sala")) as MensajeSala).mesas.blackjack).toEqual(decisiones.mesas.blackjack);
+
+    // Y cuando se ve el resultado, la mesa avisa como siempre.
+    await avisar(codigo);
+    expect(((await hasta<MensajeSala>(tercera, (m) => m.mesas.blackjack.fase === "resultado", "sala")) as MensajeSala).rankingNoche).toEqual([
+      { apodo: ana.apodo, neto: 50 },
+    ]);
+  });
+
   it("los cambios se atienden de uno en uno aunque Jugadores tarde: ni se cobra dos veces ni se pisan", async () => {
     const {
       codigo,

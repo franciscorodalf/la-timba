@@ -1,7 +1,7 @@
 import { type Connection, type ConnectionContext, Server, type WSMessage } from "partyserver";
 import type { FilaRankingPartida, MensajeMesa } from "../shared/api";
 import { rngCripto, type Rng } from "../shared/cartas";
-import type { CodigoError, Evento, FilaLiquidacion, Juego, JugadorId, Paso } from "../shared/juegos/tipos";
+import type { CodigoError, Evento, FilaLiquidacion, Juego, JugadorId, Paso, ResumenMesa } from "../shared/juegos/tipos";
 import type { Env } from "./index";
 import { type Jugadores, jugadoresGlobal } from "./jugadores";
 import type { RondaLiquidada } from "./partida";
@@ -168,6 +168,24 @@ export abstract class Mesa<E extends { ronda: number }, A extends { t: string }>
         await this.anularCobro();
       }).catch(ignorar);
     }
+  }
+
+  /**
+   * Para la sala que ha salido de memoria y ya no sabe el resumen de esta mesa: el de ahora o, si ahora no hay nada que
+   * enseñar (la banca), el último que se le mandó (`null` si tampoco hay). Es una llamada directa, sin `onStart`: si la mesa
+   * no está en memoria, lee su registro sin escribir nada, y una mesa que nunca se ha usado está esperando.
+   */
+  async resumenSala(): Promise<ResumenMesa | null> {
+    const ahora = this.ahora();
+    let estado: E | undefined = this.estado;
+    if (estado === undefined) {
+      const guardado = await this.ctx.storage.get<Registro<E>>(CLAVE_MESA);
+      if (guardado === undefined) estado = this.juego.crear(ahora, this.rng);
+      else estado = this.juego.normalizar?.(guardado.estado) ?? guardado.estado;
+    }
+    const resumen = this.juego.resumen(estado, ahora);
+    if (resumen !== null || this.resumenEnSala === null) return resumen;
+    return JSON.parse(this.resumenEnSala) as ResumenMesa;
   }
 
   onConnect(conn: Connection<EstadoConexion>, { request }: ConnectionContext): Promise<void> | void {
@@ -498,8 +516,9 @@ export abstract class Mesa<E extends { ronda: number }, A extends { t: string }>
 
   /**
    * Avisa a la sala del estado visible de la mesa y de las rondas pagadas desde el último aviso, solo si hay algo nuevo
-   * desde lo último que aceptó: cada aviso es una petición y una escritura en la sala. Si la sala falla se registra, la
-   * mesa sigue y el siguiente cambio lo vuelve a intentar (las rondas también: la sala no suma dos veces la misma).
+   * desde lo último que aceptó: cada aviso es una petición (y, si trae rondas, una escritura en la sala). Si la sala falla
+   * se registra, la mesa sigue y el siguiente cambio lo vuelve a intentar (las rondas también: la sala no suma dos veces la
+   * misma). Si la sala sale de memoria y pierde el resumen, se lo vuelve a preguntar (`resumenSala`).
    */
   private async avisarSala(ahora: number): Promise<void> {
     const resumen = this.juego.resumen(this.estado, ahora);
