@@ -735,7 +735,8 @@ describe("la banca y la ronda siguiente las trae el reloj", () => {
   it("la alarma de respaldo es el fin de la ventana siguiente; el resumen sigue a la vista", () => {
     const { estado: e } = cerrada();
     expect(blackjack.proximaAlarma(e)).toBe(NUEVA + BJ.APUESTAS_MS);
-    expect(blackjack.resumen(e, REVELA - 1)).toEqual({ jugadores: ["ana", "beto", "carla"], fase: "banca", finFase: null });
+    expect(blackjack.resumen(e, REVELA - 1)).toBeNull(); // la banca: la sala sigue con lo de antes
+    expect(blackjack.resumen(e, CIERRE)).toBeNull();
     expect(blackjack.resumen(e, REVELA)).toEqual({ jugadores: ["ana", "beto", "carla"], fase: "resultado", finFase: NUEVA });
     expect(blackjack.resumen(e, NUEVA)).toEqual({ jugadores: ["ana", "beto"], fase: "apuestas", finFase: NUEVA + BJ.APUESTAS_MS });
   });
@@ -1057,9 +1058,9 @@ describe("costo, alarma y resumen", () => {
     expect(blackjack.resumen(estado(), T0)).toEqual({ jugadores: [], fase: "esperando", finFase: null });
   });
 
-  it("en la banca el resumen no lleva cuenta atrás: dura un instante y la sala no la enseña", () => {
+  it("en la banca no hay resumen: dura un instante y la sala sigue con lo que enseñaba", () => {
     const e = enDecisiones({ fase: "banca", finFase: T0 + BJ.BANCA_MS });
-    expect(blackjack.resumen(e, T0)).toEqual({ jugadores: ["ana"], fase: "banca", finFase: null });
+    expect(blackjack.resumen(e, T0)).toBeNull();
   });
 });
 

@@ -839,9 +839,10 @@ export const blackjack: Juego<EstadoBJ, AccionBJ> = {
 
   vista,
 
-  /** Lo que se ve a esa hora (`aLaVista`). La banca dura un instante y la sala no le enseña cuenta atrás (`finFase` a `null`). */
-  resumen(guardado, ahora): ResumenMesa {
+  /** Lo que se ve a esa hora (`aLaVista`). La banca dura un instante: la sala sigue con lo que enseñaba (`null`). */
+  resumen(guardado, ahora): ResumenMesa | null {
     const e = aLaVista(guardado, ahora);
-    return { jugadores: e.asientos.map((a) => a.apodo), fase: e.fase, finFase: e.fase === "banca" ? null : e.finFase };
+    if (e.fase === "banca") return null;
+    return { jugadores: e.asientos.map((a) => a.apodo), fase: e.fase, finFase: e.finFase };
   },
 };

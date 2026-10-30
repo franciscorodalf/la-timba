@@ -86,6 +86,10 @@ export interface Juego<E extends { ronda: number }, A extends { t: string }> {
   eventosEntre?(e: E, desde: number, hasta: number): Evento[];
   /** Lo que ve `jugadorId` (o un espectador, con `null`) a la hora `ahora`. */
   vista(e: E, jugadorId: JugadorId | null, ahora: number): unknown;
-  /** Lo que enseña la sala de la mesa a la hora `ahora`. */
-  resumen(e: E, ahora: number): ResumenMesa;
+  /**
+   * Lo que enseña la sala de la mesa a la hora `ahora`, o `null` en una fase que dura un instante y no cambia lo que enseña
+   * (la banca del blackjack): la sala se queda con lo último y la mesa no la avisa, tampoco de las rondas pagadas, que van
+   * con el siguiente resumen.
+   */
+  resumen(e: E, ahora: number): ResumenMesa | null;
 }

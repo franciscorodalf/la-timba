@@ -629,17 +629,15 @@ describe("MesaBlackjack: Jugadores y la sala", () => {
     await hasta(conexion, (m) => m.vista.manos.length === 1);
     await vencer(codigo);
     await avisosManuales(codigo);
+    const decisiones = await hasta<MensajeSala>(sala, (m) => m.mesas.blackjack.fase === "decisiones", "sala");
+    expect(decisiones.mesas.blackjack).toEqual({ jugadores: [ana.apodo], fase: "decisiones", finFase: T + BJ.APUESTAS_MS + BJ.DECISIONES_MS });
     enviar(conexion, { t: "plantarse" });
     await hasta(conexion, (m) => m.vista.fase === "banca");
-    const antes = await hasta<MensajeSala>(sala, (m) => m.mesas.blackjack.fase === "banca", "sala");
-    expect(antes.rankingNoche).toEqual([]); // la ronda se paga cuando se ve: el ranking aún no cambia
-    // La banca dura un instante: la sala no enseña cuenta atrás.
-    expect(antes.mesas.blackjack).toEqual({ jugadores: [ana.apodo], fase: "banca", finFase: null });
 
-    // El reloj enseña la jugada de la banca (y la paga) y, al acabar el resultado, la ronda nueva: la sala ve las dos.
+    // La banca dura un instante y la sala no se entera: lo siguiente que recibe es el resultado, cuando se ve (y se paga).
     const revela = await avisar(codigo);
     expect(revela).toBe(T + BJ.APUESTAS_MS + BJ.BANCA_MS);
-    const liquidada = await hasta<MensajeSala>(sala, (m) => m.mesas.blackjack.fase === "resultado", "sala");
+    const liquidada: MensajeSala = await sala.recibir("sala");
     expect(liquidada.mesas.blackjack).toEqual({ jugadores: [ana.apodo], fase: "resultado", finFase: revela + BJ.RESULTADO_MS });
     expect(liquidada.rankingNoche).toEqual([{ apodo: ana.apodo, neto: 50 }]);
     await avisar(codigo);
@@ -817,6 +815,7 @@ describe("MesaBlackjack: lo que se escribe y a quién se avisa", () => {
     const conexionB = await sentarse(codigo, beto.token);
     await hasta<MensajeSala>(sala, (m) => m.mesas.blackjack.jugadores.length === 2, "sala");
     await hasta(conexionA, (m) => m.vista.sentados.length === 2);
+    await avisosManuales(codigo);
 
     const escrituras = await vigilarEscrituras(codigo);
     enviar(conexionA, { t: "apostar", cantidad: 50 });
@@ -835,7 +834,9 @@ describe("MesaBlackjack: lo que se escribe y a quién se avisa", () => {
     await hasta(conexionA, (m) => m.vista.manos[0].estado === "plantado");
     enviar(conexionB, { t: "plantarse" });
     await hasta(conexionB, (m) => m.vista.fase === "banca");
-    expect(((await sala.recibir("sala")) as MensajeSala).mesas.blackjack).toMatchObject({ fase: "banca", finFase: null });
+    // Tampoco la banca: dura un instante. Lo siguiente es el resultado, cuando el reloj lo enseña.
+    await avisar(codigo);
+    expect(((await sala.recibir("sala")) as MensajeSala).mesas.blackjack).toMatchObject({ fase: "resultado" });
   });
 
   it("la alarma solo se programa cuando cambia su hora", async () => {

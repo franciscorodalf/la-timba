@@ -503,6 +503,9 @@ export abstract class Mesa<E extends { ronda: number }, A extends { t: string }>
    */
   private async avisarSala(ahora: number): Promise<void> {
     const resumen = this.juego.resumen(this.estado, ahora);
+    // Una fase que no cambia lo que enseña la sala (la banca): ni se la avisa ni se le mandan las rondas, que van con el
+    // siguiente resumen (como mucho, el que anuncie el reloj al acabar esa fase).
+    if (resumen === null) return;
     const clave = JSON.stringify(resumen);
     const rondas = this.rondasPorAvisar;
     if (clave === this.resumenEnSala && rondas.length === 0) return;
