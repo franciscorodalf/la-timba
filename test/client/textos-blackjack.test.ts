@@ -4,8 +4,8 @@ import type { Carta } from "../../src/shared/cartas";
 import type { VistaBJ } from "../../src/shared/juegos/blackjack";
 
 const c = (texto: string): Carta => ({ palo: texto.at(-1) as Carta["palo"], valor: texto.slice(0, -1) as Carta["valor"] });
-const mano = (estado: VistaBJ["manos"][number]["estado"], cartas: Carta[]): VistaBJ["manos"][number] => ({ jugadorId: 1, apodo: "Yo", apuesta: 50, cartas, estado, doblada: false, total: 0 });
-const vista = (fase: VistaBJ["fase"]): VistaBJ => ({ ronda: 1, fase, finFase: 0, banca: [], totalBanca: null, manos: [], sentados: ["Yo"], yo: 1 });
+const mano = (estado: VistaBJ["manos"][number]["estado"], cartas: Carta[]): VistaBJ["manos"][number] => ({ jugadorId: 1, apodo: "Yo", casilla: 0, indice: 0, apuesta: 50, cartas, estado, doblada: false, dividida: false, total: 0 });
+const vista = (fase: VistaBJ["fase"]): VistaBJ => ({ ronda: 1, fase, finFase: 0, banca: [], totalBanca: null, manos: [], sentados: ["Yo"], yo: 1, opciones: null, miSeguro: null, casillasLibres: 7 });
 
 describe("textoEstado", () => {
   it("mientras tus cartas aún vuelan no adelanta el desenlace: ni blackjack, ni pasarse, ni tu turno", () => {

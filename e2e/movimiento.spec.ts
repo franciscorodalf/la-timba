@@ -254,6 +254,9 @@ test.describe("botones de al menos 44 px en el móvil", () => {
       manos: [],
       sentados: [sesion.jugador.apodo],
       yo,
+      opciones: null,
+      miSeguro: null,
+      casillasLibres: 7,
       ...resto,
     });
     mesa.alConectar(mensajeEstado<VistaBJ>(vista()));
@@ -267,7 +270,7 @@ test.describe("botones de al menos 44 px en el móvil", () => {
           fase: "decisiones",
           banca: [c("6S"), null],
           totalBanca: 6,
-          manos: [{ jugadorId: yo, apodo: sesion.jugador.apodo, apuesta: 50, cartas: [c("5H"), c("6C")], estado: "jugando", doblada: false, total: 11 }],
+          manos: [{ jugadorId: yo, apodo: sesion.jugador.apodo, casilla: 0, indice: 0, apuesta: 50, cartas: [c("5H"), c("6C")], estado: "jugando", doblada: false, dividida: false, total: 11 }],
         }),
         [
           { tipo: "carta_repartida", a: yo, oculta: false, carta: c("5H") },

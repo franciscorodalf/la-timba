@@ -20,7 +20,7 @@ test.describe("móvil apaisado", () => {
   test("en la mesa de blackjack se pide girar el móvil: pantalla completa, sin la mesa y sin que la página se desplace", async ({ page, request }) => {
     const { sesion, codigo, mesa } = await entrarSimulada<VistaBJ>(page, request, "mesa-blackjack");
     await fichasDeApi(page, 1000);
-    mesa.alConectar(mensajeEstado<VistaBJ>({ ronda: 1, fase: "apuestas", finFase: Date.now() + 15_000, banca: [], totalBanca: null, manos: [], sentados: [sesion.jugador.apodo], yo: sesion.jugador.id }));
+    mesa.alConectar(mensajeEstado<VistaBJ>({ ronda: 1, fase: "apuestas", finFase: Date.now() + 15_000, banca: [], totalBanca: null, manos: [], sentados: [sesion.jugador.apodo], yo: sesion.jugador.id, opciones: null, miSeguro: null, casillasLibres: 7 }));
     await page.goto(`/p/${codigo}/blackjack`);
 
     await expect(aviso(page)).toBeVisible();
@@ -230,6 +230,9 @@ test.describe("móvil apaisado", () => {
       manos: [],
       sentados: [sesion.jugador.apodo],
       yo,
+      opciones: null,
+      miSeguro: null,
+      casillasLibres: 7,
       ...resto,
     });
     mesa.alConectar(mensajeEstado<VistaBJ>(vista()));
@@ -241,7 +244,7 @@ test.describe("móvil apaisado", () => {
     // Se gira el móvil: aparece el aviso y la mesa sigue recibiendo lo que pasa mientras tanto.
     await page.setViewportSize(APAISADO);
     await expect(aviso(page)).toBeVisible();
-    mesa.enviar(mensajeEstado<VistaBJ>(vista({ manos: [{ jugadorId: yo, apodo: sesion.jugador.apodo, apuesta: 50, cartas: [], estado: "jugando", doblada: false, total: 0 }] })));
+    mesa.enviar(mensajeEstado<VistaBJ>(vista({ manos: [{ jugadorId: yo, apodo: sesion.jugador.apodo, casilla: 0, indice: 0, apuesta: 50, cartas: [], estado: "jugando", doblada: false, dividida: false, total: 0 }] })));
     await page.waitForTimeout(500);
 
     // Se vuelve a poner de pie: la mesa está como la dejó la última novedad, sin haberse levantado ni reconectado.
@@ -290,7 +293,7 @@ test.describe("móvil tumbado pero alto (una tableta)", () => {
   test("con un puntero táctil pero más de 500 px de alto no se pide girar nada: la mesa se enseña", async ({ page, request }) => {
     const { sesion, codigo, mesa } = await entrarSimulada<VistaBJ>(page, request, "mesa-blackjack");
     await fichasDeApi(page, 1000);
-    mesa.alConectar(mensajeEstado<VistaBJ>({ ronda: 1, fase: "apuestas", finFase: Date.now() + 15_000, banca: [], totalBanca: null, manos: [], sentados: [sesion.jugador.apodo], yo: sesion.jugador.id }));
+    mesa.alConectar(mensajeEstado<VistaBJ>({ ronda: 1, fase: "apuestas", finFase: Date.now() + 15_000, banca: [], totalBanca: null, manos: [], sentados: [sesion.jugador.apodo], yo: sesion.jugador.id, opciones: null, miSeguro: null, casillasLibres: 7 }));
     await page.goto(`/p/${codigo}/blackjack`);
 
     await expect(page.getByRole("button", { name: "Añadir 50", exact: true })).toBeVisible();
@@ -305,7 +308,7 @@ test.describe("ventana baja con ratón", () => {
   test("con un puntero fino (el ratón) no se pide girar nada: la mesa se enseña aunque la ventana sea baja", async ({ page, request }) => {
     const { sesion, codigo, mesa } = await entrarSimulada<VistaBJ>(page, request, "mesa-blackjack");
     await fichasDeApi(page, 1000);
-    mesa.alConectar(mensajeEstado<VistaBJ>({ ronda: 1, fase: "apuestas", finFase: Date.now() + 15_000, banca: [], totalBanca: null, manos: [], sentados: [sesion.jugador.apodo], yo: sesion.jugador.id }));
+    mesa.alConectar(mensajeEstado<VistaBJ>({ ronda: 1, fase: "apuestas", finFase: Date.now() + 15_000, banca: [], totalBanca: null, manos: [], sentados: [sesion.jugador.apodo], yo: sesion.jugador.id, opciones: null, miSeguro: null, casillasLibres: 7 }));
     await page.goto(`/p/${codigo}/blackjack`);
 
     await expect(page.getByRole("button", { name: "Añadir 50", exact: true })).toBeVisible();

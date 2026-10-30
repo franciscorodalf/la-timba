@@ -17,6 +17,8 @@ export type CodigoError =
   | "apuesta_invalida"
   | "accion_invalida"
   | "mesa_llena"
+  /** No queda ninguna casilla de apuesta libre en la mesa. */
+  | "sin_casilla"
   | "no_sentado"
   | "sin_fichas"
   | "demasiados_mensajes"

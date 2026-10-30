@@ -10,6 +10,14 @@ export const BJ = {
   RESULTADO_MS: 4_000,
   MIN: 10,
   MAX_JUGADORES: 6,
+  /** Casillas de apuesta de la mesa: cada jugador ocupa una y puede pedir una segunda. */
+  CASILLAS: 7,
+  /** Manos como mucho por jugador en una ronda, contando las que salen de dividir. */
+  MAX_MANOS_JUGADOR: 4,
+  /** Lo que dura la fase `seguro`. */
+  SEGURO_MS: 10_000,
+  /** Lo que se alarga la ventana de decisiones con cada división. */
+  DIVIDIR_EXTRA_MS: 10_000,
 } as const;
 
 function valorCarta(c: Carta): number {
@@ -76,24 +84,52 @@ export function apuestaValida(cantidad: unknown): cantidad is number {
 // ---------------------------------------------------------------------------
 
 export type AccionBJ =
-  | { t: "apostar"; cantidad: number }
+  /** `segunda: true` pide una segunda casilla; sin ella solo vale si aún no tienes casilla. */
+  | { t: "apostar"; cantidad: number; segunda?: boolean }
   | { t: "pedir" }
   | { t: "plantarse" }
   | { t: "doblar" }
+  | { t: "dividir" }
+  | { t: "rendirse" }
+  | { t: "seguro"; tomar: boolean }
   | { t: "salir" };
 
-export type FaseBJ = "esperando" | "apuestas" | "decisiones" | "banca" | "resultado";
+export type FaseBJ = "esperando" | "apuestas" | "seguro" | "decisiones" | "banca" | "resultado";
 
 export interface ManoBJ {
   jugadorId: JugadorId;
   apodo: string;
+  /** La casilla de apuesta (0..`BJ.CASILLAS - 1`); las manos que salen de dividir la comparten. */
+  casilla: number;
+  /** Orden de la mano dentro del jugador (0..`BJ.MAX_MANOS_JUGADOR - 1`): por casilla y luego por división. */
+  indice: number;
   /** Total en juego en esta mano: ya vale el doble si se dobló. */
   apuesta: number;
   cartas: Carta[];
-  estado: "jugando" | "plantado" | "pasado" | "blackjack";
+  estado: "jugando" | "plantado" | "pasado" | "blackjack" | "rendido";
   doblada: boolean;
+  /** La mano sale de dividir otra: un 21 con dos cartas ya no es blackjack natural. */
+  dividida: boolean;
   /** El jugador salió de la mesa con la ronda en curso: pierde la apuesta. */
   abandonada: boolean;
+}
+
+/** Lo que un jugador ha asegurado en la ronda (`cantidad` 0 si dijo que no). */
+export interface SeguroBJ {
+  jugadorId: JugadorId;
+  cantidad: number;
+  respondido: boolean;
+}
+
+/** Qué puede hacer un jugador ahora mismo según las reglas; no sabe cuántas fichas tiene (eso lo comprueba el cobro). */
+export interface OpcionesBJ {
+  pedir: boolean;
+  plantarse: boolean;
+  doblar: boolean;
+  dividir: boolean;
+  rendirse: boolean;
+  /** Lo que costaría asegurarse, o `null` si no se ofrece. */
+  seguro: number | null;
 }
 
 export interface EstadoBJ {
@@ -106,6 +142,10 @@ export interface EstadoBJ {
   banca: Carta[];
   asientos: { jugadorId: JugadorId; apodo: string; conectado: boolean }[];
   manos: ManoBJ[];
+  /** Seguros de la ronda, uno por jugador que ha contestado. */
+  seguros: SeguroBJ[];
+  /** La banca ya ha mirado su carta tapada en esta ronda (solo mira una vez). */
+  bancaMirada: boolean;
   /** Ventanas de apuestas seguidas que se cerraron sin ninguna apuesta; al llegar a 3 la mesa pasa a `esperando`. */
   ventanasVacias: number;
 }
@@ -116,9 +156,15 @@ export interface VistaBJ {
   finFase: number | null;
   banca: (Carta | null)[];
   totalBanca: number | null;
+  /** Ordenadas por (casilla, indice). */
   manos: (Omit<ManoBJ, "abandonada"> & { total: number })[];
   sentados: string[];
   yo: JugadorId | null;
+  /** Solo para quien recibe la vista: `null` para un espectador. */
+  opciones: OpcionesBJ | null;
+  /** Lo que has asegurado esta ronda, o `null`. */
+  miSeguro: number | null;
+  casillasLibres: number;
 }
 
 type Liquidacion = { ronda: number; filas: FilaLiquidacion[] };
@@ -135,8 +181,43 @@ function fallo(error: CodigoError): Paso<EstadoBJ> {
 }
 
 const asientoDe = (e: EstadoBJ, jugadorId: JugadorId) => e.asientos.find((a) => a.jugadorId === jugadorId);
-const manoDe = (e: EstadoBJ, jugadorId: JugadorId) => e.manos.find((m) => m.jugadorId === jugadorId);
 const hayJugando = (e: EstadoBJ) => e.manos.some((m) => m.estado === "jugando");
+
+/** Las manos (las mismas, no copias) ordenadas por (casilla, indice): el orden de reparto y de juego. */
+const porCasilla = (manos: ManoBJ[]): ManoBJ[] => [...manos].sort((a, b) => a.casilla - b.casilla || a.indice - b.indice);
+const manosDe = (e: EstadoBJ, jugadorId: JugadorId): ManoBJ[] => porCasilla(e.manos.filter((m) => m.jugadorId === jugadorId));
+/** Las casillas distintas que ocupa el jugador (las manos que salen de dividir comparten la de su original). */
+const casillasDe = (e: EstadoBJ, jugadorId: JugadorId): number[] => [...new Set(manosDe(e, jugadorId).map((m) => m.casilla))];
+
+/** La mano que juega ahora el jugador: la primera que sigue en juego por (casilla, indice). */
+export function manoActiva(e: EstadoBJ, jugadorId: JugadorId): ManoBJ | undefined {
+  return manosDe(e, jugadorId).find((m) => m.estado === "jugando");
+}
+
+/** Casillas sin apuesta. Las manos abandonadas siguen ocupando la suya hasta que acaba la ronda. */
+export function casillasLibres(e: EstadoBJ): number {
+  return BJ.CASILLAS - new Set(e.manos.map((m) => m.casilla)).size;
+}
+
+/** La casilla libre de número más bajo, o `null` si la mesa está llena. */
+function primeraCasillaLibre(e: EstadoBJ): number | null {
+  const ocupadas = new Set(e.manos.map((m) => m.casilla));
+  for (let casilla = 0; casilla < BJ.CASILLAS; casilla++) if (!ocupadas.has(casilla)) return casilla;
+  return null;
+}
+
+/** Lo que permiten las reglas al jugador ahora mismo. Dividir, rendirse y el seguro llegan con sus jugadas. */
+export function opcionesDe(e: EstadoBJ, jugadorId: JugadorId): OpcionesBJ {
+  const activa = e.fase === "decisiones" ? manoActiva(e, jugadorId) : undefined;
+  return {
+    pedir: activa !== undefined,
+    plantarse: activa !== undefined,
+    doblar: activa?.cartas.length === 2,
+    dividir: false,
+    rendirse: false,
+    seguro: null,
+  };
+}
 
 /** Saca la siguiente carta del zapato. Si se vaciara en plena ronda (no ocurre con ≥ 78 al empezar), baraja uno nuevo. */
 function robar(e: EstadoBJ, rng: Rng, eventos: Evento[]): Carta {
@@ -147,8 +228,9 @@ function robar(e: EstadoBJ, rng: Rng, eventos: Evento[]): Carta {
   return e.zapato.shift() as Carta;
 }
 
-function cartaVisible(a: JugadorId | "banca", carta: Carta): Evento {
-  return { tipo: "carta_repartida", a, oculta: false, carta };
+/** La carta de un jugador lleva el `indice` de su mano; la de la banca no lleva `mano`. */
+function cartaVisible(a: JugadorId | "banca", carta: Carta, mano?: number): Evento {
+  return mano === undefined ? { tipo: "carta_repartida", a, oculta: false, carta } : { tipo: "carta_repartida", a, mano, oculta: false, carta };
 }
 
 /** Si ya nadie puede decidir, las decisiones terminan sin esperar al reloj. */
@@ -159,15 +241,15 @@ function cerrarDecisiones(e: EstadoBJ, ahora: number): void {
   }
 }
 
-/** Reparte jugador, banca, jugador, banca (la segunda de la banca, tapada) y abre la fase que toque. */
+/** Reparte por casillas, banca, por casillas, banca (la segunda de la banca, tapada) y abre la fase que toque. */
 function repartir(e: EstadoBJ, ahora: number, rng: Rng, eventos: Evento[]): void {
-  const activas = e.manos.filter((m) => !m.abandonada);
+  const activas = porCasilla(e.manos.filter((m) => !m.abandonada));
   if (activas.length > 0) {
     for (const vuelta of [0, 1]) {
       for (const m of activas) {
         const carta = robar(e, rng, eventos);
         m.cartas.push(carta);
-        eventos.push(cartaVisible(m.jugadorId, carta));
+        eventos.push(cartaVisible(m.jugadorId, carta, m.indice));
       }
       const carta = robar(e, rng, eventos);
       e.banca.push(carta);
@@ -204,12 +286,19 @@ function jugarBanca(e: EstadoBJ, ahora: number, rng: Rng, eventos: Evento[]): Li
   return liquidacion;
 }
 
+/** Una fila por jugador, en el orden de su primera mano, con la suma de lo apostado y de lo cobrado en todas sus manos. */
 function liquidar(e: EstadoBJ, eventos: Evento[]): Liquidacion {
-  const filas = e.manos.map((m) => ({
-    jugadorId: m.jugadorId,
-    apuesta: m.apuesta,
-    pago: m.abandonada ? 0 : pago(m, e.banca),
-  }));
+  const filas: FilaLiquidacion[] = [];
+  for (const m of e.manos) {
+    const cobrado = m.abandonada ? 0 : pago(m, e.banca);
+    const fila = filas.find((f) => f.jugadorId === m.jugadorId);
+    if (fila) {
+      fila.apuesta += m.apuesta;
+      fila.pago += cobrado;
+    } else {
+      filas.push({ jugadorId: m.jugadorId, apuesta: m.apuesta, pago: cobrado });
+    }
+  }
   for (const f of filas) eventos.push({ tipo: "pago", jugadorId: f.jugadorId, neto: f.pago - f.apuesta });
   return { ronda: e.ronda, filas };
 }
@@ -218,6 +307,8 @@ function liquidar(e: EstadoBJ, eventos: Evento[]): Liquidacion {
 function nuevaRonda(e: EstadoBJ, ahora: number, rng: Rng, eventos: Evento[]): void {
   e.ronda += 1;
   e.manos = [];
+  e.seguros = [];
+  e.bancaMirada = false;
   e.banca = [];
   e.ventanasVacias = 0;
   e.asientos = e.asientos.filter((a) => a.conectado);
@@ -253,19 +344,25 @@ function sentar(e: EstadoBJ, jugadorId: JugadorId, apodo: string, ahora: number)
   return exito(s);
 }
 
-/** En `esperando` (mesa dormida) apostar es válido: abre una ventana nueva con esa apuesta. */
-function apostar(e: EstadoBJ, jugadorId: JugadorId, cantidad: number, ahora: number): Paso<EstadoBJ> {
+/**
+ * Apostar ocupa la casilla libre de número más bajo. Sin `segunda` solo vale si aún no tienes casilla; con ella, solo si
+ * ya tienes exactamente una. En `esperando` (mesa dormida) es válido: abre una ventana nueva con esa apuesta.
+ */
+function apostar(e: EstadoBJ, jugadorId: JugadorId, cantidad: number, segunda: boolean, ahora: number): Paso<EstadoBJ> {
   if (e.fase !== "apuestas" && e.fase !== "esperando") return fallo("fase_incorrecta");
   if (!apuestaValida(cantidad)) return fallo("apuesta_invalida");
-  if (manoDe(e, jugadorId)) return fallo("accion_invalida");
+  const propias = casillasDe(e, jugadorId).length;
+  if (propias !== (segunda ? 1 : 0)) return fallo("accion_invalida");
+  const casilla = primeraCasillaLibre(e);
+  if (casilla === null) return fallo("sin_casilla");
   const s = structuredClone(e);
   const apodo = asientoDe(s, jugadorId)!.apodo;
-  s.manos.push({ jugadorId, apodo, apuesta: cantidad, cartas: [], estado: "jugando", doblada: false, abandonada: false });
+  s.manos.push({ jugadorId, apodo, casilla, indice: propias, apuesta: cantidad, cartas: [], estado: "jugando", doblada: false, dividida: false, abandonada: false });
   if (s.fase === "esperando") abrirApuestas(s, ahora);
   return exito(s);
 }
 
-/** Pedir, plantarse y doblar: solo en decisiones y sobre una mano propia que siga jugando. */
+/** Pedir, plantarse y doblar: solo en decisiones y sobre la mano activa del jugador. */
 function decidir(
   e: EstadoBJ,
   jugadorId: JugadorId,
@@ -274,19 +371,19 @@ function decidir(
   rng: Rng,
 ): Paso<EstadoBJ> {
   if (e.fase !== "decisiones") return fallo("fase_incorrecta");
-  const actual = manoDe(e, jugadorId);
-  if (!actual || actual.estado !== "jugando") return fallo("accion_invalida");
+  const actual = manoActiva(e, jugadorId);
+  if (!actual) return fallo("accion_invalida");
   if (accion === "doblar" && actual.cartas.length !== 2) return fallo("accion_invalida");
 
   const s = structuredClone(e);
-  const m = manoDe(s, jugadorId)!;
+  const m = manoActiva(s, jugadorId)!;
   const eventos: Evento[] = [];
   if (accion === "plantarse") {
     m.estado = "plantado";
   } else {
     const carta = robar(s, rng, eventos);
     m.cartas.push(carta);
-    eventos.push(cartaVisible(jugadorId, carta));
+    eventos.push(cartaVisible(jugadorId, carta, m.indice));
     const pasado = puntuacion(m.cartas).total > 21;
     if (accion === "doblar") {
       m.apuesta *= 2;
@@ -303,11 +400,13 @@ function decidir(
 function salir(e: EstadoBJ, jugadorId: JugadorId, ahora: number, rng: Rng): Paso<EstadoBJ> {
   const s = structuredClone(e);
   s.asientos = s.asientos.filter((a) => a.jugadorId !== jugadorId);
-  const m = manoDe(s, jugadorId);
-  // En `resultado` la mano ya está liquidada: no hay nada que perder.
-  if (m && s.fase !== "resultado") {
-    m.abandonada = true;
-    if (m.estado === "jugando") m.estado = "plantado";
+  // En `resultado` las manos ya están liquidadas: no hay nada que perder.
+  if (s.fase !== "resultado") {
+    for (const m of s.manos) {
+      if (m.jugadorId !== jugadorId) continue;
+      m.abandonada = true;
+      if (m.estado === "jugando") m.estado = "plantado";
+    }
   }
   if (s.asientos.length > 0) {
     cerrarDecisiones(s, ahora);
@@ -325,7 +424,9 @@ function tick(e: EstadoBJ, ahora: number, rng: Rng): Paso<EstadoBJ> {
   const s = structuredClone(e);
   const eventos: Evento[] = [];
   switch (s.fase) {
+    // La fase `seguro` todavía no se abre desde ningún sitio: hasta que tenga sus reglas, el reloj no la mueve.
     case "esperando":
+    case "seguro":
       return exito(e);
     case "apuestas":
       if (s.manos.length > 0) {
@@ -368,15 +469,22 @@ function desconectar(e: EstadoBJ, jugadorId: JugadorId, ahora: number): Paso<Est
     s.asientos = s.asientos.filter((a) => a.jugadorId !== jugadorId);
     return exito(s);
   }
-  const m = manoDe(s, jugadorId);
-  if (s.fase === "decisiones" && m?.estado === "jugando") m.estado = "plantado";
+  if (s.fase === "decisiones") {
+    for (const m of s.manos) if (m.jugadorId === jugadorId && m.estado === "jugando") m.estado = "plantado";
+  }
   cerrarDecisiones(s, ahora);
   return exito(s);
 }
 
+/** Lo que ha asegurado el jugador, o `null` si no ha cogido seguro. */
+function aseguradoPor(e: EstadoBJ, jugadorId: JugadorId | null): number | null {
+  const cantidad = e.seguros.find((s) => s.jugadorId === jugadorId)?.cantidad ?? 0;
+  return cantidad > 0 ? cantidad : null;
+}
+
 function vista(e: EstadoBJ, jugadorId: JugadorId | null): VistaBJ {
   // La carta tapada no sale del servidor hasta que se gira (evento `carta_girada`, en el tick de `banca`).
-  const tapada = e.fase === "apuestas" || e.fase === "decisiones" || e.fase === "banca";
+  const tapada = e.fase === "apuestas" || e.fase === "seguro" || e.fase === "decisiones" || e.fase === "banca";
   const visibles = tapada ? e.banca.slice(0, 1) : e.banca;
   return {
     ronda: e.ronda,
@@ -384,13 +492,16 @@ function vista(e: EstadoBJ, jugadorId: JugadorId | null): VistaBJ {
     finFase: e.finFase,
     banca: e.banca.map((carta, i) => (tapada && i > 0 ? null : { ...carta })),
     totalBanca: visibles.length > 0 ? puntuacion(visibles).total : null,
-    manos: e.manos.map(({ abandonada: _abandonada, ...m }) => ({
+    manos: porCasilla(e.manos).map(({ abandonada: _abandonada, ...m }) => ({
       ...m,
       cartas: m.cartas.map((carta) => ({ ...carta })),
       total: puntuacion(m.cartas).total,
     })),
     sentados: e.asientos.map((a) => a.apodo),
     yo: jugadorId,
+    opciones: jugadorId === null ? null : opcionesDe(e, jugadorId),
+    miSeguro: aseguradoPor(e, jugadorId),
+    casillasLibres: casillasLibres(e),
   };
 }
 
@@ -407,16 +518,18 @@ export const blackjack: Juego<EstadoBJ, AccionBJ> = {
       banca: [],
       asientos: [],
       manos: [],
+      seguros: [],
+      bancaMirada: false,
       ventanasVacias: 0,
     };
   },
 
   sentar,
 
-  /** Se calcula sobre el estado ANTERIOR a `aplicar`: al doblar cuesta la apuesta original, no el doble. */
+  /** Se calcula sobre el estado ANTERIOR a `aplicar`: al doblar cuesta la apuesta original (la de la mano activa), no el doble. */
   costo(e, jugadorId, accion) {
     if (accion.t === "apostar") return apuestaValida(accion.cantidad) ? accion.cantidad : 0;
-    if (accion.t === "doblar") return manoDe(e, jugadorId)?.apuesta ?? 0;
+    if (accion.t === "doblar") return manoActiva(e, jugadorId)?.apuesta ?? 0;
     return 0;
   },
 
@@ -424,11 +537,16 @@ export const blackjack: Juego<EstadoBJ, AccionBJ> = {
     if (!asientoDe(e, jugadorId)) return fallo("no_sentado");
     switch (accion.t) {
       case "apostar":
-        return apostar(e, jugadorId, accion.cantidad, ahora);
+        return apostar(e, jugadorId, accion.cantidad, accion.segunda === true, ahora);
       case "pedir":
       case "plantarse":
       case "doblar":
         return decidir(e, jugadorId, accion.t, ahora, rng);
+      // Todavía sin reglas: el servidor las rechaza sin cobrar.
+      case "dividir":
+      case "rendirse":
+      case "seguro":
+        return fallo("accion_invalida");
       case "salir":
         return salir(e, jugadorId, ahora, rng);
       default:

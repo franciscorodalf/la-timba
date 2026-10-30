@@ -1,43 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { crearBaraja, type Carta } from "../../src/shared/cartas";
-import {
-  blackjack,
-  BJ,
-  type AccionBJ,
-  type EstadoBJ,
-  type ManoBJ,
-  type VistaBJ,
-} from "../../src/shared/juegos/blackjack";
+import { crearBaraja } from "../../src/shared/cartas";
+import { blackjack, BJ, type AccionBJ, type EstadoBJ, type VistaBJ } from "../../src/shared/juegos/blackjack";
 import type { Paso } from "../../src/shared/juegos/tipos";
 import { c, cs, rngFijo } from "../ayudas";
-
-const T0 = 1_000_000;
-const rng = rngFijo(0.5);
-/** Cartas de relleno al final del zapato (2 barajas: nunca provocan un rebarajado por sí solas). */
-const RELLENO = crearBaraja(2);
-
-function estado(parcial: Partial<EstadoBJ> = {}): EstadoBJ {
-  return { ronda: 1, fase: "esperando", finFase: null, zapato: [], banca: [], asientos: [], manos: [], ventanasVacias: 0, ...parcial };
-}
-const asiento = (jugadorId: number, apodo: string, conectado = true) => ({ jugadorId, apodo, conectado });
-const mano = (jugadorId: number, apodo: string, parcial: Partial<ManoBJ> = {}): ManoBJ => ({
-  jugadorId,
-  apodo,
-  apuesta: 50,
-  cartas: [],
-  estado: "jugando",
-  doblada: false,
-  abandonada: false,
-  ...parcial,
-});
-/** Zapato conocido: las primeras cartas se reparten en el orden escrito; detrás, relleno. */
-const zapato = (texto: string): Carta[] => [...cs(texto), ...RELLENO];
-
-function exito(p: Paso<EstadoBJ>) {
-  if (!p.ok) throw new Error(`se esperaba ok y llegó el error ${p.error}`);
-  return p;
-}
-const error = (p: Paso<EstadoBJ>) => (p.ok ? "ok" : p.error);
+import { asiento, error, estado, exito, mano, RELLENO, rng, T0, zapato } from "./ayudas-blackjack";
 
 function congelar<T>(valor: T): T {
   if (valor !== null && typeof valor === "object" && !Object.isFrozen(valor)) {
@@ -63,7 +29,7 @@ const enDecisiones = (parcial: Partial<EstadoBJ> = {}) =>
 const dosEnDecisiones = () =>
   enDecisiones({
     asientos: [asiento(1, "ana"), asiento(2, "beto")],
-    manos: [mano(1, "ana", { cartas: cs("10S 9H") }), mano(2, "beto", { cartas: cs("8S 8H") })],
+    manos: [mano(1, "ana", { cartas: cs("10S 9H") }), mano(2, "beto", { casilla: 1, cartas: cs("8S 8H") })],
   });
 
 describe("crear, sentar y apuestas", () => {
@@ -163,7 +129,7 @@ describe("crear, sentar y apuestas", () => {
 
   it("una acción desconocida es mensaje_invalido", () => {
     const e = enDecisiones();
-    expect(error(blackjack.aplicar(e, 1, { t: "rendirse" } as unknown as AccionBJ, T0, rng))).toBe("mensaje_invalido");
+    expect(error(blackjack.aplicar(e, 1, { t: "baile" } as unknown as AccionBJ, T0, rng))).toBe("mensaje_invalido");
   });
 });
 
@@ -197,9 +163,9 @@ describe("reparto", () => {
     const e = apuestas();
     const p = exito(blackjack.tick(e, T0 + BJ.APUESTAS_MS, rng));
     expect(p.eventos).toEqual([
-      { tipo: "carta_repartida", a: 1, oculta: false, carta: c("10S") },
+      { tipo: "carta_repartida", a: 1, mano: 0, oculta: false, carta: c("10S") },
       { tipo: "carta_repartida", a: "banca", oculta: false, carta: c("10C") },
-      { tipo: "carta_repartida", a: 1, oculta: false, carta: c("9H") },
+      { tipo: "carta_repartida", a: 1, mano: 0, oculta: false, carta: c("9H") },
       { tipo: "carta_repartida", a: "banca", oculta: true },
     ]);
     expect(p.eventos[3]).not.toHaveProperty("carta");
@@ -443,7 +409,7 @@ describe("decisiones", () => {
     const p1 = exito(blackjack.aplicar(e, 1, { t: "pedir" }, T0, rng));
     expect(p1.estado.manos[0].cartas).toEqual(cs("10S 9H 2C"));
     expect(p1.estado.manos[0].estado).toBe("jugando"); // 21 todavía se puede seguir pidiendo
-    expect(p1.eventos).toEqual([{ tipo: "carta_repartida", a: 1, oculta: false, carta: c("2C") }]);
+    expect(p1.eventos).toEqual([{ tipo: "carta_repartida", a: 1, mano: 0, oculta: false, carta: c("2C") }]);
     expect(p1.estado.fase).toBe("decisiones");
 
     const p2 = exito(blackjack.aplicar(p1.estado, 1, { t: "pedir" }, T0 + 10, rng));
@@ -517,7 +483,7 @@ describe("decisiones", () => {
     expect(m.doblada).toBe(true);
     expect(m.cartas).toEqual(cs("5S 6H 9S"));
     expect(m.estado).toBe("plantado");
-    expect(p.eventos).toEqual([{ tipo: "carta_repartida", a: 1, oculta: false, carta: c("9S") }]);
+    expect(p.eventos).toEqual([{ tipo: "carta_repartida", a: 1, mano: 0, oculta: false, carta: c("9S") }]);
     expect(p.estado.fase).toBe("banca");
   });
 
@@ -1021,8 +987,8 @@ describe("vista", () => {
     expect(v.finFase).toBe(T0 + BJ.DECISIONES_MS);
     expect(v.sentados).toEqual(["ana", "beto"]);
     expect(v.manos).toEqual([
-      { jugadorId: 1, apodo: "ana", apuesta: 50, cartas: cs("10S 9H"), estado: "jugando", doblada: false, total: 19 },
-      { jugadorId: 2, apodo: "beto", apuesta: 50, cartas: cs("8S 8H"), estado: "jugando", doblada: false, total: 16 },
+      { jugadorId: 1, apodo: "ana", casilla: 0, indice: 0, apuesta: 50, cartas: cs("10S 9H"), estado: "jugando", doblada: false, dividida: false, total: 19 },
+      { jugadorId: 2, apodo: "beto", casilla: 1, indice: 0, apuesta: 50, cartas: cs("8S 8H"), estado: "jugando", doblada: false, dividida: false, total: 16 },
     ]);
     for (const m of v.manos) expect(m).not.toHaveProperty("abandonada");
   });

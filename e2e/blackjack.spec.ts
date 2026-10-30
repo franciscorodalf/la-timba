@@ -115,6 +115,9 @@ function vista(sesion: RespuestaSesion, resto: Partial<VistaBJ> = {}): VistaBJ {
     manos: [],
     sentados: [sesion.jugador.apodo],
     yo: sesion.jugador.id,
+    opciones: null,
+    miSeguro: null,
+    casillasLibres: 7,
     ...resto,
   };
 }
@@ -168,7 +171,7 @@ test.describe("mesa simulada", () => {
     await expect.poll(() => mesa.recibidas).toContainEqual({ t: "apostar", cantidad: 1000 });
 
     // La mesa confirma: tu casilla pasa a apostada (aro dorado).
-    const mano = { jugadorId: sesion.jugador.id, apodo: sesion.jugador.apodo, apuesta: 1000, cartas: [], estado: "jugando" as const, doblada: false, total: 0 };
+    const mano = { jugadorId: sesion.jugador.id, apodo: sesion.jugador.apodo, casilla: 0, indice: 0, apuesta: 1000, cartas: [], estado: "jugando" as const, doblada: false, dividida: false, total: 0 };
     mesa.enviar(estado(vista(sesion, { manos: [mano] })));
     await expect(casilla).toHaveAttribute("data-estado", "apostada");
     await expect(casilla).toContainText("Apostada");
@@ -229,7 +232,7 @@ test.describe("mesa simulada", () => {
 
   test("si la mesa no puede atender una decisión, lo dice con el texto general (no el de la apuesta) y se puede volver a pedir", async ({ page, request }) => {
     const { sesion, codigo, mesa } = await entrarSimulada(page, request);
-    const mano = { jugadorId: sesion.jugador.id, apodo: sesion.jugador.apodo, apuesta: 50, cartas: [c("10H"), c("2C")], estado: "jugando" as const, doblada: false, total: 12 };
+    const mano = { jugadorId: sesion.jugador.id, apodo: sesion.jugador.apodo, casilla: 0, indice: 0, apuesta: 50, cartas: [c("10H"), c("2C")], estado: "jugando" as const, doblada: false, dividida: false, total: 12 };
     mesa.alConectar(estado(vista(sesion, { fase: "decisiones", banca: [c("6S"), null], totalBanca: 6, manos: [mano] })));
     await page.goto(`/p/${codigo}/blackjack`);
     const pedir = page.getByRole("button", { name: "Pedir" });
@@ -268,10 +271,13 @@ test.describe("mesa simulada", () => {
     const mano = (cartas: Carta[], total: number, estadoMano: VistaBJ["manos"][number]["estado"] = "jugando") => ({
       jugadorId: yo,
       apodo: sesion.jugador.apodo,
+      casilla: 0,
+      indice: 0,
       apuesta: 50,
       cartas,
       estado: estadoMano,
       doblada: false,
+      dividida: false,
       total,
     });
     mesa.alConectar(estado(vista(sesion, { manos: [mano([], 0)] })));
@@ -330,7 +336,7 @@ test.describe("mesa simulada", () => {
       fase: "decisiones",
       banca: [c("6S"), null],
       totalBanca: 6,
-      manos: [{ jugadorId: sesion.jugador.id, apodo: sesion.jugador.apodo, apuesta: 50, cartas: [c("10H"), c("9C")], estado: "jugando", doblada: false, total: 19 }],
+      manos: [{ jugadorId: sesion.jugador.id, apodo: sesion.jugador.apodo, casilla: 0, indice: 0, apuesta: 50, cartas: [c("10H"), c("9C")], estado: "jugando", doblada: false, dividida: false, total: 19 }],
     });
     mesa.alConectar(estado(conApuesta));
     await page.goto(`/p/${codigo}/blackjack`);
@@ -362,7 +368,7 @@ test.describe("mesa simulada", () => {
   test("el contador se pone al día al reconectar con la ronda ya liquidada (sin evento de pago) y al cambiar de ronda", async ({ page, request }) => {
     const { sesion, codigo, mesa } = await entrarSimulada(page, request);
     const fichas = await fichasDeApi(page, 950);
-    const mano = { jugadorId: sesion.jugador.id, apodo: sesion.jugador.apodo, apuesta: 50, cartas: [c("10H"), c("9C")], estado: "plantado" as const, doblada: false, total: 19 };
+    const mano = { jugadorId: sesion.jugador.id, apodo: sesion.jugador.apodo, casilla: 0, indice: 0, apuesta: 50, cartas: [c("10H"), c("9C")], estado: "plantado" as const, doblada: false, dividida: false, total: 19 };
     mesa.alConectar(estado(vista(sesion, { fase: "banca", finFase: Date.now() + 1_000, banca: [c("6S"), null], totalBanca: 6, manos: [mano] })));
     await page.goto(`/p/${codigo}/blackjack`);
     await expect(contador(page)).toHaveText("Tienes 950 fichas");
@@ -385,8 +391,8 @@ test.describe("mesa simulada", () => {
   test("mientras «Pedir» espera respuesta, una novedad de otro jugador no lo reactiva: un doble toque pide una sola carta", async ({ page, request }) => {
     const { sesion, codigo, mesa } = await entrarSimulada(page, request);
     const yo = sesion.jugador.id;
-    const mia = (cartas: Carta[]) => ({ jugadorId: yo, apodo: sesion.jugador.apodo, apuesta: 50, cartas, estado: "jugando" as const, doblada: false, total: 0 });
-    const otra = (cartas: Carta[]) => ({ jugadorId: 900, apodo: "Otro", apuesta: 50, cartas, estado: "jugando" as const, doblada: false, total: 0 });
+    const mia = (cartas: Carta[]) => ({ jugadorId: yo, apodo: sesion.jugador.apodo, casilla: 0, indice: 0, apuesta: 50, cartas, estado: "jugando" as const, doblada: false, dividida: false, total: 0 });
+    const otra = (cartas: Carta[]) => ({ jugadorId: 900, apodo: "Otro", casilla: 0, indice: 0, apuesta: 50, cartas, estado: "jugando" as const, doblada: false, dividida: false, total: 0 });
     const mesaCon = (mias: Carta[], otras: Carta[]) =>
       vista(sesion, { fase: "decisiones", banca: [c("6S"), null], totalBanca: 6, sentados: [sesion.jugador.apodo, "Otro"], manos: [mia(mias), otra(otras)] });
     mesa.alConectar(estado(mesaCon([c("10H"), c("2C")], [c("5D"), c("3S")])));

@@ -82,6 +82,8 @@ export function textoEstado(vista: VistaBJ | null, mano: ManoVista | undefined, 
       return "Apuesta para empezar la ronda";
     case "apuestas":
       return mano ? "Apuesta hecha. Esperando al reparto" : "Haz tu apuesta";
+    case "seguro":
+      return "Esperando al resto";
     case "decisiones":
       if (!mano) return "Miras esta ronda";
       if (!manoEnLaMesa) return "Repartiendo…";

@@ -149,6 +149,10 @@ describe("BJ", () => {
       RESULTADO_MS: 4_000,
       MIN: 10,
       MAX_JUGADORES: 6,
+      CASILLAS: 7,
+      MAX_MANOS_JUGADOR: 4,
+      SEGURO_MS: 10_000,
+      DIVIDIR_EXTRA_MS: 10_000,
     });
   });
 });

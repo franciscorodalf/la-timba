@@ -182,7 +182,7 @@ describe("MesaBlackjack: rondas y fichas", () => {
     const apostado: Estado = await conexion.recibir();
     expect(apostado.version).toBe(inicial.version + 1);
     expect(apostado.vista.manos).toEqual([
-      { jugadorId: ana.id, apodo: ana.apodo, apuesta: 50, cartas: [], estado: "jugando", doblada: false, total: 0 },
+      { jugadorId: ana.id, apodo: ana.apodo, casilla: 0, indice: 0, apuesta: 50, cartas: [], estado: "jugando", doblada: false, dividida: false, total: 0 },
     ]);
     expect(await fichas(ana.id)).toBe(950);
     expect(await pendientesDe(codigo)).toBe(1);
@@ -192,9 +192,9 @@ describe("MesaBlackjack: rondas y fichas", () => {
     expect(repartido.vista).toMatchObject({ fase: "decisiones", banca: [c("9C"), null], totalBanca: 9 });
     expect(repartido.vista.manos[0]).toMatchObject({ cartas: cs("10S 8H"), total: 18, estado: "jugando" });
     expect(repartido.eventos).toEqual([
-      { tipo: "carta_repartida", a: ana.id, oculta: false, carta: c("10S") },
+      { tipo: "carta_repartida", a: ana.id, mano: 0, oculta: false, carta: c("10S") },
       { tipo: "carta_repartida", a: "banca", oculta: false, carta: c("9C") },
-      { tipo: "carta_repartida", a: ana.id, oculta: false, carta: c("8H") },
+      { tipo: "carta_repartida", a: ana.id, mano: 0, oculta: false, carta: c("8H") },
       { tipo: "carta_repartida", a: "banca", oculta: true },
     ]);
 
@@ -415,8 +415,8 @@ describe("MesaBlackjack: rondas y fichas", () => {
       vista: { ronda: 1, fase: "decisiones", banca: [c("9C"), null], totalBanca: 9, sentados: [ana.apodo, beto.apodo], yo: ana.id },
     });
     expect(entrada.vista.manos).toEqual([
-      { jugadorId: ana.id, apodo: ana.apodo, apuesta: 50, cartas: cs("10S 2S"), estado: "plantado", doblada: false, total: 12 },
-      { jugadorId: beto.id, apodo: beto.apodo, apuesta: 50, cartas: cs("10H 9H"), estado: "jugando", doblada: false, total: 19 },
+      { jugadorId: ana.id, apodo: ana.apodo, casilla: 0, indice: 0, apuesta: 50, cartas: cs("10S 2S"), estado: "plantado", doblada: false, dividida: false, total: 12 },
+      { jugadorId: beto.id, apodo: beto.apodo, casilla: 1, indice: 0, apuesta: 50, cartas: cs("10H 9H"), estado: "jugando", doblada: false, dividida: false, total: 19 },
     ]);
     expect((await estadoMesa(codigo)).asientos.find((a) => a.jugadorId === ana.id)?.conectado).toBe(true);
   });

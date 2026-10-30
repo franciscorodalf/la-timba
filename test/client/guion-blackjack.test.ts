@@ -6,11 +6,11 @@ import type { VistaBJ } from "../../src/shared/juegos/blackjack";
 const c = (texto: string): Carta => ({ palo: texto.at(-1) as Carta["palo"], valor: texto.slice(0, -1) as Carta["valor"] });
 
 function mano(jugadorId: number, cartas: Carta[]): VistaBJ["manos"][number] {
-  return { jugadorId, apodo: `j${jugadorId}`, apuesta: 50, cartas, estado: "jugando", doblada: false, total: 0 };
+  return { jugadorId, apodo: `j${jugadorId}`, casilla: 0, indice: 0, apuesta: 50, cartas, estado: "jugando", doblada: false, dividida: false, total: 0 };
 }
 
 function vista(resto: Partial<VistaBJ>): VistaBJ {
-  return { ronda: 3, fase: "decisiones", finFase: 0, banca: [], totalBanca: null, manos: [], sentados: [], yo: 1, ...resto };
+  return { ronda: 3, fase: "decisiones", finFase: 0, banca: [], totalBanca: null, manos: [], sentados: [], yo: 1, opciones: null, miSeguro: null, casillasLibres: 7 - (resto.manos?.length ?? 0), ...resto };
 }
 
 describe("guionDelLote", () => {
