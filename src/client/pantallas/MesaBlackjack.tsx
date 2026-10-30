@@ -9,12 +9,11 @@ import { CartelPremio } from "../componentes/CartelPremio";
 import { CasillaApuesta } from "../componentes/CasillaApuesta";
 import { EstadoMesa } from "../componentes/EstadoMesa";
 import { GirarMovil } from "../componentes/GirarMovil";
-import { Ficha } from "../componentes/Ficha";
 import { FichasVolando } from "../componentes/FichasVolando";
 import { Mazo } from "../componentes/Mazo";
 import { usePrecargarBaraja } from "../componentes/Naipe";
 import { Reconectando } from "../componentes/Reconectando";
-import { Neto, Resultado } from "../componentes/Resultado";
+import { Resultado } from "../componentes/Resultado";
 import { SinMesa, useSinMesa } from "../componentes/SinMesa";
 import { useMovimientoReducido } from "../efectos/movimiento";
 import { useBarajando } from "../efectos/useBarajando";
@@ -24,7 +23,7 @@ import { vibrar } from "../efectos/vibrar";
 import { sonidos } from "../efectos/sonidos";
 import { ORDENADOR_PX, useAltoVentana, useAnchoVentana } from "../efectos/ventana";
 import { usePrecargarTipografia } from "../efectos/usePrecargarTipografia";
-import { cuentaAtras, miles } from "../formato";
+import { cuentaAtras } from "../formato";
 import { useAhoraServidor } from "../red/reloj";
 import { useSesion } from "../red/sesion";
 import { useEnvioUnico } from "../red/useEnvioUnico";
@@ -35,8 +34,9 @@ import { useSentado } from "../red/useSentado";
 import { MesaLlena } from "./MesaLlena";
 import { Apostar, apuestaRecordada, Decidir, ElegirCasilla, textoEstado } from "./blackjack/controles";
 import { claveCarta, totalVisible } from "./blackjack/guion";
+import { AsientoOtro, MisManos, PastillaOtro } from "./blackjack/asientos";
 import { activaDe, agruparOtros, disponerManos, type ManoVista, type Otro } from "./blackjack/manos";
-import { Apuesta, FilaManos, Leyenda, Mano, Rendida, ResumenManos, Total, tonoDe } from "./blackjack/piezas";
+import { Apuesta, Leyenda, Mano, Rendida, Total, tonoDe } from "./blackjack/piezas";
 import { useDeslizarAlDividir } from "./blackjack/useDeslizar";
 import { aterrizada, girada, restante, useGuion } from "./blackjack/useGuion";
 
@@ -295,15 +295,6 @@ export function MesaBlackjack({ codigo }: { codigo: string }) {
 
   // Con varias manos, cada una lleva su total y su apuesta debajo (con la que se cubre el mismo hueco que con una sola); la línea de tu
   // nombre dice cuál juegas.
-  const pieMio = (mano: ManoVista, lugar: number) => {
-    const total = totalDe(mano);
-    return (
-      <div className="bj-col__pie">
-        {mano.estado === "rendido" ? <Rendida /> : <Total valor={total} tono={tonoDe(mano, total, undefined)} />}
-        <Apuesta cantidad={mano.apuesta} corta refPila={lugar === 0 ? refApuesta : undefined} />
-      </div>
-    );
-  };
   const miEtiqueta = (
     <div className="bj-etiqueta">
       <span>Tú</span>
@@ -342,17 +333,15 @@ export function MesaBlackjack({ codigo }: { codigo: string }) {
     <>
       {miEtiqueta}
       <div className="bj-yo__juego" style={{ "--sitio": `${Math.round(medidas.yo * 1.4)}px` } as CSSProperties}>
-        <FilaManos
+        <MisManos
           manos={misManos}
-          de={yo ?? 0}
+          jugadorId={yo ?? 0}
           ronda={ronda}
-          ancho={disposicion.ancho}
-          solape={disposicion.solape}
           reloj={reloj}
-          etiqueta={(lugar) => (variasManos ? `Tu mano ${lugar + 1}` : "Tu mano")}
+          disposicion={disposicion}
           activa={lugarActiva}
-          pie={variasManos ? pieMio : undefined}
-          className="bj-manos--mias"
+          totalDe={totalDe}
+          refApuesta={refApuesta}
         />
         <AnimatePresence>
           {conCasilla && (
@@ -412,46 +401,9 @@ export function MesaBlackjack({ codigo }: { codigo: string }) {
           <>
           <Leyenda />
           <ol className="bj-asientos" aria-label="Asientos">
-            {asientosEnArco(otros).map(({ otro, hueco }) => {
-              const varias = otro.manos.length > 1;
-              const dueño = otro.manos[0]?.jugadorId;
-              const total = !varias && otro.manos[0] ? totalDe(otro.manos[0]) : null;
-              const neto = dueño !== undefined && netos ? netos.get(dueño) : undefined;
-              const apostado = otro.manos.reduce((suma, m) => suma + m.apuesta, 0);
-              // Hasta dos manos con sus cartas, más pequeñas; las demás, solo su total.
-              const conCartas = otro.manos.slice(0, 2);
-              const sinCartas = otro.manos.slice(2);
-              return (
-                <li key={otro.apodo} className={`bj-asiento${varias ? " bj-asiento--varias" : ""}${otro.manos.length > 0 ? "" : " bj-asiento--mira"}`} style={estiloHueco(hueco)}>
-                  <FilaManos
-                    manos={conCartas}
-                    de={dueño ?? -1}
-                    ronda={ronda}
-                    ancho={varias ? Math.round(medidas.otros * 0.8) : medidas.otros}
-                    reloj={reloj}
-                    etiqueta={(lugar) => (varias ? `Mano ${lugar + 1} de ${otro.apodo}` : `Mano de ${otro.apodo}`)}
-                    pie={
-                      varias
-                        ? (mano) => (
-                            <div className="bj-col__pie">
-                              {mano.estado === "rendido" ? <Rendida /> : <Total valor={totalDe(mano)} tono={tonoDe(mano, totalDe(mano), undefined)} />}
-                            </div>
-                          )
-                        : undefined
-                    }
-                  />
-                  <div className="bj-etiqueta">
-                    <span className="bj-asiento__apodo">{otro.apodo}</span>
-                    {!varias && (otro.manos[0]?.estado === "rendido" ? <Rendida /> : <Total valor={total} tono={tonoDe(otro.manos[0], total, neto)} />)}
-                    {sinCartas.length > 0 && (
-                      <span className="bj-asiento__mas">{`+ ${sinCartas.map((m) => (m.estado === "rendido" ? "rendida" : (totalDe(m) ?? "–"))).join(" / ")}`}</span>
-                    )}
-                    {neto !== undefined && <Neto neto={neto} />}
-                    {otro.manos.length > 0 && <Apuesta cantidad={apostado} />}
-                  </div>
-                </li>
-              );
-            })}
+            {asientosEnArco(otros).map(({ otro, hueco }) => (
+              <AsientoOtro key={otro.apodo} otro={otro} estilo={estiloHueco(hueco)} ronda={ronda} reloj={reloj} ancho={medidas.otros} totalDe={totalDe} netos={netos} />
+            ))}
             <li className={`bj-asiento bj-asiento--yo${misManos.length > 2 ? " bj-asiento--yo-muchas" : ""}`} style={estiloHueco(0)}>
               {miSitio}
             </li>
@@ -461,23 +413,9 @@ export function MesaBlackjack({ codigo }: { codigo: string }) {
           <>
             {otros.length > 0 && (
               <ul className="bj-otros" aria-label="Otros jugadores">
-                {otros.map(({ apodo, manos }) => {
-                  const neto = manos[0] && netos ? netos.get(manos[0].jugadorId) : undefined;
-                  return (
-                    <li key={apodo} className={`bj-pastilla${manos.length > 0 ? "" : " bj-pastilla--mira"}`}>
-                      <span className="bj-pastilla__apodo">{apodo}</span>
-                      {manos.length > 0 && manos.every((m) => m.cartas.length === 0) && (
-                        <span className="bj-pastilla__apuesta">
-                          <Ficha tamaño={12} />
-                          <span className="solo-lectores">apuesta </span>
-                          {miles(manos.reduce((suma, m) => suma + m.apuesta, 0))}
-                        </span>
-                      )}
-                      <ResumenManos manos={manos} total={totalDe} />
-                      {neto !== undefined && <Neto neto={neto} />}
-                    </li>
-                  );
-                })}
+                {otros.map((otro) => (
+                  <PastillaOtro key={otro.apodo} otro={otro} totalDe={totalDe} netos={netos} />
+                ))}
               </ul>
             )}
             <Leyenda />

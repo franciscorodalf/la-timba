@@ -12,8 +12,6 @@ import { claveNaipe, type Reloj } from "./useGuion";
 
 // Las piezas de la mesa de blackjack: manos, totales, apuestas y resultados, y la leyenda del tapete.
 
-export type { ManoVista } from "./manos";
-
 /** Lo de una ronda (las cartas de una mano o la fila de manos entera). Al cambiar de ronda, lo de la anterior se retira con un fundido. */
 function CapaMano({ children, className = "bj-mano__cartas" }: { children: ReactNode; className?: string }) {
   const presente = useIsPresent();
