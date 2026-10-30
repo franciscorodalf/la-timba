@@ -104,6 +104,8 @@ flowchart TB
 
 ## Ejecutarlo en local
 
+> El estado del desarrollo en curso (qué está hecho, qué falta y cómo seguir) está en [`docs/ESTADO.md`](docs/ESTADO.md).
+
 Hace falta Node.js 22 o superior (lo exige Wrangler).
 
 ```bash
