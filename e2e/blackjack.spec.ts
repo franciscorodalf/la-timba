@@ -66,16 +66,39 @@ test("tres jugadores (tres navegadores) apuestan 50, se plantan y cobran lo que 
       await expect(p.getByRole("group", { name: "Banca" }).getByRole("img", { name: "Carta boca abajo" })).toHaveCount(1);
     }
 
-    // Se recarga a alguien mientras otro aún decide: la ronda sigue en decisiones mientras tanto.
+    // Tras el reparto la mesa puede estar en tres sitios, todos legítimos con un zapato al azar: en las decisiones (lo normal), en el
+    // seguro de 10 s (la banca enseña un as, ~8 %) o con la ronda ya decidida (la banca tiene blackjack con un 10 o una figura, ~5 %).
     const plantarse = (p: Page) => p.getByRole("button", { name: "Plantarse" });
+    const no = (p: Page) => p.getByRole("button", { name: "No", exact: true });
+    for (const p of paginas) await expect(plantarse(p).or(no(p)).or(resultado(p))).toBeVisible();
+
+    // Con el seguro abierto se recarga a alguien: la mano y las fichas vuelven. Quien se desconecta en el seguro cuenta como «no» (así lo
+    // pide el diseño), de modo que quien recarga no tiene nada que contestar y los otros dos dicen «No».
+    const enSeguro: Page[] = [];
+    for (const p of paginas) if (await no(p).isVisible()) enSeguro.push(p);
+    if (enSeguro.length > 0) {
+      test.info().annotations.push({ type: "nota", description: "La banca enseña un as: la ronda pasa por el seguro (dos contestan «No» y quien recarga cuenta como «no»)." });
+      const recargada = paginas[2];
+      const antes = await tuMano(recargada).evaluateAll((cartas) => cartas.map((c) => c.getAttribute("aria-label")));
+      await recargada.reload();
+      await expect(tuMano(recargada)).toHaveCount(2);
+      expect(await tuMano(recargada).evaluateAll((cartas) => cartas.map((c) => c.getAttribute("aria-label")))).toEqual(antes);
+      await expect(contador(recargada)).toHaveText("Tienes 950 fichas");
+      for (const p of paginas.slice(0, 2)) await no(p).click();
+      // Han contestado todos: la banca mira al momento y sigue a las decisiones o, con blackjack, a un resultado sin decisiones.
+      for (const p of paginas) await expect(plantarse(p).or(resultado(p))).toBeVisible();
+    }
+
+    // Se recarga a alguien mientras otro aún decide: la ronda sigue en decisiones mientras tanto.
     // Si la ronda ya ha pasado de las decisiones, el botón ya no está: no se espera a que vuelva.
     const decide = async (p: Page) => (await plantarse(p).isVisible()) && (await plantarse(p).isEnabled({ timeout: 1_000 }).catch(() => false));
-    for (const p of paginas) await expect(plantarse(p).or(resultado(p))).toBeVisible();
     const quienDecide: Page[] = [];
     for (const p of paginas) if (await decide(p)) quienDecide.push(p);
     const recargada = quienDecide.length === 0 ? null : paginas.find((p) => p !== quienDecide[0])!;
     if (recargada === null) {
-      test.info().annotations.push({ type: "nota", description: "Los tres tienen blackjack: no hay decisiones durante las que recargar." });
+      // La ronda está decidida sin decisiones: o los tres tienen blackjack o lo tiene la banca (que se decide al repartir y dura 4 s, así que
+      // recargar ahora podría pillar ya la ronda siguiente). Cada uno ve su resultado igualmente.
+      test.info().annotations.push({ type: "nota", description: "Ronda decidida al repartir (blackjack de la banca o de los tres): no hay decisiones durante las que recargar." });
     } else {
       const antes = await tuMano(recargada).evaluateAll((cartas) => cartas.map((c) => c.getAttribute("aria-label")));
       await recargada.reload();
@@ -1230,6 +1253,7 @@ test.describe("mesa simulada", () => {
     const anchoCartaDani = (await page.locator(".bj-asiento", { hasText: "Dani" }).getByRole("img").first().boundingBox())!.width;
     expect(anchoCartaAna, "con dos manos las cartas son más pequeñas").toBeLessThan(anchoCartaDani);
   });
+
   // ---- Seguro y la banca que mira su carta ----
 
   /** La mesa en el seguro: la banca enseña un as y el jugador aún no ha contestado; `coste` es lo que cuesta asegurarse. */

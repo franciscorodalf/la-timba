@@ -57,6 +57,9 @@ async function seguirCartas(pagina: Page): Promise<void> {
     const vistaEn = new WeakMap<Element, number>();
     const fotograma = (ahora: number) => {
       for (const el of document.querySelectorAll(".bj-mano [role=img]")) {
+        // Una carta de la ronda anterior que se retira (la mesa la marca `aria-hidden`) ya no cuenta: al empezar la ronda siguiente la mesa
+        // se recoloca y la que se va se mueve con ella. Con blackjack de la banca la ronda dura apenas 4 s desde el reparto.
+        if (el.closest("[aria-hidden=true]") !== null) continue;
         const previo = vistas.get(el);
         if (previo === undefined) {
           if (Number(getComputedStyle(el).opacity) <= 0) continue;
@@ -100,7 +103,13 @@ test.describe("con movimiento reducido", () => {
     // El reparto llega al cerrarse la ventana de apuestas (15 s); si hay decisión, se planta.
     await expect(tuMano(page)).toHaveCount(2, { timeout: 30_000 });
     const plantarse = page.getByRole("button", { name: "Plantarse" });
-    await expect(plantarse.or(resultado(page))).toBeVisible({ timeout: 30_000 });
+    // Con un as de la banca (~8 %) antes de decidir hay un seguro: se dice que no.
+    const no = page.getByRole("button", { name: "No", exact: true });
+    await expect(plantarse.or(resultado(page)).or(no)).toBeVisible({ timeout: 30_000 });
+    if (await no.isVisible()) {
+      await no.click();
+      await expect(plantarse.or(resultado(page))).toBeVisible();
+    }
     // Se espera a que cada carta del reparto cumpla sus 300 ms antes de actuar: al plantarse llegan las cartas de la banca y su mano
     // se vuelve a centrar, un movimiento lateral legítimo que no debe caer dentro de la ventana de ninguna carta ya medida.
     await expect
