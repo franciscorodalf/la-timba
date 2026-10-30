@@ -39,6 +39,12 @@ export interface Juego<E extends { ronda: number }, A extends { t: string }> {
   id: IdJuego;
   maxJugadores: number;
   crear(ahora: number, rng: Rng): E;
+  /**
+   * Pone al día un estado guardado por una versión anterior de las reglas (campos que entonces no existían). La mesa lo
+   * llama al cargar el estado del almacenamiento, solo en memoria: no escribe nada hasta la siguiente jugada. Un estado
+   * que ya está al día debe quedar igual, y nunca se muta el que se recibe.
+   */
+  normalizar?(e: E): E;
   /** Idempotente si el jugador ya está sentado. */
   sentar(e: E, jugadorId: JugadorId, apodo: string, ahora: number): Paso<E>;
   /** Fichas a cobrar antes de aplicar la acción. */

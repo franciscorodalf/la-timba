@@ -65,7 +65,7 @@ npm run deploy                   # build + wrangler deploy (lo hace el usuario)
 
 ### Reglas de los juegos (`src/shared/juegos/`)
 
-- Son reductores puros que implementan `Juego<E, A>` de `tipos.ts`: `crear`, `sentar`, `costo`, `aplicar`, `desconectar`, `tick`, `proximaAlarma`, `vista` y `resumen`, más los opcionales `proximoAviso` y `eventosEntre`.
+- Son reductores puros que implementan `Juego<E, A>` de `tipos.ts`: `crear`, `sentar`, `costo`, `aplicar`, `desconectar`, `tick`, `proximaAlarma`, `vista` y `resumen`, más los opcionales `proximoAviso`, `eventosEntre` y `normalizar` (rellena en memoria lo que falte a un estado guardado por una versión anterior de las reglas; la mesa lo llama al cargar).
 - El tiempo y el azar entran como parámetros.
 - `vista(estado, jugador, ahora)` es lo único que sale del servidor. Nunca incluye información oculta: la baraja, la carta tapada de la banca o los pasos futuros de la carrera.
 - La carrera se sortea entera al cerrar las apuestas. Sus pasos los anuncia un temporizador en memoria (`proximoAviso`/`eventosEntre`), sin escrituras.

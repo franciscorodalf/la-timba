@@ -140,6 +140,9 @@ export abstract class Mesa<E extends { ronda: number }, A extends { t: string }>
     this.alarmaEn = alarma;
     if (guardado !== undefined) {
       ({ estado: this.estado, pendientes: this.pendientes, cobro: this.cobro } = guardado);
+      // Una mesa guardada por una versión anterior de las reglas se pone al día solo en memoria, sin escribir: la siguiente
+      // jugada, que ya escribe el registro, lo guarda normalizado.
+      if (this.juego.normalizar !== undefined) this.estado = this.juego.normalizar(this.estado);
     } else {
       this.estado = this.juego.crear(this.ahora(), this.rng);
       await this.guardar();

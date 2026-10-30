@@ -651,6 +651,34 @@ function aseguradoPor(e: EstadoBJ, jugadorId: JugadorId | null): number | null {
   return cantidad > 0 ? cantidad : null;
 }
 
+/** Lo que pudo guardar una versión anterior: manos sin `casilla`, `indice` ni `dividida`, y un estado sin `seguros` ni `bancaMirada`. */
+type ManoAntigua = Omit<ManoBJ, "casilla" | "indice" | "dividida"> & Partial<Pick<ManoBJ, "casilla" | "indice" | "dividida">>;
+type EstadoAntiguo = Omit<EstadoBJ, "manos" | "seguros" | "bancaMirada"> & Partial<Pick<EstadoBJ, "seguros" | "bancaMirada">> & { manos: ManoAntigua[] };
+
+/**
+ * Pone al día un estado guardado antes de las casillas, el seguro y dividir (las mesas ya desplegadas): rellena lo que no
+ * existía. Las manos sin `casilla` toman la casilla libre de número más bajo por orden de aparición, como al apostar; sin
+ * `indice`, su orden entre las manos del jugador; sin `dividida`, `false`. Sin `seguros`, ninguno; sin `bancaMirada`, `false`
+ * (la banca no miraba, así que solo afecta a si se enseña su carta tapada). Un estado que ya está al día queda igual.
+ */
+function normalizar(e: EstadoBJ): EstadoBJ {
+  const antiguo: EstadoAntiguo = e;
+  const ocupadas = new Set(antiguo.manos.flatMap((m) => (m.casilla === undefined ? [] : [m.casilla])));
+  const casillaLibre = (): number => {
+    let casilla = 0;
+    while (ocupadas.has(casilla)) casilla += 1;
+    ocupadas.add(casilla);
+    return casilla;
+  };
+  const previas = new Map<JugadorId, number>();
+  const manos = antiguo.manos.map((m): ManoBJ => {
+    const delJugador = previas.get(m.jugadorId) ?? 0;
+    previas.set(m.jugadorId, delJugador + 1);
+    return { ...m, casilla: m.casilla ?? casillaLibre(), indice: m.indice ?? delJugador, dividida: m.dividida ?? false };
+  });
+  return { ...antiguo, manos, seguros: antiguo.seguros ?? [], bancaMirada: antiguo.bancaMirada ?? false };
+}
+
 function vista(e: EstadoBJ, jugadorId: JugadorId | null): VistaBJ {
   // La carta tapada no sale del servidor hasta que se gira (evento `carta_girada`): en `resultado`, o cuando la banca mira
   // y tiene blackjack. Ante cualquier otro caso, tapada: las fases nuevas no pueden filtrarla por descuido.
@@ -693,6 +721,8 @@ export const blackjack: Juego<EstadoBJ, AccionBJ> = {
       ventanasVacias: 0,
     };
   },
+
+  normalizar,
 
   sentar,
 
