@@ -329,6 +329,100 @@
   opacity: 0;
 }
 
+/* ---------- Apostar con dos manos ---------- */
+
+/* «+ Segunda mano», en la línea de tu nombre, justo encima de tu casilla. Mide 44 px pero no estira la línea (28 px): sobresale
+   por arriba y por abajo, así al pedirla, al apostar y al repartir la mesa no se mueve. */
+.bj-segunda {
+  min-height: 44px;
+  margin: -8px 0 -8px auto;
+  padding: 0 14px;
+  font-size: 0.8125rem;
+  letter-spacing: 0.02em;
+  text-transform: none;
+}
+
+/* En el ordenador la línea de tu nombre queda debajo de la casilla: el botón sobresale hacia abajo, donde hay tapete libre. */
+.bj-asiento .bj-segunda {
+  margin: 0 0 -16px 6px;
+}
+
+/* Con dos casillas van una junto a otra y la cantidad pasa debajo del aro: cada una cabe en media pantalla. */
+.bj-casilla--doble {
+  /* El aro cabe en el hueco de tu mano (`--sitio`) con su cantidad debajo, y dos aros caben a lo ancho. */
+  --aro: min(96px, 24vw, calc(var(--sitio) - 46px));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(12px, 5vw, 28px);
+}
+
+.bj-casilla__sitio {
+  position: relative;
+  transition: opacity 0.2s;
+}
+
+.bj-casilla--doble .casilla {
+  flex-direction: column;
+  gap: 4px;
+}
+
+.bj-casilla--doble .casilla__aro {
+  width: var(--aro);
+  height: var(--aro);
+}
+
+/* La pila de fichas se encoge con el aro: sigue cabiendo entera aunque tenga diez fichas. */
+.bj-casilla--doble .casilla__pila {
+  scale: 0.78;
+}
+
+.bj-casilla--doble .casilla__texto {
+  align-items: center;
+  min-width: 0;
+}
+
+.bj-casilla--doble .casilla__cantidad {
+  font-size: 1.75rem;
+  transform-origin: 50% 60%;
+}
+
+.bj-casilla--doble .casilla__mas {
+  display: none;
+}
+
+/* Elegir casilla: un botón transparente encima; la elegida lleva el aro dorado y la otra se apaga un poco. */
+.bj-casilla__elegir {
+  position: absolute;
+  inset: -4px;
+  padding: 0;
+  border: 0;
+  border-radius: 20px;
+  background: none;
+  cursor: pointer;
+  pointer-events: auto;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.bj-casilla__elegir:focus-visible {
+  outline: 2px solid var(--oro-claro);
+  outline-offset: 2px;
+}
+
+.bj-casilla__sitio--otra {
+  opacity: 0.7;
+}
+
+.bj-casilla__sitio--elegida .casilla__aro {
+  border-color: var(--oro-claro);
+  box-shadow:
+    0 0 0 3px var(--oro),
+    0 0 20px rgba(245, 215, 110, 0.55);
+  transition:
+    border-color 0.2s,
+    box-shadow 0.2s;
+}
+
 /* ---------- Panel: estado, temporizador y botones ---------- */
 
 /* Reserva siempre el alto del panel más alto (el de apostar: 164 px) aunque la fase solo traiga una línea de estado: si el panel
@@ -467,7 +561,44 @@
   translate: 0 -50%;
 }
 
+/* Con dos casillas en el ordenador, la cantidad va debajo de cada aro, como en el móvil: a la derecha pisaría a la otra casilla. */
+.bj--ordenador .bj-casilla.bj-casilla--doble .casilla {
+  position: static;
+  transform: none;
+}
+
+.bj--ordenador .bj-casilla.bj-casilla--doble .casilla__texto {
+  position: static;
+  translate: none;
+}
+
+/* Y más compacta, para no subir sobre la leyenda del tapete. */
+.bj--ordenador .bj-casilla--doble {
+  --aro: min(96px, calc(var(--sitio) - 42px));
+}
+
+.bj--ordenador .bj-casilla--doble .casilla {
+  gap: 2px;
+}
+
+.bj--ordenador .bj-casilla--doble .casilla__cantidad {
+  font-size: 1.5rem;
+}
+
+/* Y la leyenda del tapete, que quedaría justo detrás de las dos casillas, se aparta mientras se apuesta. */
+.bj--ordenador.bj--dos-casillas .bj-leyenda {
+  opacity: 0;
+}
+
 .bj--ordenador .bj-panel {
   width: min(560px, 100%);
   margin: 26px auto 0;
+}
+
+/* Movimiento reducido: elegir casilla cambia de aspecto sin fundidos. */
+@media (prefers-reduced-motion: reduce) {
+  .bj-casilla__sitio,
+  .bj-casilla__sitio--elegida .casilla__aro {
+    transition: none;
+  }
 }

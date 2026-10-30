@@ -264,6 +264,12 @@ test.describe("botones de al menos 44 px en el móvil", () => {
     await expect(page.getByRole("button", { name: "Añadir 50", exact: true })).toBeVisible();
     await comprobar(page, "Blackjack (apuestas)");
 
+    // Con la segunda casilla: los botones para elegir casilla y «Quitar» también miden 44 px.
+    await page.getByRole("button", { name: "+ Segunda mano", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Quitar segunda mano" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Casilla de la segunda mano" })).toBeVisible();
+    await comprobar(page, "Blackjack (apuestas con dos casillas)");
+
     mesa.enviar(
       mensajeEstado<VistaBJ>(
         vista({

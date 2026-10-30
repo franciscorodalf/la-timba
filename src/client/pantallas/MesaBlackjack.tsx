@@ -4,6 +4,7 @@ import { type AccionBJ, BJ, type VistaBJ } from "../../shared/juegos/blackjack";
 import type { JugadorId } from "../../shared/juegos/tipos";
 import { AvisoMesa } from "../componentes/AvisoMesa";
 import { BarraMesa } from "../componentes/BarraMesa";
+import { Boton } from "../componentes/Boton";
 import { CartelPremio } from "../componentes/CartelPremio";
 import { CasillaApuesta } from "../componentes/CasillaApuesta";
 import { EstadoMesa } from "../componentes/EstadoMesa";
@@ -32,7 +33,7 @@ import { useMesa } from "../red/useMesa";
 import { useSalirDeMesa } from "../red/useSalirDeMesa";
 import { useSentado } from "../red/useSentado";
 import { MesaLlena } from "./MesaLlena";
-import { Apostar, apuestaRecordada, Decidir, textoEstado } from "./blackjack/controles";
+import { Apostar, apuestaRecordada, Decidir, ElegirCasilla, textoEstado } from "./blackjack/controles";
 import { claveCarta, totalVisible } from "./blackjack/guion";
 import { Apuesta, Leyenda, Mano, type ManoVista, SimboloMano, Total, tonoDe } from "./blackjack/piezas";
 import { aterrizada, girada, restante, useGuion } from "./blackjack/useGuion";
@@ -89,10 +90,16 @@ export function MesaBlackjack({ codigo }: { codigo: string }) {
   const mazo = useRef<HTMLDivElement>(null);
   const refFichas = useRef<HTMLParagraphElement>(null);
   const refApuesta = useRef<HTMLSpanElement>(null);
-  const refCasilla = useRef<HTMLDivElement>(null);
+  // Tus casillas del tapete (la primera y la segunda), adonde vuelan las fichas.
+  const refCasillas = [useRef<HTMLDivElement>(null), useRef<HTMLDivElement>(null)] as const;
   const reloj = useGuion(lote, vista, mazo);
-  // Lo que llevas preparado para apostar: se ve a la vez en tu casilla del tapete y en el botón.
+  // Lo que llevas preparado para apostar: se ve a la vez en tus casillas del tapete y en el botón. La primera se recuerda de una
+  // ronda a otra; la segunda (`null`: no la has pedido) se olvida. `elegida` es la casilla a la que van las fichas.
   const [montante, setMontante] = useState(apuestaRecordada);
+  const [montanteSegunda, setMontanteSegunda] = useState<number | null>(null);
+  const [elegida, setElegida] = useState<0 | 1>(0);
+  // La segunda apuesta sale cuando la mesa confirma la primera (`enviada`: ya se ha mandado).
+  const [envioSegunda, setEnvioSegunda] = useState<{ cantidad: number; enviada: boolean } | null>(null);
 
   const [resultados, setResultados] = useState<Resultados | null>(null);
   const { premio, celebrar } = usePremio();
@@ -109,11 +116,15 @@ export function MesaBlackjack({ codigo }: { codigo: string }) {
 
   const yo = vista?.yo ?? null;
   const miMano = vista?.manos.find((m) => m.jugadorId === yo);
+  // Todas tus manos; mientras se apuesta, la primera y la segunda casilla por orden de apuesta.
+  const misManos = (vista?.manos ?? []).filter((m) => m.jugadorId === yo).sort((a, b) => a.indice - b.indice);
   const fichas = jugador?.fichas ?? 0;
-  const preparada = montante <= fichas ? montante : 0;
+  // Lo preparado en cada casilla sin pasarse de tus fichas; la primera deja de reservarlas cuando ya está apostada.
+  const primeraPreparada = montante <= fichas ? montante : 0;
+  const segundaPreparada = montanteSegunda === null ? null : montanteSegunda <= fichas - (miMano === undefined ? primeraPreparada : 0) ? montanteSegunda : 0;
 
-  // Tu apuesta ya está en la mesa (o la has doblado): el contador baja contando. Una vez por apuesta confirmada.
-  const miApuesta = miMano?.apuesta ?? null;
+  // Tu apuesta ya está en la mesa (o la has doblado): el contador baja contando. Una vez por apuesta confirmada, de cada mano.
+  const miApuesta = misManos.length === 0 ? null : misManos.reduce((suma, m) => suma + m.apuesta, 0);
   const apuestaVista = useRef<number | null>(null);
   useEffect(() => {
     const antes = apuestaVista.current;
@@ -141,12 +152,56 @@ export function MesaBlackjack({ codigo }: { codigo: string }) {
   }, [lote]);
 
   // Tras una acción tuya, los botones esperan a que cambie TU mano (cartas, estado o apuesta, en esta ronda).
-  const firmaMano = vista === null ? null : `${vista.ronda}:${miMano === undefined ? "-" : `${miMano.cartas.length}:${miMano.estado}:${miMano.apuesta}`}`;
+  const firmaMano =
+    vista === null ? null : `${vista.ronda}:${misManos.length === 0 ? "-" : misManos.map((m) => `${m.casilla}.${m.indice}:${m.cartas.length}:${m.estado}:${m.apuesta}`).join("|")}`;
   const { esperando, marcarEnviado } = useEnvioUnico(firmaMano, error, conectado);
   const actuar = (accion: AccionBJ) => {
     enviar(accion);
     marcarEnviado();
   };
+
+  // Sin mano tuya (empieza otra ronda) se olvida la segunda casilla; lo que preparas para la primera sí se recuerda.
+  const sinMano = miMano === undefined;
+  useEffect(() => {
+    if (!sinMano) return;
+    setMontanteSegunda(null);
+    setElegida(0);
+    setEnvioSegunda(null);
+  }, [sinMano]);
+
+  // Con la primera ya apostada y nada por mandar, una segunda preparada que no llegó a salir (falló la primera y se apostó por otro lado)
+  // ya no se puede apostar: se quita.
+  useEffect(() => {
+    if (sinMano || envioSegunda !== null || montanteSegunda === null || misManos.length > 1) return;
+    setMontanteSegunda(null);
+    setElegida(0);
+  }, [sinMano, envioSegunda, montanteSegunda, misManos.length]);
+
+  // La segunda apuesta sale, una sola vez, en cuanto llega la vista con tu primera mano: la mesa ya la ha cobrado. Si ya se han
+  // visto las dos manos o la ventana ya se cerró, no queda nada que mandar.
+  const enApuestas = vista?.fase === "apuestas" || vista?.fase === "esperando";
+  useEffect(() => {
+    if (envioSegunda === null) return;
+    if (misManos.length > 1 || !enApuestas) {
+      setEnvioSegunda(null);
+      return;
+    }
+    if (envioSegunda.enviada || miMano === undefined || !conectado) return;
+    setEnvioSegunda({ ...envioSegunda, enviada: true });
+    actuar({ t: "apostar", cantidad: envioSegunda.cantidad, segunda: true });
+    // `actuar` y `misManos` son los de este render; lo que dispara el envío es la mesa (tu mano), la conexión o el propio envío.
+  }, [envioSegunda, miMano, conectado, enApuestas]);
+
+  // Un error de la mesa cancela lo que esperaba salir; si respondía a la segunda apuesta (ya mandada), esa casilla no existe.
+  useEffect(() => {
+    if (error === null) return;
+    if (envioSegunda?.enviada) {
+      setMontanteSegunda(null);
+      setElegida(0);
+    }
+    setEnvioSegunda(null);
+    // Solo cuando llega un error nuevo.
+  }, [error]);
 
   // Al cerrarse las decisiones la ronda ya está decidida: durante la banca (y el resultado) salir no cambia lo que cobras.
   const apuestaEnJuego = miMano !== undefined && vista?.fase !== "banca" && vista?.fase !== "resultado";
@@ -186,19 +241,33 @@ export function MesaBlackjack({ codigo }: { codigo: string }) {
   const cuenta = conCuenta ? cuentaAtras(vista.finFase! - ahora) : null;
   const conTemporizador = fase === "apuestas" || fase === "decisiones";
 
+  // Preparando la apuesta: tu casilla del tapete es tu sitio y, con la segunda, hay dos entre las que elegir.
+  const apostando = vista !== null && miMano === undefined && (fase === "apuestas" || fase === "esperando");
+  const hayDos = segundaPreparada !== null || misManos.length > 1;
+  const casillaElegida = hayDos ? elegida : 0;
+  // La segunda casilla necesita una casilla libre más que la primera: con ninguna mano tuya aún, la primera se llevará una de las libres.
+  const puedeSegunda = apostando && !hayDos && (vista.casillasLibres - (misManos.length === 0 ? 1 : 0)) > 0;
+
   let controles: ReactNode = null;
-  if (vista !== null && miMano === undefined && (fase === "apuestas" || fase === "esperando")) {
+  if (apostando) {
     controles = (
       <Apostar
-        cantidad={preparada}
+        preparado={[primeraPreparada, segundaPreparada]}
+        elegida={casillaElegida}
         fichas={fichas}
         activo={conectado && sentado}
         esperando={esperando}
-        onCambiar={setMontante}
-        destino={refCasilla}
-        onApostar={(cantidad) => {
+        onCambiar={casillaElegida === 0 ? setMontante : setMontanteSegunda}
+        onQuitarSegunda={() => {
+          setMontanteSegunda(null);
+          setElegida(0);
+        }}
+        destino={refCasillas[casillaElegida]}
+        onApostar={(primera, segunda) => {
           sonidos.reproducir("fichas");
-          actuar({ t: "apostar", cantidad });
+          // La segunda sale sola cuando la mesa confirma la primera (su efecto, arriba).
+          setEnvioSegunda(segunda === null ? null : { cantidad: segunda, enviada: false });
+          actuar({ t: "apostar", cantidad: primera });
         }}
       />
     );
@@ -211,27 +280,54 @@ export function MesaBlackjack({ codigo }: { codigo: string }) {
       <span>Tú</span>
       <Total valor={miTotal} tono={tonoDe(miMano, miTotal, miNeto)} />
       {miNeto !== undefined && <Resultado key={`${resultados?.ronda}`} neto={miNeto} />}
-      {miMano !== undefined && <Apuesta cantidad={miMano.apuesta} refPila={refApuesta} />}
+      {miApuesta !== null && <Apuesta cantidad={miApuesta} refPila={refApuesta} />}
+      {puedeSegunda && (
+        <Boton
+          variante="secundario"
+          className="bj-segunda"
+          onClick={() => {
+            setMontanteSegunda(0);
+            setElegida(1);
+          }}
+        >
+          + Segunda mano
+        </Boton>
+      )}
     </div>
   );
   // Mientras se apuesta, tu casilla ocupa en el tapete el sitio de tu mano: lo que preparas se apila ahí, en grande.
   const conCasilla = vista !== null && (fase === "apuestas" || fase === "esperando");
+  const casillas = hayDos ? ([0, 1] as const) : ([0] as const);
+  // Lo apostado (ya cobrado) y lo preparado de cada casilla: la primera apuesta es la de la primera casilla, aunque la segunda tenga un número menor.
+  const apostadoEn = [misManos[0]?.apuesta ?? 0, misManos[1]?.apuesta ?? 0] as const;
+  const preparadoEn = [misManos[0] === undefined ? primeraPreparada : 0, misManos[1] === undefined ? (segundaPreparada ?? 0) : 0] as const;
+  const todoPreparado = preparadoEn[0] + preparadoEn[1] === fichas;
   const miSitio = (
     <>
       {miEtiqueta}
-      <div className="bj-yo__juego">
+      <div className="bj-yo__juego" style={{ "--sitio": `${Math.round(medidas.yo * 1.4)}px` } as CSSProperties}>
         <Mano cartas={miMano?.cartas ?? []} de={yo ?? 0} ronda={ronda} ancho={medidas.yo} reloj={reloj} etiqueta="Tu mano" />
         <AnimatePresence>
           {conCasilla && (
             <motion.div
               key="casilla"
-              className="bj-casilla"
+              className={`bj-casilla${hayDos ? " bj-casilla--doble" : ""}`}
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={reducido ? { opacity: 0 } : { opacity: 0, transform: "scale(0.9)" }}
               transition={{ duration: 0.22 }}
             >
-              <CasillaApuesta ref={refCasilla} apostado={miMano?.apuesta ?? 0} preparado={miMano === undefined ? preparada : 0} todo={preparada > 0 && preparada === fichas} />
+              {casillas.map((i) => (
+                <div key={i} className={`bj-casilla__sitio${apostando && hayDos ? (casillaElegida === i ? " bj-casilla__sitio--elegida" : " bj-casilla__sitio--otra") : ""}`}>
+                  <CasillaApuesta
+                    ref={refCasillas[i]}
+                    apostado={apostadoEn[i]}
+                    preparado={preparadoEn[i]}
+                    todo={todoPreparado && preparadoEn[i] > 0 && (casillaElegida === i || preparadoEn[1 - i] === 0)}
+                  />
+                  {apostando && hayDos && <ElegirCasilla cual={i === 0 ? "primera" : "segunda"} elegida={casillaElegida === i} onElegir={() => setElegida(i)} />}
+                </div>
+              ))}
             </motion.div>
           )}
         </AnimatePresence>
@@ -240,7 +336,7 @@ export function MesaBlackjack({ codigo }: { codigo: string }) {
   );
 
   return (
-    <main className={`marco-mesa bj${medidas.ordenador ? " bj--ordenador" : ""}${premio !== null ? " bj--premio" : ""}`}>
+    <main className={`marco-mesa bj${medidas.ordenador ? " bj--ordenador" : ""}${premio !== null ? " bj--premio" : ""}${conCasilla && hayDos ? " bj--dos-casillas" : ""}`}>
       <Reconectando conectado={conectado || vista === null} />
       <BarraMesa titulo="Blackjack" onVolver={salida.alVolver} refFichas={refFichas} />
 

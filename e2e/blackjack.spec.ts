@@ -182,6 +182,208 @@ test.describe("mesa simulada", () => {
     await expect(page.locator(".bj-etiqueta .bj-apuesta").first()).toContainText("1.000");
   });
 
+  // ---- Apostar con dos manos ----
+
+  const segundaMano = (pagina: Page): Locator => pagina.getByRole("button", { name: "+ Segunda mano", exact: true });
+  const casillaDe = (pagina: Page, cual: "primera" | "segunda"): Locator => pagina.getByRole("button", { name: `Casilla de la ${cual} mano` });
+  /** Tus casillas del tapete (la pila, la cantidad y su estado), en orden. */
+  const misCasillas = (pagina: Page): Locator => pagina.locator(".bj-yo .casilla, .bj-asiento--yo .casilla");
+  const apuestasMandadas = (mesa: { recibidas: unknown[] }) => mesa.recibidas.filter((m) => (m as { t: string }).t === "apostar");
+  /** Una mano recién apostada, sin cartas: la que enseña la mesa al confirmar una apuesta. */
+  const manoApostada = (sesion: RespuestaSesion, casilla: number, indice: number, apuesta: number): VistaBJ["manos"][number] => ({
+    jugadorId: sesion.jugador.id,
+    apodo: sesion.jugador.apodo,
+    casilla,
+    indice,
+    apuesta,
+    cartas: [],
+    estado: "jugando",
+    doblada: false,
+    dividida: false,
+    total: 0,
+  });
+
+  test("con casillas libres se juega una segunda mano: «Apostar 100 + 50» manda la primera y, confirmada, la segunda", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    mesa.alConectar(estado(vista(sesion)));
+    await page.goto(`/p/${codigo}/blackjack`);
+    await expect(contador(page)).toHaveText("Tienes 1.000 fichas");
+    // Con una sola casilla no hay nada que elegir: la casilla no es un botón.
+    await expect(casillaDe(page, "primera")).toHaveCount(0);
+
+    await page.getByRole("button", { name: "Añadir 100", exact: true }).click();
+    await segundaMano(page).click();
+    // Aparece la segunda casilla, elegida: las fichas van a ella.
+    await expect(casillaDe(page, "primera")).toHaveAttribute("aria-pressed", "false");
+    await expect(casillaDe(page, "segunda")).toHaveAttribute("aria-pressed", "true");
+    await expect(segundaMano(page)).toHaveCount(0);
+    await page.getByRole("button", { name: "Añadir 50", exact: true }).click();
+    await expect(misCasillas(page).nth(0)).toContainText("100");
+    await expect(misCasillas(page).nth(1)).toContainText("50");
+
+    await page.getByRole("button", { name: "Apostar 100 + 50" }).click();
+    await expect.poll(() => apuestasMandadas(mesa)).toEqual([{ t: "apostar", cantidad: 100 }]);
+    // Hasta que la mesa no confirma la primera, la segunda no sale.
+    await page.waitForTimeout(300);
+    expect(apuestasMandadas(mesa)).toEqual([{ t: "apostar", cantidad: 100 }]);
+
+    // La mesa confirma la primera: la segunda se manda sola, con `segunda: true`.
+    mesa.enviar(estado(vista(sesion, { casillasLibres: 6, manos: [manoApostada(sesion, 0, 0, 100)] })));
+    await expect.poll(() => apuestasMandadas(mesa)).toEqual([{ t: "apostar", cantidad: 100 }, { t: "apostar", cantidad: 50, segunda: true }]);
+    const casillas = misCasillas(page);
+    await expect(casillas).toHaveCount(2);
+    await expect(casillas.nth(0)).toHaveAttribute("data-estado", "apostada");
+    await expect(casillas.nth(1)).toHaveAttribute("data-estado", "preparada");
+
+    // Confirmada la segunda, las dos casillas quedan apostadas y la barra de tus fichas se pone al día.
+    mesa.enviar(estado(vista(sesion, { casillasLibres: 5, manos: [manoApostada(sesion, 0, 0, 100), manoApostada(sesion, 1, 1, 50)] })));
+    await expect(casillas.nth(1)).toHaveAttribute("data-estado", "apostada");
+    await expect(casillas.nth(0)).toContainText("100");
+    await expect(casillas.nth(1)).toContainText("50");
+    expect(apuestasMandadas(mesa)).toHaveLength(2);
+  });
+
+  test("las fichas y «Todo» van a la casilla elegida; «Todo» pone ahí lo que te queda", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    mesa.alConectar(estado(vista(sesion)));
+    await page.goto(`/p/${codigo}/blackjack`);
+    await expect(contador(page)).toHaveText("Tienes 1.000 fichas");
+
+    await page.getByRole("button", { name: "Añadir 100", exact: true }).click();
+    await segundaMano(page).click();
+    await page.getByRole("button", { name: "Todo", exact: true }).click();
+    // Quedaban 900: la segunda casilla se lleva todo eso y la primera sigue con sus 100.
+    await expect(misCasillas(page).nth(1)).toContainText("900");
+    await expect(misCasillas(page).nth(1)).toContainText("¡Todo!");
+    await expect(misCasillas(page).nth(0)).toContainText("100");
+    await expect(misCasillas(page).nth(0)).not.toContainText("¡Todo!");
+    await expect(page.getByRole("button", { name: "Apostar 100 + 900" })).toBeEnabled();
+    // No queda nada que sumar a ninguna de las dos.
+    for (const valor of [10, 25, 50, 100, 500]) await expect(page.getByRole("button", { name: `Añadir ${valor}`, exact: true })).toBeDisabled();
+
+    // Elegir la primera: sigue sin haber fichas libres, pero «Borrar» solo la vacía a ella.
+    await casillaDe(page, "primera").click();
+    await expect(casillaDe(page, "primera")).toHaveAttribute("aria-pressed", "true");
+    await expect(casillaDe(page, "segunda")).toHaveAttribute("aria-pressed", "false");
+    await page.getByRole("button", { name: "Borrar apuesta" }).click();
+    await expect(misCasillas(page).nth(0)).not.toContainText("100");
+    await expect(misCasillas(page).nth(1)).toContainText("900");
+    await expect(page.getByRole("button", { name: "Elige tu apuesta" })).toBeDisabled();
+    // Ahora sí hay 100 libres para la primera.
+    await page.getByRole("button", { name: "Añadir 100", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Apostar 100 + 900" })).toBeEnabled();
+  });
+
+  test("una segunda casilla vacía se quita con «Quitar segunda mano» y apostar manda solo la primera", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    mesa.alConectar(estado(vista(sesion)));
+    await page.goto(`/p/${codigo}/blackjack`);
+
+    await page.getByRole("button", { name: "Añadir 25", exact: true }).click();
+    await segundaMano(page).click();
+    await expect(casillaDe(page, "segunda")).toBeVisible();
+    // Sin nada preparado en la segunda, «Apostar» manda solo la primera.
+    await expect(page.getByRole("button", { name: "Apostar 25", exact: true })).toBeEnabled();
+    await page.getByRole("button", { name: "Quitar segunda mano" }).click();
+    await expect(casillaDe(page, "segunda")).toHaveCount(0);
+    await expect(segundaMano(page)).toBeVisible();
+
+    await page.getByRole("button", { name: "Apostar 25", exact: true }).click();
+    await expect.poll(() => apuestasMandadas(mesa)).toEqual([{ t: "apostar", cantidad: 25 }]);
+    mesa.enviar(estado(vista(sesion, { casillasLibres: 6, manos: [manoApostada(sesion, 0, 0, 25)] })));
+    await expect(misCasillas(page)).toHaveAttribute("data-estado", "apostada");
+    await page.waitForTimeout(300);
+    expect(apuestasMandadas(mesa)).toEqual([{ t: "apostar", cantidad: 25 }]);
+  });
+
+  test("sin casillas libres no aparece «+ Segunda mano»", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    mesa.alConectar(estado(vista(sesion, { casillasLibres: 0 })));
+    await page.goto(`/p/${codigo}/blackjack`);
+
+    await expect(page.getByText("Haz tu apuesta")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Añadir 50", exact: true })).toBeEnabled();
+    await expect(segundaMano(page)).toHaveCount(0);
+    // Con una sola libre tampoco: la primera apuesta se la llevaría y la segunda no tendría casilla.
+    mesa.enviar(estado(vista(sesion, { casillasLibres: 1 })));
+    await expect(page.getByText("Haz tu apuesta")).toBeVisible();
+    await expect(segundaMano(page)).toHaveCount(0);
+    mesa.enviar(estado(vista(sesion, { casillasLibres: 2 })));
+    await expect(segundaMano(page)).toBeVisible();
+  });
+
+  test("la segunda recibe sin_casilla: aviso «Ya no quedan casillas libres» y te quedas con una mano", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    mesa.alConectar(estado(vista(sesion)));
+    await page.goto(`/p/${codigo}/blackjack`);
+
+    await page.getByRole("button", { name: "Añadir 100", exact: true }).click();
+    await segundaMano(page).click();
+    await page.getByRole("button", { name: "Añadir 50", exact: true }).click();
+    await page.getByRole("button", { name: "Apostar 100 + 50" }).click();
+    mesa.enviar(estado(vista(sesion, { casillasLibres: 1, manos: [manoApostada(sesion, 0, 0, 100)] })));
+    await expect.poll(() => apuestasMandadas(mesa)).toHaveLength(2);
+
+    // Otro jugador se llevó la última casilla en el mismo instante.
+    mesa.enviar({ t: "error", codigo: "sin_casilla" });
+    await expect(page.getByText("Ya no quedan casillas libres")).toBeVisible();
+    const casillas = misCasillas(page);
+    await expect(casillas).toHaveCount(1);
+    await expect(casillas).toHaveAttribute("data-estado", "apostada");
+    await expect(casillas).toContainText("100");
+    await expect(casillaDe(page, "segunda")).toHaveCount(0);
+    // Y no se reintenta sola.
+    await page.waitForTimeout(300);
+    expect(apuestasMandadas(mesa)).toHaveLength(2);
+  });
+
+  test("si la primera apuesta falla, la segunda no sale y se puede volver a intentar", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    mesa.alConectar(estado(vista(sesion)));
+    await page.goto(`/p/${codigo}/blackjack`);
+
+    await page.getByRole("button", { name: "Añadir 100", exact: true }).click();
+    await segundaMano(page).click();
+    await page.getByRole("button", { name: "Añadir 50", exact: true }).click();
+    const apostar = page.getByRole("button", { name: "Apostar 100 + 50" });
+    await apostar.click();
+    await expect.poll(() => apuestasMandadas(mesa)).toEqual([{ t: "apostar", cantidad: 100 }]);
+    mesa.enviar({ t: "error", codigo: "sin_fichas" });
+    await expect(page.getByText("No tienes fichas suficientes")).toBeVisible();
+    // Las dos casillas siguen como estaban y el botón vuelve a estar listo.
+    await expect(misCasillas(page)).toHaveCount(2);
+    await expect(apostar).toBeEnabled();
+    await page.waitForTimeout(300);
+    expect(apuestasMandadas(mesa)).toEqual([{ t: "apostar", cantidad: 100 }]);
+
+    await apostar.click();
+    await expect.poll(() => apuestasMandadas(mesa)).toEqual([{ t: "apostar", cantidad: 100 }, { t: "apostar", cantidad: 100 }]);
+    mesa.enviar(estado(vista(sesion, { casillasLibres: 6, manos: [manoApostada(sesion, 0, 0, 100)] })));
+    await expect.poll(() => apuestasMandadas(mesa).at(-1)).toEqual({ t: "apostar", cantidad: 50, segunda: true });
+  });
+
+  test("un doble toque en «Apostar 100 + 50» manda cada apuesta una sola vez", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    mesa.alConectar(estado(vista(sesion)));
+    await page.goto(`/p/${codigo}/blackjack`);
+
+    await page.getByRole("button", { name: "Añadir 100", exact: true }).click();
+    await segundaMano(page).click();
+    await page.getByRole("button", { name: "Añadir 50", exact: true }).click();
+    await page.getByRole("button", { name: "Apostar 100 + 50" }).dblclick();
+    await expect.poll(() => apuestasMandadas(mesa).length).toBe(1);
+    await page.waitForTimeout(300);
+    expect(apuestasMandadas(mesa)).toEqual([{ t: "apostar", cantidad: 100 }]);
+
+    // Confirmada la primera: la segunda sale una vez, y otra novedad de la mesa con la misma mano no la repite.
+    const confirmada = vista(sesion, { casillasLibres: 6, manos: [manoApostada(sesion, 0, 0, 100)] });
+    mesa.enviar(estado(confirmada));
+    await expect.poll(() => apuestasMandadas(mesa).length).toBe(2);
+    mesa.enviar(estado({ ...confirmada, sentados: [sesion.jugador.apodo, "Otro"] }));
+    await page.waitForTimeout(300);
+    expect(apuestasMandadas(mesa)).toEqual([{ t: "apostar", cantidad: 100 }, { t: "apostar", cantidad: 50, segunda: true }]);
+  });
+
   test("las fichas que no puedes pagar no se pueden pulsar", async ({ page, request }) => {
     const { sesion, codigo, mesa } = await entrarSimulada(page, request);
     await fichasDeApi(page, 60);

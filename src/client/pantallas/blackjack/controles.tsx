@@ -1,3 +1,4 @@
+import { useIsPresent } from "motion/react";
 import type { RefObject } from "react";
 import { type AccionBJ, BJ, type VistaBJ } from "../../../shared/juegos/blackjack";
 import { Boton } from "../../componentes/Boton";
@@ -15,35 +16,69 @@ let ultimaApuesta = 0;
 export const apuestaRecordada = (): number => ultimaApuesta;
 
 interface ApostarProps {
-  /** Lo preparado (lo lleva la pantalla: también se ve en tu casilla del tapete). */
-  cantidad: number;
+  /** Lo preparado en cada casilla (lo lleva la pantalla: también se ve en el tapete). La segunda es `null` mientras no la hayas pedido. */
+  preparado: readonly [number, number | null];
+  /** La casilla a la que van las fichas y «Todo». */
+  elegida: 0 | 1;
   fichas: number;
   activo: boolean;
   esperando: boolean;
+  /** Cambia lo preparado en la casilla elegida. */
   onCambiar(cantidad: number): void;
-  onApostar(cantidad: number): void;
-  /** Tu casilla del tapete, adonde vuelan las fichas. */
+  /** Quita la segunda casilla (solo se ofrece cuando está elegida y vacía). */
+  onQuitarSegunda(): void;
+  /** Apuesta la primera casilla y, si hay, la segunda (`null`: solo una mano). */
+  onApostar(primera: number, segunda: number | null): void;
+  /** La casilla elegida del tapete, adonde vuelan las fichas. */
   destino: RefObject<HTMLElement | null>;
 }
 
-/** Las fichas para ir sumando la apuesta (y «Todo»), «Borrar» y «Apostar N». No hay tope: solo tus fichas. */
-export function Apostar({ cantidad, fichas, activo, esperando, onCambiar, onApostar, destino }: ApostarProps) {
+/**
+ * Las fichas para ir sumando la apuesta (y «Todo»), «Borrar» y «Apostar N». No hay tope: solo tus fichas, que se reparten entre
+ * las dos casillas si pides la segunda («Apostar A + B»). Con la segunda casilla elegida y vacía, «Borrar» pasa a quitarla.
+ */
+export function Apostar({ preparado, elegida, fichas, activo, esperando, onCambiar, onQuitarSegunda, onApostar, destino }: ApostarProps) {
+  const [primera, segunda] = preparado;
+  const hayDos = segunda !== null && segunda >= BJ.MIN;
+  const actual = elegida === 0 ? primera : (segunda ?? 0);
+  const otra = elegida === 0 ? (segunda ?? 0) : primera;
+  const quita = elegida === 1 && actual === 0;
   return (
     <div className="panel-apuesta">
-      <FichasApuesta montante={cantidad} tope={fichas} minimo={BJ.MIN} activo={activo} onCambiar={onCambiar} destino={destino} />
+      <FichasApuesta montante={actual} tope={fichas - otra} minimo={BJ.MIN} activo={activo} onCambiar={onCambiar} destino={destino} />
       <div className="panel-apuesta__fila">
-        <Boton variante="secundario" className="panel-apuesta__borrar" aria-label="Borrar apuesta" disabled={cantidad === 0} onClick={() => onCambiar(0)}>
-          Borrar
+        <Boton
+          variante="secundario"
+          className="panel-apuesta__borrar"
+          aria-label={quita ? "Quitar segunda mano" : "Borrar apuesta"}
+          disabled={!quita && actual === 0}
+          onClick={quita ? onQuitarSegunda : () => onCambiar(0)}
+        >
+          {quita ? "Quitar" : "Borrar"}
         </Boton>
-        <Boton disabled={!activo || cantidad < BJ.MIN} cargando={esperando} onClick={() => {
-            ultimaApuesta = cantidad;
-            onApostar(cantidad);
-          }}>
-          {cantidad === 0 ? "Elige tu apuesta" : `Apostar ${miles(cantidad)}`}
+        <Boton
+          disabled={!activo || primera < BJ.MIN}
+          cargando={esperando}
+          onClick={() => {
+            ultimaApuesta = primera;
+            onApostar(primera, hayDos ? segunda : null);
+          }}
+        >
+          {primera === 0 ? "Elige tu apuesta" : hayDos ? `Apostar ${miles(primera)} + ${miles(segunda)}` : `Apostar ${miles(primera)}`}
         </Boton>
       </div>
     </div>
   );
+}
+
+/**
+ * Cuando juegas con dos casillas, un botón transparente sobre cada una para elegirla (aro dorado): las fichas van a la elegida.
+ * Va encima de la casilla y no la envuelve, así la casilla no se vuelve a montar (sus fichas no caerían otra vez).
+ */
+export function ElegirCasilla({ cual, elegida, onElegir }: { cual: "primera" | "segunda"; elegida: boolean; onElegir(): void }) {
+  // Las casillas se funden al repartir: mientras se van ya no se eligen (y el botón no se queda encogido en el árbol de accesibilidad).
+  if (!useIsPresent()) return null;
+  return <button type="button" className="bj-casilla__elegir" aria-pressed={elegida} aria-label={`Casilla de la ${cual} mano`} onClick={onElegir} />;
 }
 
 export function Decidir({ mano, fichas, activo, onActuar }: { mano: ManoVista; fichas: number; activo: boolean; onActuar(accion: AccionBJ): void }) {
