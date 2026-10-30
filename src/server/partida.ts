@@ -31,8 +31,19 @@ interface EstadoConexion {
 }
 
 type Mesas = Record<IdJuego, ResumenMesa>;
-const JUEGOS: readonly IdJuego[] = ["blackjack", "carrera"];
-/** Lo que enseña la sala de una mesa que no sabe cómo está (no contesta): «En juego» hasta que lo sepa. */
+/**
+ * El espacio de nombres de la mesa de cada juego: un juego nuevo que falte aquí no compila, y `JUEGOS` sale de aquí. Sin
+ * el tipo de cada mesa: el de su stub RPC es demasiado profundo para TypeScript, y la sala solo le pregunta `resumenSala`.
+ */
+const MESA_DE: Record<IdJuego, (env: Env) => unknown> = {
+  blackjack: (env) => env.MesaBlackjack,
+  carrera: (env) => env.MesaCarrera,
+};
+const JUEGOS = Object.keys(MESA_DE) as IdJuego[];
+/**
+ * Lo que enseña la sala de una mesa que no contesta: «En juego», sin jugadores (la sala sabe quién está en la sala, no
+ * quién se sienta en cada mesa: eso es justo lo que ha perdido), hasta que la mesa avise o la sala vuelva a preguntar.
+ */
 const MESA_DESCONOCIDA: ResumenMesa = { jugadores: [], fase: "desconocida", finFase: null };
 
 /** Una ronda que una mesa acaba de liquidar: su id y el neto de cada jugador, para el ranking de la noche. */
@@ -201,13 +212,12 @@ export class Partida extends Server<Env> {
         }
       }),
     );
-    return { blackjack: this.mesas.blackjack ?? MESA_DESCONOCIDA, carrera: this.mesas.carrera ?? MESA_DESCONOCIDA };
+    return Object.fromEntries(JUEGOS.map((juego) => [juego, this.mesas[juego] ?? MESA_DESCONOCIDA])) as Mesas;
   }
 
   /** La mesa de `juego` de esta partida (mismo código), con lo único que le pregunta la sala. */
   private mesa(juego: IdJuego): Pick<Mesa<any, any>, "resumenSala"> {
-    // Sin el tipo de cada mesa: el de su stub RPC es demasiado profundo para TypeScript, y aquí basta con `resumenSala`.
-    const espacio = (juego === "blackjack" ? this.env.MesaBlackjack : this.env.MesaCarrera) as unknown as DurableObjectNamespace;
+    const espacio = MESA_DE[juego](this.env) as DurableObjectNamespace;
     return espacio.get(espacio.idFromName(this.name)) as unknown as Pick<Mesa<any, any>, "resumenSala">;
   }
 

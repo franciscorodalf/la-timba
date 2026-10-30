@@ -676,12 +676,23 @@ describe("MesaBlackjack: Jugadores y la sala", () => {
     await evictDurableObject(env.Partida.get(env.Partida.idFromName(codigo)));
     const tercera = await abrir(`/parties/partida/${codigo}`, ana.token);
     expect(((await tercera.recibir("sala")) as MensajeSala).mesas.blackjack).toEqual(decisiones.mesas.blackjack);
+    // Si la mesa también ha salido de memoria (no recuerda qué mandó), contesta con lo que enseñará al acabar la banca.
+    const revela = T + BJ.APUESTAS_MS + BJ.BANCA_MS;
+    await evictDurableObject(env.Partida.get(env.Partida.idFromName(codigo)));
+    await evictDurableObject(mesa(codigo));
+    await reloj(codigo, revela - 500);
+    const cuarta = await abrir(`/parties/partida/${codigo}`, ana.token);
+    expect(((await cuarta.recibir("sala")) as MensajeSala).mesas.blackjack).toEqual({ jugadores: [ana.apodo], fase: "resultado", finFase: revela + BJ.RESULTADO_MS });
+    // Preguntar no arranca la mesa: la despierta un mensaje de ana (que no cambia nada) y vuelve a programar su aviso.
+    await avisosManuales(codigo);
+    enviar(conexion, { t: "pedir" });
+    expect(await conexion.recibir("error")).toEqual({ t: "error", codigo: "fase_incorrecta" });
 
-    // Y cuando se ve el resultado, la mesa avisa como siempre.
+    // Y cuando se ve el resultado, la mesa avisa como siempre, con la ronda pagada.
     await avisar(codigo);
-    expect(((await hasta<MensajeSala>(tercera, (m) => m.mesas.blackjack.fase === "resultado", "sala")) as MensajeSala).rankingNoche).toEqual([
-      { apodo: ana.apodo, neto: 50 },
-    ]);
+    const pagada = await hasta<MensajeSala>(cuarta, (m) => m.rankingNoche.length > 0, "sala");
+    expect(pagada.rankingNoche).toEqual([{ apodo: ana.apodo, neto: 50 }]);
+    expect(pagada.mesas.blackjack).toEqual({ jugadores: [ana.apodo], fase: "resultado", finFase: revela + BJ.RESULTADO_MS });
   });
 
   it("los cambios se atienden de uno en uno aunque Jugadores tarde: ni se cobra dos veces ni se pisan", async () => {

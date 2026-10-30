@@ -182,8 +182,9 @@ export abstract class Mesa<E extends { ronda: number }, A extends { t: string }>
 
   /**
    * Para la sala que ha salido de memoria y ya no sabe el resumen de esta mesa: el de ahora o, si ahora no hay nada que
-   * enseñar (la banca), el último que se le mandó (`null` si tampoco hay). Es una llamada directa, sin `onStart`: si la mesa
-   * no está en memoria, lee su registro sin escribir nada, y una mesa que nunca se ha usado está esperando.
+   * enseñar (la banca), el último que se le mandó y, si la mesa acaba de despertar y no mandó ninguno, el que enseñará en
+   * cuanto acabe esa fase (`null` si tampoco lo hay). Es una llamada directa, sin `onStart`: si la mesa no está en memoria,
+   * lee su registro sin escribir nada, y una mesa que nunca se ha usado está esperando.
    */
   async resumenSala(): Promise<ResumenMesa | null> {
     const ahora = this.ahora();
@@ -194,8 +195,10 @@ export abstract class Mesa<E extends { ronda: number }, A extends { t: string }>
       else estado = this.juego.normalizar?.(guardado.estado) ?? guardado.estado;
     }
     const resumen = this.juego.resumen(estado, ahora);
-    if (resumen !== null || this.resumenEnSala === null) return resumen;
-    return JSON.parse(this.resumenEnSala) as ResumenMesa;
+    if (resumen !== null) return resumen;
+    if (this.resumenEnSala !== null) return JSON.parse(this.resumenEnSala) as ResumenMesa;
+    const despues = this.juego.proximoAviso?.(estado, ahora) ?? null;
+    return despues === null ? null : this.juego.resumen(estado, despues);
   }
 
   onConnect(conn: Connection<EstadoConexion>, { request }: ConnectionContext): Promise<void> | void {
