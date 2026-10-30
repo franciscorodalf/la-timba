@@ -94,6 +94,28 @@ describe("casillas", () => {
   });
 });
 
+describe("manos abandonadas y apostar", () => {
+  it("quien se fue y volvió en la misma ronda no puede apostar de nuevo: ni normal ni con segunda → accion_invalida", () => {
+    const apostada = apuesta(conJugadores(2), 1);
+    const sale = exito(blackjack.aplicar(apostada, 1, { t: "salir" }, T0, rng)).estado;
+    expect(sale.manos[0]).toMatchObject({ jugadorId: 1, abandonada: true });
+    const vuelve = exito(blackjack.sentar(sale, 1, "jugador1", T0)).estado;
+    expect(vuelve.asientos.map((a) => a.jugadorId)).toEqual([2, 1]);
+
+    expect(error(apostar(vuelve, 1))).toBe("accion_invalida");
+    expect(error(apostar(vuelve, 1, true))).toBe("accion_invalida");
+    // la casilla que dejó sigue ocupada hasta que acabe la ronda, y nadie más pierde su derecho a apostar
+    expect(casillasLibres(vuelve)).toBe(BJ.CASILLAS - 1);
+    expect(apuesta(vuelve, 2).manos[1]).toMatchObject({ jugadorId: 2, casilla: 1, indice: 0 });
+
+    // lo mismo si tenía dos casillas: no recupera ninguna ni puede pedir una tercera
+    const dosCasillas = apuesta(apuesta(conJugadores(2), 1), 1, true);
+    const vuelveConDos = exito(blackjack.sentar(exito(blackjack.aplicar(dosCasillas, 1, { t: "salir" }, T0, rng)).estado, 1, "jugador1", T0)).estado;
+    expect(error(apostar(vuelveConDos, 1))).toBe("accion_invalida");
+    expect(error(apostar(vuelveConDos, 1, true))).toBe("accion_invalida");
+  });
+});
+
 describe("reparto por casillas", () => {
   it("se reparte por casillas en orden y cada carta dice su mano", () => {
     // ana tiene las casillas 0 y 2 y beto la 1; las manos se guardan sin orden para comprobar que se reparte por casilla
@@ -174,12 +196,10 @@ describe("mano activa", () => {
     expect(dobla.estado.fase).toBe("banca");
   });
 
-  it("dividir, rendirse y seguro responden accion_invalida por ahora", () => {
+  it("dividir responde accion_invalida por ahora", () => {
     const e = dosManosEnDecisiones();
-    for (const accion of [{ t: "dividir" }, { t: "rendirse" }, { t: "seguro", tomar: true }, { t: "seguro", tomar: false }] as AccionBJ[]) {
-      expect(error(blackjack.aplicar(e, 1, accion, T0, rng))).toBe("accion_invalida");
-      expect(blackjack.costo(e, 1, accion)).toBe(0);
-    }
+    expect(error(blackjack.aplicar(e, 1, { t: "dividir" }, T0, rng))).toBe("accion_invalida");
+    expect(blackjack.costo(e, 1, { t: "dividir" })).toBe(0);
     expect(error(blackjack.aplicar(e, 99, { t: "dividir" }, T0, rng))).toBe("no_sentado");
   });
 });
@@ -244,6 +264,60 @@ describe("liquidación, salir y desconectar con varias manos", () => {
   });
 });
 
+describe("varias manos al empezar y al acabar la ventana", () => {
+  it("al acabar la ventana de decisiones se plantan las dos manos que siguen en juego", () => {
+    const e = dosManosEnDecisiones();
+    expect(e.manos.map((m) => m.estado)).toEqual(["jugando", "jugando"]);
+    const p = exito(blackjack.tick(e, T0 + BJ.DECISIONES_MS, rng));
+    expect(p.estado.manos.map((m) => m.estado)).toEqual(["plantado", "plantado"]);
+    expect(p.estado).toMatchObject({ fase: "banca", finFase: T0 + BJ.DECISIONES_MS + BJ.BANCA_MS });
+    expect(manoActiva(p.estado, 1)).toBeUndefined();
+  });
+
+  /** ana (casillas 0 y 2) y beto (1) apuestan; la banca enseña un 5, así que no mira. */
+  const apuestasConDosCasillas = (asientos = [asiento(1, "ana"), asiento(2, "beto")]) =>
+    estado({
+      fase: "apuestas",
+      finFase: T0 + BJ.APUESTAS_MS,
+      asientos,
+      manos: [mano(1, "ana", { casilla: 0, indice: 0, apuesta: 100 }), mano(2, "beto", { casilla: 1 }), mano(1, "ana", { casilla: 2, indice: 1, apuesta: 50 })],
+      zapato: zapato("2S 3S 4S 5S 6S 7S 8S 9S"),
+    });
+
+  it("desconectarse en las apuestas con dos casillas planta las dos manos en cuanto se reparten", () => {
+    const desconecta = exito(blackjack.desconectar(apuestasConDosCasillas(), 1, T0, rng));
+    expect(desconecta.estado.manos.map((m) => m.estado)).toEqual(["jugando", "jugando", "jugando"]); // aún sin cartas
+
+    const p = exito(blackjack.tick(desconecta.estado, T0 + BJ.APUESTAS_MS, rng));
+    expect(p.estado.manos.map((m) => [m.jugadorId, m.cartas.length, m.estado])).toEqual([[1, 2, "plantado"], [2, 2, "jugando"], [1, 2, "plantado"]]);
+    expect(p.estado.fase).toBe("decisiones"); // beto sigue decidiendo
+    expect(manoActiva(p.estado, 1)).toBeUndefined();
+
+    // si era el único con apuestas, la banca juega sin esperar a nadie
+    const solo = apuestasConDosCasillas([asiento(1, "ana")]);
+    const sola = estado({ ...solo, manos: solo.manos.filter((m) => m.jugadorId === 1) });
+    const juega = exito(blackjack.tick(exito(blackjack.desconectar(sola, 1, T0, rng)).estado, T0 + BJ.APUESTAS_MS, rng));
+    expect(juega.estado).toMatchObject({ fase: "banca", finFase: T0 + BJ.APUESTAS_MS + BJ.BANCA_MS });
+  });
+
+  it("salir en las apuestas con dos casillas: ninguna recibe cartas y la fila es { apuesta: suma, pago: 0 }", () => {
+    const sale = exito(blackjack.aplicar(apuestasConDosCasillas(), 1, { t: "salir" }, T0, rng));
+    expect(sale.estado.manos.filter((m) => m.jugadorId === 1).map((m) => [m.abandonada, m.estado])).toEqual([[true, "plantado"], [true, "plantado"]]);
+
+    const reparto = exito(blackjack.tick(sale.estado, T0 + BJ.APUESTAS_MS, rng));
+    expect(reparto.estado.manos.filter((m) => m.jugadorId === 1).map((m) => m.cartas)).toEqual([[], []]);
+    // beto recibe las primeras cartas del zapato: lo abandonado no gasta cartas
+    expect(reparto.estado.manos.find((m) => m.jugadorId === 2)!.cartas).toEqual(cs("2S 4S"));
+    expect(reparto.estado.banca).toEqual(cs("3S 5S"));
+    expect(reparto.eventos.every((ev) => ev.a !== 1)).toBe(true);
+
+    const plantado = exito(blackjack.aplicar(reparto.estado, 2, { t: "plantarse" }, T0 + BJ.APUESTAS_MS, rng)).estado;
+    const final = exito(blackjack.tick(plantado, plantado.finFase!, rng));
+    expect(final.liquidacion?.filas.find((f) => f.jugadorId === 1)).toEqual({ jugadorId: 1, apuesta: 150, pago: 0 });
+    expect(final.liquidacion?.filas).toHaveLength(2);
+  });
+});
+
 describe("vista", () => {
   const enMesa = () =>
     estado({
@@ -270,7 +344,7 @@ describe("vista", () => {
     for (const m of ana.manos) expect(m).not.toHaveProperty("abandonada");
     expect(ana.casillasLibres).toBe(BJ.CASILLAS - 3);
     expect(ana.miSeguro).toBeNull();
-    expect(ana.opciones).toEqual({ pedir: true, plantarse: true, doblar: true, dividir: false, rendirse: false, seguro: null });
+    expect(ana.opciones).toEqual({ pedir: true, plantarse: true, doblar: true, dividir: false, rendirse: true, seguro: null });
 
     // beto ya está plantado: no tiene mano activa; el espectador no recibe opciones
     expect((blackjack.vista(e, 2, T0) as VistaBJ).opciones).toEqual(SIN_OPCIONES);

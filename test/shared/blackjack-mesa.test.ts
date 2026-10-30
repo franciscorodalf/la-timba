@@ -140,7 +140,8 @@ describe("reparto", () => {
       finFase: T0 + BJ.APUESTAS_MS,
       asientos: [asiento(1, "ana")],
       manos: [mano(1, "ana")],
-      zapato: zapato("10S 10C 9H 6D 9S"),
+      // la banca enseña un 8: ni mira su carta ni abre el seguro (eso lo prueban los tests del seguro)
+      zapato: zapato("10S 8C 9H 6D 9S"),
       ...parcial,
     });
 
@@ -164,7 +165,7 @@ describe("reparto", () => {
     const p = exito(blackjack.tick(e, T0 + BJ.APUESTAS_MS, rng));
     expect(p.eventos).toEqual([
       { tipo: "carta_repartida", a: 1, mano: 0, oculta: false, carta: c("10S") },
-      { tipo: "carta_repartida", a: "banca", oculta: false, carta: c("10C") },
+      { tipo: "carta_repartida", a: "banca", oculta: false, carta: c("8C") },
       { tipo: "carta_repartida", a: 1, mano: 0, oculta: false, carta: c("9H") },
       { tipo: "carta_repartida", a: "banca", oculta: true },
     ]);
@@ -173,7 +174,7 @@ describe("reparto", () => {
     expect(p.estado.finFase).toBe(T0 + BJ.APUESTAS_MS + BJ.DECISIONES_MS);
     expect(p.estado.manos[0].cartas).toEqual(cs("10S 9H"));
     expect(p.estado.manos[0].estado).toBe("jugando");
-    expect(p.estado.banca).toEqual(cs("10C 6D"));
+    expect(p.estado.banca).toEqual(cs("8C 6D"));
     expect(p.estado.zapato).toEqual(zapato("9S"));
   });
 
