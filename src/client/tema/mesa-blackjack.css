@@ -842,3 +842,23 @@
     transition: none;
   }
 }
+
+/* ---------- Seguro: «No» y «Sí, seguro (N)» (la pregunta va en el texto de estado) ---------- */
+
+.bj-seguro {
+  display: grid;
+  grid-template-columns: 1fr 1.5fr;
+  gap: 8px;
+}
+
+.bj-seguro .boton {
+  padding: 0 8px;
+}
+
+.bj-seguro__nota {
+  grid-column: 1 / -1;
+  margin: 0;
+  text-align: center;
+  font-size: 0.8125rem;
+  color: var(--crema-tenue);
+}

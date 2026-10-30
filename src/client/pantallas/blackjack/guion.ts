@@ -13,6 +13,8 @@ export const VUELO_MS = 480;
 export const GIRO_MS = 550;
 /** Respiro tras girar la tapada antes de que la banca pida. */
 const PAUSA_GIRO_MS = 150;
+/** Lo que dura la mirada de la banca a su carta tapada: la tapada sube un poco y vuelve a bajar. Con blackjack, el giro viene después. */
+export const MIRA_MS = 700;
 /** Lo que tarda en deslizarse la segunda carta de una mano que se divide hasta su sitio en la mano nueva. */
 export const DESLIZE_MS = 340;
 /** Lo que se espera, desde que empieza ese deslizamiento, para que salgan del mazo las cartas nuevas: ya ha dejado libre su hueco. */
@@ -23,11 +25,13 @@ export interface Guion {
   cartas: Map<string, number>;
   /** Cuándo empieza a girarse la carta tapada de la banca, si se gira en este guion. */
   giro: number | null;
+  /** Cuándo empieza la banca a mirar su carta tapada (dura `MIRA_MS`), si mira en este guion. */
+  mira: number | null;
   /** Cuándo ha terminado de verse todo lo del lote. */
   fin: number;
 }
 
-export const GUION_VACIO: Guion = { cartas: new Map(), giro: null, fin: 0 };
+export const GUION_VACIO: Guion = { cartas: new Map(), giro: null, mira: null, fin: 0 };
 
 /**
  * Identifica una carta de la mesa: la ronda, de quién es (un jugador o la banca), a cuál de sus manos pertenece (`mano`, su
@@ -119,9 +123,15 @@ export function guionDelLote(lote: Evento[], vista: VistaBJ): Guion {
   let momento = 0;
   let fin = 0;
   let giro: number | null = null;
+  let mira: number | null = null;
 
   lote.forEach((evento, i) => {
-    if (evento.tipo === "carta_girada") {
+    if (evento.tipo === "banca_mira") {
+      // Mira cuando ya está en la mesa la última carta repartida (la tapada incluida): no se levanta una carta que aún vuela.
+      mira = Math.max(momento, fin);
+      fin = mira + MIRA_MS;
+      momento = fin;
+    } else if (evento.tipo === "carta_girada") {
       giro = momento;
       fin = Math.max(fin, momento + GIRO_MS);
       momento += GIRO_MS + PAUSA_GIRO_MS;
@@ -138,7 +148,7 @@ export function guionDelLote(lote: Evento[], vista: VistaBJ): Guion {
       momento += ESCALONADO_MS;
     }
   });
-  return { cartas, giro, fin };
+  return { cartas, giro, mira, fin };
 }
 
 /**
@@ -168,10 +178,12 @@ export function encolarGuion(previo: Guion, transcurrido: number, nuevo: Guion):
   for (const [clave, salida] of previo.cartas) if (salida + VUELO_MS > transcurrido) cartas.set(clave, salida);
   for (const [clave, salida] of nuevo.cartas) cartas.set(clave, desde + salida);
   const giroPrevio = previo.giro !== null && previo.giro + GIRO_MS > transcurrido ? previo.giro : null;
-  const hayNuevo = nuevo.cartas.size > 0 || nuevo.giro !== null;
+  const miraPrevia = previo.mira !== null && previo.mira + MIRA_MS > transcurrido ? previo.mira : null;
+  const hayNuevo = nuevo.cartas.size > 0 || nuevo.giro !== null || nuevo.mira !== null;
   return {
     cartas,
     giro: nuevo.giro !== null ? desde + nuevo.giro : giroPrevio,
+    mira: nuevo.mira !== null ? desde + nuevo.mira : miraPrevia,
     fin: hayNuevo ? Math.max(previo.fin, desde + nuevo.fin) : previo.fin,
   };
 }

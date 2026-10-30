@@ -32,14 +32,14 @@ import { useMesa } from "../red/useMesa";
 import { useSalirDeMesa } from "../red/useSalirDeMesa";
 import { useSentado } from "../red/useSentado";
 import { MesaLlena } from "./MesaLlena";
-import { Apostar, apuestaRecordada, Decidir, ElegirCasilla, textoEstado } from "./blackjack/controles";
+import { Apostar, apuestaRecordada, Decidir, ElegirCasilla, PanelSeguro, textoEstado } from "./blackjack/controles";
 import { claveCarta, totalVisible } from "./blackjack/guion";
 import { AsientoOtro, MisManos, PastillaOtro } from "./blackjack/asientos";
 import { activaDe, agruparOtros, ARCO, disponerEnElArco, type ManoVista, type Otro } from "./blackjack/manos";
 import { Apuesta, Leyenda, Mano, Rendida, Total, tonoDe } from "./blackjack/piezas";
 import { useDeslizarAlDividir } from "./blackjack/useDeslizar";
 import { useEspacioDelArco } from "./blackjack/useEspacio";
-import { aterrizada, girada, restante, useGuion } from "./blackjack/useGuion";
+import { aterrizada, girada, giroIniciado, mirando, restante, useGuion } from "./blackjack/useGuion";
 
 /** Respiro entre la última carta de la ronda y el cartel del premio. */
 const PAUSA_PREMIO_MS = 250;
@@ -174,7 +174,9 @@ export function MesaBlackjack({ codigo }: { codigo: string }) {
 
   // Tras una acción tuya, los botones esperan a que cambie TU mano (cartas, estado o apuesta, en esta ronda).
   const firmaMano =
-    vista === null ? null : `${vista.ronda}:${misManos.length === 0 ? "-" : misManos.map((m) => `${m.casilla}.${m.indice}:${m.cartas.length}:${m.estado}:${m.apuesta}`).join("|")}`;
+    vista === null
+      ? null
+      : `${vista.ronda}:${misManos.length === 0 ? "-" : misManos.map((m) => `${m.casilla}.${m.indice}:${m.cartas.length}:${m.estado}:${m.apuesta}`).join("|")}:${vista.opciones?.seguro ?? "-"}:${vista.miSeguro ?? "-"}`;
   const { esperando, marcarEnviado } = useEnvioUnico(firmaMano, error, conectado);
   const actuar = (accion: AccionBJ) => {
     enviar(accion);
@@ -224,6 +226,12 @@ export function MesaBlackjack({ codigo }: { codigo: string }) {
     // Solo cuando llega un error nuevo.
   }, [error]);
 
+  // El seguro también cobra fichas (sin cambiar tu apuesta): el contador se pone al día cuando la mesa lo confirma.
+  const miSeguro = vista?.miSeguro ?? null;
+  useEffect(() => {
+    if (miSeguro !== null) void refrescarFichas();
+  }, [miSeguro, refrescarFichas]);
+
   // Al cerrarse las decisiones la ronda ya está decidida: durante la banca (y el resultado) salir no cambia lo que cobras.
   const apuestaEnJuego = miMano !== undefined && vista?.fase !== "banca" && vista?.fase !== "resultado";
   const salida = useSalirDeMesa({ codigo, enviar, apuestaEnJuego });
@@ -243,11 +251,16 @@ export function MesaBlackjack({ codigo }: { codigo: string }) {
       ? resultados.netos.get(yo)
       : undefined;
 
+  // La banca gira su tapada cuando le toca en el guion (con blackjack, después de mirarla), no al llegar la vista que ya la trae.
+  const cartasBanca = (vista?.banca ?? []).map((carta, i) => (i === 1 && !giroIniciado(reloj) ? null : carta));
+  const miraLaBanca = mirando(reloj);
   const totalBanca = vista === null ? null : totalVisible(vista.banca, (i) => aterrizada(reloj, claveCarta(ronda, "banca", 0, i)) && (i !== 1 || girada(reloj)));
   const totalDe = (mano: ManoVista) => totalVisible(mano.cartas, (i) => aterrizada(reloj, claveCarta(ronda, mano.jugadorId, mano.indice, i)));
   const miTotal = miMano ? totalDe(miMano) : null;
   const manoEnLaMesa = (mano: ManoVista) => mano.cartas.every((_, i) => aterrizada(reloj, claveCarta(ronda, mano.jugadorId, mano.indice, i)));
   const miManoEnLaMesa = misManos.every(manoEnLaMesa);
+  // La carta visible de la banca ya está en la mesa: sin ella no hay nada que decidir (el seguro, o si pedir o plantarse).
+  const bancaVisible = aterrizada(reloj, claveCarta(ronda, "banca", 0, 0));
 
   // El resto de la mesa: los sentados por orden de llegada y quien se fue con una mano en juego, cada uno con todas sus manos.
   const otros = vista === null ? [] : agruparOtros(vista, yoApodo);
@@ -256,9 +269,9 @@ export function MesaBlackjack({ codigo }: { codigo: string }) {
   const disposicion = disponerEnElArco(cartasPorMano, medidas.yo, espacio, medidas.disponible, HUECO_MANOS);
 
   const fase = vista?.fase;
-  const conCuenta = vista !== null && vista.finFase !== null && (fase === "apuestas" || fase === "decisiones" || fase === "resultado");
+  const conCuenta = vista !== null && vista.finFase !== null && (fase === "apuestas" || fase === "seguro" || fase === "decisiones" || fase === "resultado");
   const cuenta = conCuenta ? cuentaAtras(vista.finFase! - ahora) : null;
-  const conTemporizador = fase === "apuestas" || fase === "decisiones";
+  const conTemporizador = fase === "apuestas" || fase === "seguro" || fase === "decisiones";
 
   // Preparando la apuesta: tu casilla del tapete es tu sitio y, con la segunda, hay dos entre las que elegir.
   const apostando = vista !== null && miMano === undefined && (fase === "apuestas" || fase === "esperando");
@@ -290,6 +303,8 @@ export function MesaBlackjack({ codigo }: { codigo: string }) {
         }}
       />
     );
+  } else if (vista !== null && miMano !== undefined && fase === "seguro" && vista.opciones?.seguro != null) {
+    controles = <PanelSeguro coste={vista.opciones.seguro} fichas={fichas} activo={conectado && !esperando && miManoEnLaMesa && bancaVisible} onResponder={(tomar) => actuar({ t: "seguro", tomar })} />;
   } else if (vista !== null && miMano !== undefined && fase === "decisiones") {
     controles = <Decidir mano={activa} opciones={vista.opciones} fichas={fichas} activo={conectado && !esperando} onActuar={actuar} />;
   }
@@ -380,7 +395,7 @@ export function MesaBlackjack({ codigo }: { codigo: string }) {
       <div className="bj-mesa aparece" ref={tapete}>
         <section className="bj-banca" aria-label="Banca">
           <div className="bj-banca__juego">
-            <Mano cartas={vista?.banca ?? []} de="banca" ronda={ronda} ancho={medidas.banca} reloj={reloj} etiqueta="Banca" />
+            <Mano cartas={cartasBanca} de="banca" ronda={ronda} ancho={medidas.banca} reloj={reloj} etiqueta="Banca" espiando={miraLaBanca} />
             <div className="bj-etiqueta">
               <span>Banca</span>
               <Total valor={totalBanca} tono={totalBanca !== null && totalBanca > 21 ? "pasado" : "normal"} />
@@ -433,10 +448,10 @@ export function MesaBlackjack({ codigo }: { codigo: string }) {
       <section className="bj-panel" aria-label="Tu jugada">
         {sinMesa && <SinMesa codigo={codigo} />}
         <EstadoMesa
-          texto={textoEstado(vista, activa ?? misManos.at(-1), miManoEnLaMesa, misManos.length)}
+          texto={textoEstado(vista, activa ?? misManos.at(-1), miManoEnLaMesa && bancaVisible, misManos.length, miraLaBanca)}
           cuenta={cuenta}
           finFase={conTemporizador ? (vista?.finFase ?? null) : null}
-          duracionMs={fase === "decisiones" ? BJ.DECISIONES_MS : BJ.APUESTAS_MS}
+          duracionMs={fase === "decisiones" ? BJ.DECISIONES_MS : fase === "seguro" ? BJ.SEGURO_MS : BJ.APUESTAS_MS}
         />
         {controles}
       </section>

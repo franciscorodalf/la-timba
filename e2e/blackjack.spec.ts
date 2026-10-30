@@ -1230,4 +1230,236 @@ test.describe("mesa simulada", () => {
     const anchoCartaDani = (await page.locator(".bj-asiento", { hasText: "Dani" }).getByRole("img").first().boundingBox())!.width;
     expect(anchoCartaAna, "con dos manos las cartas son más pequeñas").toBeLessThan(anchoCartaDani);
   });
+  // ---- Seguro y la banca que mira su carta ----
+
+  /** La mesa en el seguro: la banca enseña un as y el jugador aún no ha contestado; `coste` es lo que cuesta asegurarse. */
+  const enSeguro = (sesion: RespuestaSesion, manos: ManoDeLaVista[], coste: number | null = 50, resto: Partial<VistaBJ> = {}): VistaBJ =>
+    vista(sesion, {
+      fase: "seguro",
+      finFase: Date.now() + 10_000,
+      banca: [c("AS"), null],
+      totalBanca: 11,
+      manos,
+      opciones: opciones({ pedir: false, plantarse: false, doblar: false, seguro: coste }),
+      ...resto,
+    });
+  const preguntaSeguro = (pagina: Page, n: number): Locator => pagina.getByText(`La banca enseña un as. ¿Seguro por ${miles(n)}?`);
+
+  interface FotogramaBanca {
+    /** El estado dice «La banca mira su carta…». */
+    mira: boolean;
+    /** Cuántas cartas de la banca se ven boca abajo. */
+    tapadas: number;
+    /** Dónde está la tapada (su arriba), o `null` si ya no hay. */
+    y: number | null;
+  }
+  /** Anota, en cada fotograma, si la banca está mirando y dónde está su carta tapada: para ver que sube, baja y se gira a su hora. */
+  async function vigilarBanca(pagina: Page): Promise<void> {
+    await pagina.evaluate(() => {
+      const w = window as unknown as { __banca: FotogramaBanca[] };
+      w.__banca = [];
+      const fotograma = () => {
+        const tapadas = [...document.querySelectorAll('[role=group][aria-label="Banca"] [role=img][aria-label="Carta boca abajo"]')];
+        w.__banca.push({ mira: document.querySelector(".estado-mesa__texto")?.textContent === "La banca mira su carta…", tapadas: tapadas.length, y: tapadas[0]?.getBoundingClientRect().y ?? null });
+        requestAnimationFrame(fotograma);
+      };
+      requestAnimationFrame(fotograma);
+    });
+  }
+  const fotogramasBanca = (pagina: Page): Promise<FotogramaBanca[]> => pagina.evaluate(() => (window as unknown as { __banca: FotogramaBanca[] }).__banca);
+
+  test("con un as visible sale el panel del seguro: «Sí, seguro (50)» manda { t: \"seguro\", tomar: true } y pasa a «Esperando a los demás…»", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    const fichas = await fichasDeApi(page, 900);
+    const yo = sesion.jugador;
+    const cartas = [c("10S"), c("6D")];
+    mesa.alConectar(estado(enSeguro(sesion, [mano(yo, 0, cartas, { apuesta: 100 })])));
+    await page.goto(`/p/${codigo}/blackjack`);
+
+    // La pregunta con lo que cuesta (la mitad de 100), su cuenta atrás y los dos botones; no hay botones de decisión.
+    await expect(preguntaSeguro(page, 50)).toBeVisible();
+    await expect(page.locator(".estado-mesa__cuenta")).toHaveText(/^0:\d\d$/);
+    await expect(botonDe(page, "No")).toBeEnabled();
+    await expect(botonDe(page, "Sí, seguro (50)")).toBeEnabled();
+    await expect(botonDe(page, "Pedir")).toHaveCount(0);
+    // La tapada sigue sin salir de la mesa.
+    await expect(page.getByRole("group", { name: "Banca" }).getByRole("img", { name: "Carta boca abajo" })).toHaveCount(1);
+
+    // Un doble toque manda una sola vez, y «No» queda apagado mientras la mesa contesta.
+    await botonDe(page, "Sí, seguro (50)").dblclick();
+    await expect.poll(() => mesa.recibidas).toContainEqual({ t: "seguro", tomar: true });
+    expect(mesa.recibidas.filter((m) => (m as { t: string }).t === "seguro")).toHaveLength(1);
+    await expect(botonDe(page, "No")).toBeDisabled();
+
+    // La mesa cobra el seguro: ya no hay nada que contestar y el contador baja.
+    fichas.poner(850);
+    mesa.enviar(estado(enSeguro(sesion, [mano(yo, 0, cartas, { apuesta: 100 })], null, { miSeguro: 50 })));
+    await expect(page.getByText("Esperando a los demás…")).toBeVisible();
+    await expect(botonDe(page, "No")).toHaveCount(0);
+    await expect(botonDe(page, "Sí, seguro (50)")).toHaveCount(0);
+    await expect(contador(page)).toHaveText("Tienes 850 fichas");
+  });
+
+  test("«No» al seguro manda { t: \"seguro\", tomar: false } y espera a los demás", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    await fichasDeApi(page, 950);
+    const yo = sesion.jugador;
+    mesa.alConectar(estado(enSeguro(sesion, [mano(yo, 0, [c("10S"), c("6D")])], 25)));
+    await page.goto(`/p/${codigo}/blackjack`);
+    await expect(preguntaSeguro(page, 25)).toBeVisible();
+    await botonDe(page, "No").click();
+    await expect.poll(() => mesa.recibidas).toContainEqual({ t: "seguro", tomar: false });
+
+    mesa.enviar(estado(enSeguro(sesion, [mano(yo, 0, [c("10S"), c("6D")])], null)));
+    await expect(page.getByText("Esperando a los demás…")).toBeVisible();
+    await expect(botonDe(page, "No")).toHaveCount(0);
+  });
+
+  test("al reconectar a mitad del seguro, la espera está a la vista sin más", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    await fichasDeApi(page, 950);
+    const yo = sesion.jugador;
+    const cartas = [c("10S"), c("6D")];
+    mesa.alConectar(estado(enSeguro(sesion, [mano(yo, 0, cartas)], 25)));
+    await page.goto(`/p/${codigo}/blackjack`);
+    await expect(botonDe(page, "Sí, seguro (25)")).toBeEnabled();
+
+    // Se cae la conexión y, al volver, ya habías contestado que sí.
+    mesa.alConectar(estado(enSeguro(sesion, [mano(yo, 0, cartas)], null, { miSeguro: 25 })));
+    await mesa.cerrar(1001);
+    await expect(page.getByText("Esperando a los demás…")).toBeVisible({ timeout: 15_000 });
+    await expect(botonDe(page, "Sí, seguro (25)")).toHaveCount(0);
+  });
+
+  test("la banca mira: sin blackjack la tapada se levanta y vuelve a bajar; con blackjack se gira y se cobra el seguro", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    const fichas = await fichasDeApi(page, 850);
+    const yo = sesion.jugador;
+    const cartas = [c("10S"), c("6D")];
+    mesa.alConectar(estado(enSeguro(sesion, [mano(yo, 0, cartas, { apuesta: 100 })], null, { miSeguro: 50 })));
+    await page.goto(`/p/${codigo}/blackjack`);
+    await expect(page.getByText("Esperando a los demás…")).toBeVisible();
+    await expect(tuMano(page)).toHaveCount(2);
+    await page.waitForTimeout(600);
+
+    // Sin blackjack: los seguros se pierden y empiezan las decisiones. Durante la mirada el estado lo dice y la tapada sube y baja.
+    await vigilarBanca(page);
+    mesa.enviar(estado(enDecisiones(sesion, [mano(yo, 0, cartas, { apuesta: 100 })], { banca: [c("AS"), null], totalBanca: 11 }), [{ tipo: "banca_mira", blackjack: false }]));
+    await expect(page.getByText("La banca mira su carta…")).toBeVisible();
+    await expect(page.getByText("Tu turno: ¿pides o te plantas?")).toBeVisible();
+    await page.waitForTimeout(300);
+    const sin = (await fotogramasBanca(page)).filter((f) => f.tapadas > 0);
+    const base = sin[0].y!;
+    expect(sin.some((f) => f.mira), "hubo fotogramas mirando").toBe(true);
+    expect(Math.min(...sin.map((f) => f.y!)) - base, "la tapada sube").toBeLessThan(-4);
+    expect(sin.every((f) => f.tapadas === 1), "siempre una tapada: no se gira").toBe(true);
+    expect(Math.abs(sin.at(-1)!.y! - base), "y vuelve a bajar").toBeLessThan(0.5);
+
+    // Otra ronda, esta vez con blackjack de la banca: mira, la gira y el seguro cobra (2:1) con tu blackjack empatado.
+    const blackjack = [c("10H"), c("AC")];
+    const conSeguro = enSeguro(sesion, [mano(yo, 0, blackjack, { apuesta: 100, estado: "blackjack" })], null, { ronda: 2, miSeguro: 50 });
+    mesa.enviar(estado(conSeguro));
+    await expect(page.getByRole("group", { name: "Banca" }).getByRole("img", { name: "Carta boca abajo" })).toHaveCount(1);
+    await page.waitForTimeout(600);
+    await vigilarBanca(page);
+    fichas.poner(1050);
+    mesa.enviar(
+      estado(
+        vista(sesion, {
+          ronda: 2,
+          fase: "resultado",
+          finFase: Date.now() + 4_000,
+          banca: [c("AS"), c("KD")],
+          totalBanca: 21,
+          manos: [mano(yo, 0, blackjack, { apuesta: 100, estado: "blackjack" })],
+          miSeguro: 50,
+        }),
+        [
+          { tipo: "banca_mira", blackjack: true },
+          { tipo: "carta_girada", carta: c("KD") },
+          { tipo: "seguro_pagado", jugadorId: yo.id, cantidad: 150 },
+          { tipo: "pago", jugadorId: yo.id, neto: 100 },
+        ],
+      ),
+    );
+    await expect(page.getByText("La banca mira su carta…")).toBeVisible();
+    // Hasta que no ha terminado de mirar sigue boca abajo; después se gira, se cobra y se ve el premio.
+    await expect(page.getByRole("img", { name: "Rey de diamantes" })).toBeVisible();
+    await expect(resultado(page)).toHaveText("Ganas 100");
+    await expect(contador(page)).toHaveText("Tienes 1.050 fichas");
+    const con = await fotogramasBanca(page);
+    const ultimaMirada = con.map((f) => f.mira).lastIndexOf(true);
+    expect(ultimaMirada, "hubo fotogramas mirando").toBeGreaterThan(0);
+    expect(con.slice(0, ultimaMirada + 1).every((f) => f.tapadas === 1), "boca abajo mientras mira").toBe(true);
+    expect(con.at(-1)!.tapadas, "después se gira").toBe(0);
+    const miradas = con.filter((f) => f.mira && f.tapadas > 0).map((f) => f.y!);
+    expect(Math.min(...miradas) - miradas[0], "también sube al mirar").toBeLessThan(-4);
+  });
+
+  test("sin fichas para el seguro, «Sí, seguro» no se puede pulsar y «No» sí", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    await fichasDeApi(page, 20);
+    const yo = sesion.jugador;
+    mesa.alConectar(estado(enSeguro(sesion, [mano(yo, 0, [c("10S"), c("6D")], { apuesta: 100 })], 50)));
+    await page.goto(`/p/${codigo}/blackjack`);
+    // El contador ya tiene las 20 fichas que quedan: se espera a verlo antes de mirar los botones.
+    await expect(contador(page)).toHaveText("Tienes 20 fichas");
+    await expect(preguntaSeguro(page, 50)).toBeVisible();
+    await expect(botonDe(page, "Sí, seguro (50)")).toBeDisabled();
+    await expect(page.getByText("No te llegan las fichas para el seguro")).toBeVisible();
+    await botonDe(page, "No").click();
+    await expect.poll(() => mesa.recibidas).toContainEqual({ t: "seguro", tomar: false });
+    expect(mesa.recibidas).not.toContainEqual({ t: "seguro", tomar: true });
+  });
+
+  test("salir con dos manos y seguro pide confirmación y manda salir", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    await fichasDeApi(page, 850);
+    const yo = sesion.jugador;
+    const manos = [mano(yo, 0, [c("10S"), c("6D")], { casilla: 0 }), mano(yo, 1, [c("8C"), c("9H")], { casilla: 1 })];
+    mesa.alConectar(estado(enSeguro(sesion, manos, 50)));
+    await page.goto(`/p/${codigo}/blackjack`);
+    await expect(preguntaSeguro(page, 50)).toBeVisible();
+
+    await page.getByRole("button", { name: "Volver a la sala" }).click();
+    const dialogo = page.getByRole("dialog", { name: "¿Salir de la mesa?" });
+    await expect(dialogo).toBeVisible();
+    await dialogo.getByRole("button", { name: "Seguir jugando" }).click();
+    await expect(page).toHaveURL(`/p/${codigo}/blackjack`);
+    expect(mesa.recibidas).not.toContainEqual({ t: "salir" });
+
+    // También con el seguro ya cogido: se pierde todo y se pregunta igual.
+    mesa.enviar(estado(enSeguro(sesion, manos, null, { miSeguro: 50 })));
+    await expect(page.getByText("Esperando a los demás…")).toBeVisible();
+    await page.getByRole("button", { name: "Volver a la sala" }).click();
+    await dialogo.getByRole("button", { name: "Salir" }).click();
+    await expect(page).toHaveURL(`/p/${codigo}`);
+    await expect.poll(() => mesa.recibidas.filter((m) => (m as { t: string }).t === "salir").length).toBe(1);
+  });
+
+  test.describe("con movimiento reducido", () => {
+    test.use({ reducedMotion: "reduce" });
+
+    test("la banca mira sin moverse: solo se lee el texto", async ({ page, request }) => {
+      const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+      await fichasDeApi(page, 900);
+      const yo = sesion.jugador;
+      const cartas = [c("10S"), c("6D")];
+      mesa.alConectar(estado(enSeguro(sesion, [mano(yo, 0, cartas)], null, { miSeguro: 25 })));
+      await page.goto(`/p/${codigo}/blackjack`);
+      await expect(page.getByText("Esperando a los demás…")).toBeVisible();
+      await expect(tuMano(page)).toHaveCount(2);
+      await page.waitForTimeout(600);
+
+      await vigilarBanca(page);
+      mesa.enviar(estado(enDecisiones(sesion, [mano(yo, 0, cartas)], { banca: [c("AS"), null], totalBanca: 11 }), [{ tipo: "banca_mira", blackjack: false }]));
+      await expect(page.getByText("La banca mira su carta…")).toBeVisible();
+      await expect(page.getByText("Tu turno: ¿pides o te plantas?")).toBeVisible();
+      await page.waitForTimeout(300);
+      const fotogramas = (await fotogramasBanca(page)).filter((f) => f.tapadas > 0);
+      expect(fotogramas.some((f) => f.mira), "se leyó el texto").toBe(true);
+      expect(fotogramas.filter((f) => Math.abs(f.y! - fotogramas[0].y!) > 0.01), "la tapada no se mueve").toEqual([]);
+      expect(await page.locator(".bj-banca .naipe").evaluateAll((cartasBanca) => cartasBanca.map((x) => getComputedStyle(x).transform))).toEqual(["none", "none"]);
+    });
+  });
 });

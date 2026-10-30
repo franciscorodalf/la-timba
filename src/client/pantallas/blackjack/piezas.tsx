@@ -39,9 +39,11 @@ interface ManoProps {
   mano?: number;
   /** El margen entre cartas, en anchos de carta (negativo: se tapan). Por defecto, el de una mano sola. */
   solape?: number;
+  /** La banca está mirando su carta tapada: la segunda carta, si sigue tapada, se levanta un poco. */
+  espiando?: boolean;
 }
 
-export function Mano({ cartas, de, ronda, ancho, reloj, etiqueta, mano = 0, solape }: ManoProps) {
+export function Mano({ cartas, de, ronda, ancho, reloj, etiqueta, mano = 0, solape, espiando = false }: ManoProps) {
   const estilo = { "--ancho": `${ancho}px`, "--solape": solape ?? (cartas.length > 5 ? -0.62 : -0.42) } as CSSProperties;
   return (
     <div className="bj-mano" role="group" aria-label={etiqueta} style={estilo}>
@@ -52,7 +54,7 @@ export function Mano({ cartas, de, ronda, ancho, reloj, etiqueta, mano = 0, sola
             const salida = reloj.guion.cartas.get(clave);
             // Solo cuenta para las cartas que aparecen ahora (las del último lote): esperan lo que le falta a su salida.
             const retardo = salida === undefined ? undefined : Math.max(0, salida - reloj.desde);
-            return <Naipe key={claveNaipe(reloj, clave)} clave={clave} carta={carta} ancho={ancho} retardo={retardo} origen={salida === undefined ? null : reloj.origen} />;
+            return <Naipe key={claveNaipe(reloj, clave)} clave={clave} carta={carta} ancho={ancho} retardo={retardo} origen={salida === undefined ? null : reloj.origen} espiando={espiando && i === 1 && carta === null} />;
           })}
         </CapaMano>
       </AnimatePresence>

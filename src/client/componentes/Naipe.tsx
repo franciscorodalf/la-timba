@@ -85,6 +85,8 @@ const CURVA_VUELO = [0.2, 0.8, 0.2, 1] as const;
 const GIRO_S = 0.55;
 const CURVA_GIRO = [0.3, 0.7, 0.2, 1.1] as const;
 const FUNDIDO_S = 0.3;
+/** Lo que dura la mirada de la banca a su carta tapada (la misma que la del guion de la mesa: `MIRA_MS`). */
+const ESPIADA_S = 0.7;
 /** La cara (un SVG pesado) de una carta que espera su turno se pinta este rato antes de salir del mazo, no al aparecer. */
 const ANTELACION_CARA_MS = 80;
 
@@ -102,13 +104,15 @@ interface Props {
   origen?: DOMRect | null;
   /** Cómo la llama la mesa (`data-clave`): así se la encuentra en el DOM, por ejemplo para deslizarla de una mano a otra. */
   clave?: string;
+  /** Una carta tapada que se levanta un poco y vuelve a bajar (la banca que mira) cada vez que pasa a verdadero. Con movimiento reducido no se mueve. */
+  espiando?: boolean;
 }
 
 /**
  * Una carta de la mesa. Al aparecer con `origen`, sale del mazo girada y pequeña y llega a su sitio en 480 ms; al pasar de
  * boca abajo a boca arriba, da la vuelta en 3D (550 ms). Con movimiento reducido, en ambos casos solo se funde.
  */
-export function Naipe({ carta, ancho, retardo = 0, origen = null, clave }: Props) {
+export function Naipe({ carta, ancho, retardo = 0, origen = null, clave, espiando = false }: Props) {
   const reducido = useMovimientoReducido();
   const caras = useBaraja();
   const [caja, animar] = useAnimate<HTMLDivElement>();
@@ -161,6 +165,16 @@ export function Naipe({ carta, ancho, retardo = 0, origen = null, clave }: Props
       return detener(animar(giro.current, { transform: ["rotateY(180deg)", "rotateY(0deg)"] }, { duration: GIRO_S, ease: CURVA_GIRO }));
     }
   }, [tapada, reducido, animar]);
+
+  // La tapada sube unos píxeles y baja. Se deja terminar sola: al acabar la mirada el valor vuelve a falso y pararla ahí la dejaría torcida.
+  useLayoutEffect(() => {
+    const el = caja.current;
+    if (!espiando || reducido || el === null) return;
+    const subida = Math.round(ancho * 0.18);
+    const abajo = "translate(0px, 0px) rotate(0deg) scale(1)";
+    animar(el, { transform: [abajo, `translate(0px, ${-subida}px) rotate(-3deg) scale(1.05)`, abajo] }, { duration: ESPIADA_S, ease: "easeInOut", times: [0, 0.4, 1] });
+    // Solo al empezar a espiar: el ancho es el de ese momento.
+  }, [espiando]);
 
   const Cara = carta !== null && caras !== null ? caras[codigoCarta(carta)] : undefined;
   return (

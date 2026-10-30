@@ -7,6 +7,7 @@ import {
   ESCALONADO_MS,
   GIRO_MS,
   guionDelLote,
+  MIRA_MS,
   partesDeClave,
   sumarGeneraciones,
   totalVisible,
@@ -79,6 +80,39 @@ describe("guionDelLote", () => {
     expect(primera).toBeGreaterThanOrEqual(GIRO_MS);
     expect(guion.cartas.get(claveCarta(3, "banca", 0, 3))).toBe(primera + ESCALONADO_MS);
     expect(guion.fin).toBe(primera + ESCALONADO_MS + VUELO_MS);
+  });
+
+  it("la banca mira: la tapada se levanta MIRA_MS y, si hay blackjack, se gira después; sin blackjack no hay giro", () => {
+    expect(MIRA_MS).toBe(700);
+    const sin = guionDelLote([{ tipo: "banca_mira", blackjack: false }], vista({ fase: "decisiones", banca: [c("AS"), null] }));
+    expect(sin.mira).toBe(0);
+    expect(sin.giro).toBeNull();
+    expect(sin.fin).toBe(MIRA_MS);
+
+    const con = guionDelLote(
+      [{ tipo: "banca_mira", blackjack: true }, { tipo: "carta_girada", carta: c("KD") }, { tipo: "pago", jugadorId: 1, neto: -50 }],
+      vista({ fase: "resultado", banca: [c("AS"), c("KD")] }),
+    );
+    expect(con.mira).toBe(0);
+    expect(con.giro).toBe(MIRA_MS);
+    expect(con.fin).toBe(MIRA_MS + GIRO_MS);
+  });
+
+  it("si la banca mira en el mismo lote que el reparto, espera a que la última carta haya llegado", () => {
+    const v = vista({ banca: [c("KS"), null], manos: [mano(1, [c("10H"), c("9C")])] });
+    const guion = guionDelLote(
+      [
+        { tipo: "carta_repartida", a: 1, oculta: false, carta: c("10H") },
+        { tipo: "carta_repartida", a: "banca", oculta: false, carta: c("KS") },
+        { tipo: "carta_repartida", a: 1, oculta: false, carta: c("9C") },
+        { tipo: "carta_repartida", a: "banca", oculta: true },
+        { tipo: "banca_mira", blackjack: false },
+      ],
+      v,
+    );
+    // La tapada sale a los 780 ms y llega a los 1.260: ahí empieza a mirar.
+    expect(guion.mira).toBe(3 * ESCALONADO_MS + VUELO_MS);
+    expect(guion.fin).toBe(guion.mira! + MIRA_MS);
   });
 
   it("sin cartas en el lote no hay nada que animar; un evento de una mano que ya no está se ignora", () => {
@@ -232,10 +266,18 @@ describe("encolarGuion", () => {
     expect(encolarGuion(banca, GIRO_MS + 50, pedida).giro).toBeNull();
     expect(encolarGuion(reparto, 300, banca).giro).toBe(reparto.fin);
   });
+
+  it("la mirada de la banca se conserva mientras dura y se desplaza con su lote", () => {
+    const mira = guionDelLote([{ tipo: "banca_mira", blackjack: false }], vista({ banca: [c("AS"), null] }));
+    expect(encolarGuion(mira, 200, pedida).mira).toBe(0);
+    expect(encolarGuion(mira, MIRA_MS + 50, pedida).mira).toBeNull();
+    expect(encolarGuion(reparto, 300, mira).mira).toBe(reparto.fin);
+    expect(encolarGuion(reparto, 300, mira).fin).toBe(reparto.fin + MIRA_MS);
+  });
 });
 
 describe("sumarGeneraciones", () => {
-  const guionCon = (...claves: string[]) => ({ cartas: new Map(claves.map((clave, i) => [clave, i * ESCALONADO_MS])), giro: null, fin: 0 });
+  const guionCon = (...claves: string[]) => ({ cartas: new Map(claves.map((clave, i) => [clave, i * ESCALONADO_MS])), giro: null, mira: null, fin: 0 });
 
   it("cada reparto suma una generación a la clave: la carta que vuelve a repartirse con una clave ya usada es una carta nueva", () => {
     // El reparto: la segunda carta de la mano 0 sale por primera vez.
@@ -250,7 +292,7 @@ describe("sumarGeneraciones", () => {
 
   it("un guion sin cartas (solo el giro) no cambia nada, y las claves de rondas anteriores se olvidan", () => {
     const previas = sumarGeneraciones(new Map(), guionCon(claveCarta(3, 1, 0, 0)));
-    expect(sumarGeneraciones(previas, { cartas: new Map(), giro: 0, fin: GIRO_MS })).toBe(previas);
+    expect(sumarGeneraciones(previas, { cartas: new Map(), giro: 0, mira: null, fin: GIRO_MS })).toBe(previas);
     const siguiente = sumarGeneraciones(previas, guionCon(claveCarta(4, 1, 0, 0)));
     expect([...siguiente.keys()]).toEqual([claveCarta(4, 1, 0, 0)]);
   });

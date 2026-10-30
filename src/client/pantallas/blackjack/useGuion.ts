@@ -2,9 +2,10 @@ import { type RefObject, useEffect, useState } from "react";
 import type { VistaBJ } from "../../../shared/juegos/blackjack";
 import type { Evento } from "../../../shared/juegos/tipos";
 import { sonidos } from "../../efectos/sonidos";
-import { encolarGuion, GIRO_MS, type Guion, GUION_VACIO, guionDelLote, sumarGeneraciones, VUELO_MS } from "./guion";
+import { encolarGuion, GIRO_MS, type Guion, GUION_VACIO, guionDelLote, MIRA_MS, sumarGeneraciones, VUELO_MS } from "./guion";
 
-export const hayCartas = (lote: Evento[]): boolean => lote.some((e) => e.tipo === "carta_repartida" || e.tipo === "carta_girada");
+/** El lote trae algo que se anima con el guion: cartas que salen, la tapada que se gira o la banca que mira. */
+export const hayCartas = (lote: Evento[]): boolean => lote.some((e) => e.tipo === "carta_repartida" || e.tipo === "carta_girada" || e.tipo === "banca_mira");
 
 export interface Reloj {
   lote: Evento[];
@@ -60,7 +61,14 @@ export function useGuion(lote: Evento[], vista: VistaBJ | null, mazo: RefObject<
     const pasado = performance.now() - inicio;
     const relojes: ReturnType<typeof setTimeout>[] = [];
     const hitos = new Set([...guion.cartas.values()].map((t) => t + VUELO_MS));
-    if (guion.giro !== null) hitos.add(guion.giro + GIRO_MS);
+    if (guion.giro !== null) {
+      hitos.add(guion.giro);
+      hitos.add(guion.giro + GIRO_MS);
+    }
+    if (guion.mira !== null) {
+      hitos.add(guion.mira);
+      hitos.add(guion.mira + MIRA_MS);
+    }
     hitos.add(guion.fin);
     for (const t of hitos) {
       relojes.push(setTimeout(() => setReloj((r) => (r.guion === guion ? { ...r, hito: Math.max(r.hito, t) } : r)), Math.max(0, t - pasado)));
@@ -68,6 +76,8 @@ export function useGuion(lote: Evento[], vista: VistaBJ | null, mazo: RefObject<
     // Suenan las cartas que aún no habían salido al llegar el último lote (las suyas y las que esperaban turno).
     const salidas = [...guion.cartas.values()];
     if (guion.giro !== null) salidas.push(guion.giro);
+    // Al levantar la tapada también suena una carta.
+    if (guion.mira !== null) salidas.push(guion.mira);
     for (const t of salidas) if (t >= desde) relojes.push(setTimeout(() => sonidos.reproducir("carta"), Math.max(0, t - pasado)));
     return () => relojes.forEach(clearTimeout);
   }, [guion, inicio, desde]);
@@ -84,6 +94,17 @@ export function aterrizada(reloj: Reloj, clave: string): boolean {
 /** La tapada de la banca ya se ha girado del todo (o no se gira en el guion en curso). */
 export function girada(reloj: Reloj): boolean {
   return reloj.guion.giro === null || reloj.hito >= reloj.guion.giro + GIRO_MS;
+}
+
+/** La tapada de la banca ya puede empezar a girarse (o no se gira en el guion en curso): hasta entonces se sigue viendo boca abajo. */
+export function giroIniciado(reloj: Reloj): boolean {
+  return reloj.guion.giro === null || reloj.hito >= reloj.guion.giro;
+}
+
+/** La banca está mirando su carta tapada ahora mismo (la tapada se levanta y baja, y el estado lo dice). */
+export function mirando(reloj: Reloj): boolean {
+  const { mira } = reloj.guion;
+  return mira !== null && reloj.hito >= mira && reloj.hito < mira + MIRA_MS;
 }
 
 /** Lo que le queda al guion en curso por terminar de verse, ahora mismo. */

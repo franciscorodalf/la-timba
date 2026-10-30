@@ -144,20 +144,63 @@ export function Decidir({ mano, opciones, fichas, activo, onActuar }: DecidirPro
   );
 }
 
+interface SeguroProps {
+  /** Lo que cuesta asegurarse (lo calcula el servidor; no sabe cuántas fichas tienes). */
+  coste: number;
+  fichas: number;
+  /** Tus cartas (y la visible de la banca) ya están en la mesa: hasta entonces no hay nada que decidir. */
+  activo: boolean;
+  onResponder(tomar: boolean): void;
+}
+
+/**
+ * La pregunta del seguro, «No» o «Sí, seguro (N)». La pregunta misma va en el texto de estado (`textoEstado`, que además se anuncia
+ * a los lectores de pantalla); aquí solo están los botones. «Sí» se apaga si tus fichas no cubren el coste: el servidor no las
+ * cuenta al decidir si se ofrece, pero el cobro lo rechazaría.
+ */
+export function PanelSeguro({ coste, fichas, activo, onResponder }: SeguroProps) {
+  const cubre = fichas >= coste;
+  return (
+    <div className="bj-seguro">
+      <Boton variante="secundario" disabled={!activo} onClick={() => onResponder(false)}>
+        No
+      </Boton>
+      <Boton
+        disabled={!activo || !cubre}
+        onClick={() => {
+          sonidos.reproducir("fichas");
+          onResponder(true);
+        }}
+      >
+        {`Sí, seguro (${miles(coste)})`}
+      </Boton>
+      {!cubre && <p className="bj-seguro__nota">No te llegan las fichas para el seguro</p>}
+    </div>
+  );
+}
+
 /**
  * El texto de la fase para el panel. `manoEnLaMesa` dice si tus cartas ya han llegado a su sitio: mientras alguna vuela,
  * el texto no adelanta lo que aún no se ve (tu blackjack, que te has pasado o que te toca). `mano` es la que juega (o, si ya no
- * juega ninguna, la última) y `manos` cuántas tienes: con varias, el desenlace de una no resume el de las demás.
+ * juega ninguna, la última) y `manos` cuántas tienes: con varias, el desenlace de una no resume el de las demás. `bancaMirando`: la
+ * banca está mirando su carta tapada.
  */
-export function textoEstado(vista: VistaBJ | null, mano: ManoVista | undefined, manoEnLaMesa: boolean, manos = mano === undefined ? 0 : 1): string {
+export function textoEstado(vista: VistaBJ | null, mano: ManoVista | undefined, manoEnLaMesa: boolean, manos = mano === undefined ? 0 : 1, bancaMirando = false): string {
   if (vista === null) return "Sentándote en la mesa…";
+  // Mientras la banca mira su carta (un instante) manda sobre la fase a la que pasa la mesa: decisiones, o resultado si tiene blackjack.
+  if (bancaMirando) return "La banca mira su carta…";
   switch (vista.fase) {
     case "esperando":
       return "Apuesta para empezar la ronda";
     case "apuestas":
       return mano ? "Apuesta hecha. Esperando al reparto" : "Haz tu apuesta";
-    case "seguro":
-      return "Esperando al resto";
+    case "seguro": {
+      if (!mano) return "Miras esta ronda";
+      if (!manoEnLaMesa) return "Repartiendo…";
+      // `opciones.seguro` es lo que cuesta mientras no hayas contestado; después (o si no se te ofrece) es `null`.
+      const coste = vista.opciones?.seguro ?? null;
+      return coste === null ? "Esperando a los demás…" : `La banca enseña un as. ¿Seguro por ${miles(coste)}?`;
+    }
     case "decisiones":
       if (!mano) return "Miras esta ronda";
       if (!manoEnLaMesa) return "Repartiendo…";
