@@ -759,3 +759,165 @@ test.describe("levantarse y añadir fichas", () => {
     expect(acciones(mesa).filter((m) => m.t === "anadir")).toHaveLength(0);
   });
 });
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Tabla de jugadas
+// ---------------------------------------------------------------------------------------------------------------------
+
+test.describe("tabla de jugadas", () => {
+  const tabla = (pagina: Page) => pagina.getByRole("dialog", { name: "Tabla de jugadas" });
+  const filas = (pagina: Page) => tabla(pagina).getByRole("listitem");
+  const NOMBRES_JUGADAS = ["Escalera real", "Escalera de color", "Póquer", "Full", "Color", "Escalera", "Trío", "Doble pareja", "Pareja", "Carta alta"];
+
+  test("Jugadas se abre sin estar sentado y lista las diez de mayor a menor", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    mesa.alConectar(estado(vista(sesion, { asientos: rivales(3) })));
+    await page.goto(`/p/${codigo}/poker`);
+    await expect(sentarme(page)).toBeVisible();
+    await expect(tabla(page)).toBeHidden();
+
+    await boton(page, "Jugadas").click();
+    await expect(tabla(page)).toBeVisible();
+    await expect(filas(page)).toHaveCount(10);
+    for (const [i, nombre] of NOMBRES_JUGADAS.entries()) await expect(filas(page).nth(i).locator(".tabla-jugadas__nombre")).toHaveText(nombre);
+    await expect(filas(page).first()).toContainText("10, J, Q, K y A del mismo palo");
+    // Quien mira no tiene jugada: nada resaltado.
+    await expect(tabla(page).locator("[aria-current]")).toHaveCount(0);
+    await expect(tabla(page).getByText("tienes esta")).toHaveCount(0);
+
+    await tabla(page).getByRole("button", { name: "Cerrar" }).click();
+    await expect(tabla(page)).toBeHidden();
+    expect(acciones(mesa).filter((m) => m.t !== "salir")).toEqual([]);
+  });
+
+  test("resalta la jugada que tienes y cambia al abrirse una carta", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    mesa.alConectar(estado(tuTurno(sesion, { pasar: true }, { mesa: MESA_FLOP, turno: 9001 })));
+    await page.goto(`/p/${codigo}/poker`);
+    await boton(page, "Jugadas").click();
+
+    const actual = tabla(page).locator('[aria-current="true"]');
+    await expect(actual).toHaveCount(1);
+    await expect(actual).toContainText("Pareja");
+    await expect(actual).toContainText("tienes esta");
+    await expect(tabla(page).getByText("tienes esta")).toHaveCount(1);
+
+    // Sale un rey en la mesa con la tabla abierta: ahora es un trío.
+    mesa.enviar(estado(tuTurno(sesion, { pasar: true }, { mesa: [...MESA_FLOP, carta("KH")], calle: "turn", turno: 9001 })));
+    await expect(actual).toContainText("Trío");
+    await expect(actual).toHaveCount(1);
+    await expect(filas(page).filter({ hasText: "tienes esta" })).toHaveCount(1);
+  });
+
+  test("con Tapar no resalta nada", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    mesa.alConectar(estado(tuTurno(sesion, { pasar: true }, { mesa: MESA_FLOP, turno: 9001 })));
+    await page.goto(`/p/${codigo}/poker`);
+    await boton(page, "Tapar").click();
+    await boton(page, "Jugadas").click();
+    await expect(filas(page)).toHaveCount(10);
+    await expect(tabla(page).locator("[aria-current]")).toHaveCount(0);
+    await expect(tabla(page).getByText("tienes esta")).toHaveCount(0);
+
+    // Destapar desde fuera de la tabla vuelve a resaltarla; el estado es el mismo que el de la mesa.
+    await page.keyboard.press("Escape");
+    await boton(page, "Destapar").click();
+    await boton(page, "Jugadas").click();
+    await expect(tabla(page).locator('[aria-current="true"]')).toContainText("Pareja");
+  });
+
+  test("si te toca con la tabla abierta, sale el aviso con el tiempo", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    mesa.alConectar(estado(tuTurno(sesion, { pasar: true }, { turno: 9001, finFase: Date.now() + 14_000 })));
+    await page.goto(`/p/${codigo}/poker`);
+    await boton(page, "Jugadas").click();
+    await expect(tabla(page)).toBeVisible();
+    await expect(tabla(page).locator(".pk-cuenta")).toHaveCount(0);
+
+    mesa.enviar(estado(tuTurno(sesion, { pasar: true }, { finFase: Date.now() + 14_000 })));
+    const aviso = tabla(page).locator(".pk-cuenta");
+    await expect(aviso).toContainText("Tu turno");
+    await expect(aviso.locator("b")).toHaveText(/^0:1[2-4]$/);
+    const antes = (await aviso.locator("b").textContent())!;
+    await expect.poll(async () => (await aviso.locator("b").textContent())!, { timeout: 5_000 }).not.toBe(antes);
+
+    // Y desaparece cuando el turno pasa a otro.
+    mesa.enviar(estado(tuTurno(sesion, SIN_OPCIONES, { turno: 9001 })));
+    await expect(tabla(page).locator(".pk-cuenta")).toHaveCount(0);
+  });
+
+  test("se cierra con Escape y el foco vuelve al botón", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    mesa.alConectar(estado(vista(sesion, { asientos: rivales(2) })));
+    await page.goto(`/p/${codigo}/poker`);
+    const abrir = boton(page, "Jugadas");
+    await abrir.focus();
+    await page.keyboard.press("Enter");
+    await expect(tabla(page)).toBeVisible();
+    // El foco entra en el diálogo (en su botón de cerrar).
+    await expect(tabla(page).getByRole("button", { name: "Cerrar" })).toBeFocused();
+
+    await page.keyboard.press("Escape");
+    await expect(tabla(page)).toBeHidden();
+    await expect(abrir).toBeFocused();
+
+    // Se puede volver a abrir y cerrar con su botón: el foco vuelve igual.
+    await abrir.click();
+    await expect(tabla(page)).toBeVisible();
+    await tabla(page).getByRole("button", { name: "Cerrar" }).click();
+    await expect(abrir).toBeFocused();
+  });
+
+  for (const tamano of [
+    { ancho: 360, alto: 640 },
+    { ancho: 1280, alto: 720 },
+  ]) {
+    test(`en ${tamano.ancho}×${tamano.alto} el botón cabe en la barra con 44 px y la tabla cabe entera`, async ({ page, request }) => {
+      await page.setViewportSize({ width: tamano.ancho, height: tamano.alto });
+      const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+      const sentados = Array.from({ length: 8 }, (_, n) => (n === 3 ? miAsiento(sesion, n, { fichas: 980, apostado: 20, boton: true }) : asientoDe(n)));
+      mesa.alConectar(estado(vista(sesion, { asientos: sentados, turno: sesion.jugador.id, misCartas: [carta("KS"), carta("KD")], opciones: { ...SIN_OPCIONES, retirarse: true, igualar: 20, subir: { min: 60, max: 1000 } } })));
+      await page.goto(`/p/${codigo}/poker`);
+      await expect(boton(page, "Jugadas")).toBeVisible();
+
+      // El botón, el sonido y las fichas caben en la barra, sin cortarse ni salirse, y cada botón mide 44 px o más.
+      const barra = await page.evaluate(() => {
+        const cuadro = (selector: string) => {
+          const r = document.querySelector(selector)!.getBoundingClientRect();
+          return { izq: r.left, der: r.right, alto: r.height, ancho: r.width };
+        };
+        return { jugadas: cuadro(".barra-mesa__jugadas"), sonido: cuadro(".barra-mesa__sonido"), fichas: cuadro(".barra-mesa__fichas"), titulo: cuadro(".barra-mesa__titulo"), volver: cuadro(".barra-mesa__volver") };
+      });
+      expect(barra.jugadas.alto).toBeGreaterThanOrEqual(43.5);
+      expect(barra.jugadas.ancho).toBeGreaterThanOrEqual(43.5);
+      expect(barra.fichas.der).toBeLessThanOrEqual(tamano.ancho);
+      expect(barra.jugadas.der).toBeLessThanOrEqual(barra.sonido.izq + 0.5);
+      expect(barra.sonido.der).toBeLessThanOrEqual(barra.fichas.izq + 0.5);
+      expect(barra.volver.der).toBeLessThanOrEqual(barra.jugadas.izq + 0.5);
+      // Con sitio, el nombre de la mesa va entre «Sala» y los controles; en un móvil (menos de 480 px) se queda solo para los lectores de pantalla.
+      if (tamano.ancho >= 480) {
+        expect(barra.volver.der).toBeLessThanOrEqual(barra.titulo.izq + 0.5);
+        expect(barra.titulo.der).toBeLessThanOrEqual(barra.jugadas.izq + 0.5);
+      } else {
+        await expect(page.getByRole("heading", { name: "Póker", level: 1 })).toBeAttached();
+        expect(barra.titulo.ancho).toBeLessThanOrEqual(1);
+      }
+      expect(await sinDesplazamientoHorizontal(page)).toBe(true);
+
+      // La tabla, con el aviso de tu turno, cabe entera en la pantalla y sus botones miden 44 px.
+      await boton(page, "Jugadas").click();
+      await expect(tabla(page)).toBeVisible();
+      await page.waitForTimeout(400);
+      const dentro = await tabla(page).evaluate((el) => {
+        const r = el.getBoundingClientRect();
+        const lista = el.querySelector("ol")!;
+        return { dentro: r.top >= 0 && r.bottom <= window.innerHeight && r.left >= 0 && r.right <= window.innerWidth, desbordaLista: lista.scrollHeight > lista.clientHeight + 1 };
+      });
+      expect(dentro.dentro).toBe(true);
+      const pequenos = await tabla(page).evaluate((el) => [...el.querySelectorAll("button")].filter((b) => b.getBoundingClientRect().height < 43.5).map((b) => b.textContent));
+      expect(pequenos).toEqual([]);
+      await expect(tabla(page).locator(".pk-cuenta")).toContainText("Tu turno");
+      expect(await sinDesplazamientoHorizontal(page)).toBe(true);
+    });
+  }
+});

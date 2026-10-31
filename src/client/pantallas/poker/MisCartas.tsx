@@ -1,6 +1,6 @@
 import { type CSSProperties, useCallback, useState } from "react";
 import type { Carta } from "../../../shared/cartas";
-import { mejorJugada, nombreJugada } from "../../../shared/juegos/poker-jugadas";
+import { type Jugada, nombreJugada } from "../../../shared/juegos/poker-jugadas";
 import { Boton } from "../../componentes/Boton";
 import { Ficha } from "../../componentes/Ficha";
 import { Naipe } from "../../componentes/Naipe";
@@ -38,8 +38,11 @@ export function useTapadas(): [boolean, () => void] {
 interface Props {
   /** Tus dos cartas, o `null` si esta mano no juegas. */
   cartas: Carta[] | null;
-  /** Las cartas de la mesa que ya han salido. */
-  mesa: Carta[];
+  /** Tu mejor jugada con las cartas de la mesa que ya han salido, o `null` si no tienes cartas. */
+  jugada: Jugada | null;
+  /** Si las tienes tapadas (el estado vive en la mesa, que también se lo pasa a la tabla de jugadas). */
+  tapadas: boolean;
+  onAlternar(): void;
   /** Tu pila en la mesa. */
   pila: number;
   /** Lo que has añadido y entra al empezar la mano siguiente. */
@@ -50,9 +53,7 @@ interface Props {
  * Debajo del tapete: tus cartas grandes y, al lado, tu pila, el nombre de tu jugada («Pareja de reyes») y «Tapar», que las da la
  * vuelta solo en tu pantalla y esconde también el texto. Sin cartas reserva su sitio (la mesa no salta cuando llega la mano).
  */
-export function MisCartas({ cartas, mesa, pila, porEntrar }: Props) {
-  const [tapadas, alternar] = useTapadas();
-  const jugada = cartas === null ? null : mejorJugada([...cartas, ...mesa]);
+export function MisCartas({ cartas, jugada, tapadas, onAlternar, pila, porEntrar }: Props) {
   return (
     <div className="pk-mias" style={{ "--ancho-carta": `${ANCHO_CARTA}px` } as CSSProperties}>
       {cartas === null ? (
@@ -76,7 +77,7 @@ export function MisCartas({ cartas, mesa, pila, porEntrar }: Props) {
         {cartas !== null && (
           <>
             <p className="pk-jugada">{tapadas || jugada === null ? "" : nombreJugada(jugada)}</p>
-            <Boton variante="secundario" className="pk-mias__tapar" onClick={alternar}>
+            <Boton variante="secundario" className="pk-mias__tapar" onClick={onAlternar}>
               {tapadas ? "Destapar" : "Tapar"}
             </Boton>
           </>

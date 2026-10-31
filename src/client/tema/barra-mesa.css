@@ -69,6 +69,30 @@
   background: rgba(243, 231, 196, 0.08);
 }
 
+/* «Jugadas» (póker): texto en un botón de 44 px. Comparte el aspecto del resto de controles de la barra. */
+.barra-mesa__jugadas {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  margin-right: 4px;
+  padding: 0 10px;
+  border: 1px solid rgba(212, 175, 55, 0.4);
+  border-radius: 10px;
+  background: none;
+  color: var(--crema);
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    color 0.15s,
+    background-color 0.15s;
+}
+
+.barra-mesa__jugadas:hover {
+  color: var(--oro);
+  background: rgba(243, 231, 196, 0.08);
+}
+
 .barra-mesa__fichas {
   display: inline-flex;
   align-items: center;
@@ -81,4 +105,21 @@
   font-weight: 600;
   font-size: 1.0625rem;
   line-height: 1.2;
+}
+
+/* Con un control de más («Jugadas») en un móvil no caben «← Sala», el nombre, el control, el sonido y las fichas en 360 px: el nombre
+   queda solo para los lectores de pantalla y la barra se reparte entre «Sala» y los controles. */
+@media (max-width: 479px) {
+  .barra-mesa--extra {
+    grid-template-columns: 1fr auto;
+  }
+
+  .barra-mesa--extra .barra-mesa__titulo {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
 }

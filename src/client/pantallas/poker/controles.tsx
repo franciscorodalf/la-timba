@@ -89,7 +89,7 @@ function Hoja({ hoja, clase, children }: { hoja: HTMLElement | null; clase?: str
 }
 
 /** «Tu turno 0:13» dentro de las hojas que tapan la línea de estado: mientras decides, el tiempo sigue a la vista. */
-function CuentaTurno({ cuenta }: { cuenta: string | null }) {
+export function CuentaTurno({ cuenta }: { cuenta: string | null }) {
   if (cuenta === null) return null;
   return (
     <p className="pk-cuenta">

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { type AccionPoker, POKER, type VistaPoker } from "../../shared/juegos/poker";
+import { mejorJugada } from "../../shared/juegos/poker-jugadas";
 import { AvisoMesa } from "../componentes/AvisoMesa";
 import { BarraMesa } from "../componentes/BarraMesa";
 import { Boton } from "../componentes/Boton";
@@ -20,7 +21,8 @@ import { useFichasAlDia } from "../red/useFichasAlDia";
 import { useMesa } from "../red/useMesa";
 import { useSalirDeMesa } from "../red/useSalirDeMesa";
 import { AnadirFichas, Decidir, Mirando, textoEstado } from "./poker/controles";
-import { MisCartas } from "./poker/MisCartas";
+import { MisCartas, useTapadas } from "./poker/MisCartas";
+import { TablaJugadas } from "./poker/TablaJugadas";
 import { Tapete } from "./poker/Tapete";
 
 /** La mesa de póker de la partida `codigo`: tapete ovalado, vertical en móvil y horizontal en ordenador. */
@@ -88,6 +90,11 @@ export function MesaPoker({ codigo }: { codigo: string }) {
   const salida = useSalirDeMesa({ codigo, enviar, apuestaEnJuego: enLaMano, perdidas: "lo que llevas puesto en esta mano" });
   const tuTurno = vista !== null && vista.turno !== null && vista.turno === vista.yo;
 
+  // Tu jugada y si tienes las cartas tapadas se calculan aquí porque los usan tus cartas y la tabla de jugadas: con Tapar, la tabla no resalta nada.
+  const [tapadas, alternarTapadas] = useTapadas();
+  const jugada = vista?.misCartas ? mejorJugada([...vista.misCartas, ...vista.mesa]) : null;
+  const [tablaAbierta, setTablaAbierta] = useState(false);
+
   const levantarmeYa = () => {
     enviar({ t: "levantarse" });
     levantarse.marcarEnviado();
@@ -96,7 +103,15 @@ export function MesaPoker({ codigo }: { codigo: string }) {
   return (
     <main ref={setHoja} className={`marco-mesa pk${ordenador ? " pk--ordenador" : ""}`}>
       <Reconectando conectado={conectado || vista === null} />
-      <BarraMesa titulo="Póker" onVolver={salida.alVolver} />
+      <BarraMesa
+        titulo="Póker"
+        onVolver={salida.alVolver}
+        extra={
+          <button type="button" className="barra-mesa__jugadas" aria-haspopup="dialog" onClick={() => setTablaAbierta(true)}>
+            Jugadas
+          </button>
+        }
+      />
 
       <div className="pk-mesa aparece">{vista !== null ? <Tapete vista={vista} ordenador={ordenador} /> : <div className="pk-tapete" aria-hidden="true" />}</div>
 
@@ -110,7 +125,7 @@ export function MesaPoker({ codigo }: { codigo: string }) {
         />
         {vista !== null && mio !== undefined && (
           <>
-            <MisCartas cartas={vista.misCartas} mesa={vista.mesa} pila={mio.fichas} porEntrar={vista.porEntrar} />
+            <MisCartas cartas={vista.misCartas} jugada={jugada} tapadas={tapadas} onAlternar={alternarTapadas} pila={mio.fichas} porEntrar={vista.porEntrar} />
             <Decidir
               opciones={vista.opciones}
               tuTurno={tuTurno}
@@ -165,6 +180,7 @@ export function MesaPoker({ codigo }: { codigo: string }) {
       <AvisoMesa error={error} accion={errorDe} />
 
       {salida.dialogo}
+      <TablaJugadas abierta={tablaAbierta} jugada={tapadas ? null : jugada} onCerrar={() => setTablaAbierta(false)} aviso={tuTurno && fase === "mano" ? cuenta : null} />
       {levantando && (
         <Confirmar
           titulo="¿Levantarte de la mesa?"
