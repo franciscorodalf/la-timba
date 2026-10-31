@@ -14,9 +14,10 @@
 
 .pk-tapete {
   position: relative;
-  /* En un móvil de 640 px de alto sale casi el del boceto (378 px frente a 392); más alto, hasta 460; más bajo, no baja de 340. */
-  height: clamp(340px, calc(100dvh - 262px), 460px);
-  aspect-ratio: 300 / 392;
+  /* Deja sitio, sin desplazar, a tus cartas y a la fila de decidir: en un móvil de 640 px de alto sale de 350 px (el boceto, de 392: la proporción es algo más ancha para que los asientos no pisen las cartas del centro);
+     más alto, hasta 460; más bajo, no baja de 340 y la página se desplaza. */
+  height: clamp(340px, calc(100dvh - 290px), 460px);
+  aspect-ratio: 300 / 363;
   max-width: 100%;
   border-radius: 50% / 38%;
   background:
@@ -243,9 +244,232 @@
   z-index: 2;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  margin-top: 28px;
-  min-height: 150px;
+  gap: 8px;
+  margin-top: 24px;
+}
+
+/* ---------- Tus cartas, bajo el tapete ---------- */
+
+.pk-mias {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.pk-mias__cartas {
+  flex: none;
+  display: flex;
+  gap: 6px;
+  min-width: calc(var(--ancho-carta) * 2 + 6px);
+  min-height: calc(var(--ancho-carta) * 1.4);
+}
+
+/* Sin cartas, dos huecos impresos donde caerán. */
+.pk-mias__hueco {
+  flex: none;
+  width: var(--ancho-carta);
+  height: calc(var(--ancho-carta) * 1.4);
+  border: 1.5px dashed rgba(212, 175, 55, 0.32);
+  border-radius: calc(var(--ancho-carta) * 0.08);
+}
+
+.pk-mias__datos {
+  min-width: 0;
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  column-gap: 8px;
+  row-gap: 2px;
+}
+
+.pk-mipila {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--crema-tenue);
+  font: 600 0.8125rem/1.3 var(--fuente-ui);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.pk-mipila b {
+  color: var(--crema);
+  font-size: 1rem;
+}
+
+.pk-mias__entra {
+  grid-column: 1 / -1;
+  color: var(--oro-claro);
+  font: 600 0.75rem/1.3 var(--fuente-ui);
+}
+
+/* El nombre de la jugada; tapada o sin ella sigue ocupando su línea (la fila no cambia de alto). */
+.pk-jugada {
+  min-height: 1.4em;
+  min-width: 0;
+  color: var(--oro);
+  font: 600 0.9375rem/1.4 var(--fuente-titulo);
+}
+
+.pk-mias__tapar {
+  min-height: 44px;
+  padding: 0 14px;
+}
+
+/* ---------- Decidir ---------- */
+
+/* La fila reserva su alto aunque no te toque: la mesa no salta. */
+.pk-acciones {
+  min-height: 48px;
+}
+
+.pk-acciones__ensenar {
+  width: 100%;
+}
+
+.pk-decidir {
+  display: grid;
+  grid-template-columns: 1fr 1.25fr 1fr;
+  gap: 8px;
+}
+
+.pk-decidir .boton {
+  padding: 0 6px;
+  white-space: nowrap;
+}
+
+/* ---------- Subir ---------- */
+
+/* La hoja de subir y la de añadir fichas se quedan pegadas al borde de abajo de la pantalla, por encima de tus cartas: abrirlas no
+   obliga a desplazar la página para llegar a sus botones. */
+.pk-acciones--subir,
+.pk-anadir {
+  position: sticky;
+  bottom: 16px;
+  z-index: 4;
+  padding: 10px;
+  border: 1px solid rgba(212, 175, 55, 0.45);
+  border-radius: 14px;
+  background: var(--tapete-barra);
+  box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.45);
+}
+
+.pk-subir {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pk-subir__cantidad {
+  display: grid;
+  grid-template-columns: 52px 1fr 52px;
+  gap: 8px;
+  align-items: center;
+}
+
+.pk-subir__paso {
+  min-height: 48px;
+  border: 1.5px solid var(--oro);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.25);
+  color: var(--crema);
+  font: 700 1.5rem/1 var(--fuente-ui);
+  cursor: pointer;
+  transition:
+    background-color 0.2s,
+    opacity 0.2s;
+}
+
+.pk-subir__paso:hover:not(:disabled) {
+  background: rgba(212, 175, 55, 0.16);
+}
+
+.pk-subir__paso:active:not(:disabled) {
+  transform: scale(0.95);
+}
+
+.pk-subir__paso:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+/* La cantidad, en grande. */
+.pk-subir__campo {
+  width: 100%;
+  min-height: 48px;
+  padding: 0 8px;
+  border: 1.5px solid rgba(212, 175, 55, 0.5);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.35);
+  color: var(--oro-claro);
+  font: 800 1.75rem/1 var(--fuente-titulo);
+  font-variant-numeric: tabular-nums lining-nums;
+  text-align: center;
+  transition:
+    border-color 0.2s,
+    color 0.2s;
+}
+
+.pk-subir__campo[aria-invalid="true"] {
+  border-color: var(--fallo);
+  color: var(--fallo);
+}
+
+.pk-subir__ayuda {
+  margin: 0;
+  color: var(--crema-tenue);
+  font: 500 0.75rem/1.3 var(--fuente-ui);
+  text-align: center;
+}
+
+.pk-subir__ayuda--mal {
+  color: var(--fallo);
+}
+
+.pk-subir__deslizador {
+  width: 100%;
+  height: 44px;
+  margin: 0;
+  background: none;
+  cursor: pointer;
+  accent-color: var(--oro);
+}
+
+.pk-subir__fila {
+  display: grid;
+  grid-template-columns: 1fr auto 1.2fr;
+  gap: 8px;
+}
+
+.pk-subir__fila .boton {
+  padding: 0 8px;
+  white-space: nowrap;
+}
+
+/* ---------- Añadir fichas y levantarse ---------- */
+
+.pk-mas {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.pk-mas .boton {
+  min-height: 44px;
+  padding: 0 8px;
+  font-size: 0.875rem;
+}
+
+.pk-anadir__fila {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px;
+}
+
+.pk-anadir__fila .boton {
+  padding: 0 12px;
+  white-space: nowrap;
 }
 
 /* ---------- Ordenador ---------- */
@@ -321,9 +545,19 @@
   margin: 30px auto 0;
 }
 
+.pk--ordenador .pk-mias {
+  gap: 20px;
+}
+
 /* Movimiento reducido: la placa del turno cambia de golpe, sin fundido. */
 @media (prefers-reduced-motion: reduce) {
-  .pk-placa {
+  .pk-placa,
+  .pk-subir__paso,
+  .pk-subir__campo {
     transition: none;
+  }
+
+  .pk-subir__paso:active:not(:disabled) {
+    transform: none;
   }
 }

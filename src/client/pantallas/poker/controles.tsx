@@ -1,11 +1,13 @@
-import { useRef, useState } from "react";
-import { POKER, type VistaPoker } from "../../../shared/juegos/poker";
+import { useEffect, useRef, useState } from "react";
+import { type AccionPoker, type OpcionesPoker, POKER, type VistaPoker } from "../../../shared/juegos/poker";
 import { Aviso } from "../../componentes/Aviso";
 import { Boton } from "../../componentes/Boton";
 import { FichasApuesta } from "../../componentes/FichasApuesta";
+import { sonidos } from "../../efectos/sonidos";
 import { miles } from "../../formato";
+import { leerCantidad, type LimitesSubida, pasoDeSubida } from "./subir";
 
-// Lo de debajo del tapete: sentarse y el texto de la línea de estado. Decidir y subir, tus cartas y las demás piezas se añaden aquí.
+// Lo de debajo del tapete: sentarse, decidir y subir, añadir fichas y el texto de la línea de estado. Tus cartas, en `MisCartas`.
 
 interface PropsSentarse {
   /** Tus fichas: lo máximo con lo que te puedes sentar. La mesa rechaza sin preguntar lo que pasa de ahí. */
@@ -56,4 +58,202 @@ export function textoEstado(vista: VistaPoker | null): string {
   const habla = vista.asientos.find((a) => a.jugadorId === vista.turno);
   if (mio.estado === "retirado") return "Te has retirado de esta mano";
   return habla === undefined ? "Se reparte la mano" : `Habla ${habla.apodo}`;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Decidir y subir
+// ---------------------------------------------------------------------------------------------------------------------
+
+interface PropsDecidir {
+  /** Lo que permiten las reglas ahora. Solo se usa si te toca: los botones dependen también de que el turno sea tuyo. */
+  opciones: OpcionesPoker | null;
+  /** La vista dice que habla `yo`. */
+  tuTurno: boolean;
+  /** La mesa está conectada y no estás esperando la respuesta a tu última acción. */
+  activo: boolean;
+  onActuar(accion: AccionPoker): void;
+}
+
+/**
+ * La fila de decidir: Retirarse · Pasar o Igualar N · Apostar o Subir. Si tus fichas no llegan a la subida mínima, el tercero es
+ * solo «All-in N». En el resultado, aquí está «Enseñar mis cartas». La fila reserva su alto aunque no haya nada que decidir.
+ */
+export function Decidir({ opciones, tuTurno, activo, onActuar }: PropsDecidir) {
+  const subir = tuTurno && opciones?.retirarse === true ? opciones.subir : null;
+  const [abierto, setAbierto] = useState<LimitesSubida | null>(null);
+  // El panel vale mientras te toque y no cambie el rango: con otro rango la cantidad que tenías ya no significa lo mismo.
+  const panel = abierto !== null && subir !== null && subir.min === abierto.min && subir.max === abierto.max ? subir : null;
+  useEffect(() => {
+    if (abierto !== null && panel === null) setAbierto(null);
+  }, [abierto, panel]);
+
+  const actuar = (accion: AccionPoker) => {
+    sonidos.reproducir("fichas");
+    onActuar(accion);
+  };
+
+  if (opciones?.ensenar) {
+    return (
+      <div className="pk-acciones">
+        <Boton className="pk-acciones__ensenar" disabled={!activo} onClick={() => onActuar({ t: "ensenar" })}>
+          Enseñar mis cartas
+        </Boton>
+      </div>
+    );
+  }
+  if (!tuTurno || opciones === null || !opciones.retirarse) return <div className="pk-acciones" />;
+
+  if (panel !== null) {
+    return (
+      <div className="pk-acciones pk-acciones--subir">
+        <PanelSubir limites={panel} activo={activo} onSubir={(hasta) => actuar({ t: "subir", hasta })} onCancelar={() => setAbierto(null)} />
+      </div>
+    );
+  }
+
+  const todoSolo = subir !== null && subir.min === subir.max;
+  return (
+    <div className="pk-acciones">
+      <div className="pk-decidir">
+        <Boton variante="secundario" disabled={!activo} onClick={() => onActuar({ t: "retirarse" })}>
+          Retirarse
+        </Boton>
+        {opciones.igualar !== null ? (
+          <Boton disabled={!activo} onClick={() => actuar({ t: "igualar" })}>
+            Igualar {miles(opciones.igualar)}
+          </Boton>
+        ) : (
+          <Boton disabled={!activo || !opciones.pasar} onClick={() => onActuar({ t: "pasar" })}>
+            Pasar
+          </Boton>
+        )}
+        {subir === null ? (
+          <span aria-hidden="true" />
+        ) : todoSolo ? (
+          <Boton variante="secundario" disabled={!activo} onClick={() => actuar({ t: "subir", hasta: subir.max })}>
+            All-in {miles(subir.max)}
+          </Boton>
+        ) : (
+          <Boton variante="secundario" disabled={!activo} onClick={() => setAbierto(subir)}>
+            {opciones.igualar === null ? "Apostar" : "Subir"}
+          </Boton>
+        )}
+      </div>
+    </div>
+  );
+}
+
+interface PropsPanelSubir {
+  limites: LimitesSubida;
+  activo: boolean;
+  onSubir(hasta: number): void;
+  onCancelar(): void;
+}
+
+/**
+ * Subir a la cantidad que quieras: el número en grande (se puede escribir), un deslizador de `min` a `max`, − y + de una ciega
+ * grande, All-in y Cancelar. El deslizador y el campo son la misma cantidad; lo escrito que no vale deja apagado «Subir a N».
+ */
+export function PanelSubir({ limites, activo, onSubir, onCancelar }: PropsPanelSubir) {
+  const { min, max } = limites;
+  const paso = pasoDeSubida(limites);
+  const [texto, setTexto] = useState(String(min));
+  // La última cantidad válida: el deslizador se queda ahí mientras lo escrito no valga.
+  const [valida, setValida] = useState(min);
+  const escrita = leerCantidad(texto, limites);
+
+  const poner = (cantidad: number) => {
+    setValida(cantidad);
+    setTexto(String(cantidad));
+  };
+  const actual = escrita ?? valida;
+
+  const deslizador = useRef<HTMLInputElement>(null);
+  useEffect(() => deslizador.current?.focus({ preventScroll: true }), []);
+
+  return (
+    <div className="pk-subir" role="group" aria-label="Subir la apuesta">
+      <div className="pk-subir__cantidad">
+        <button type="button" className="pk-subir__paso" aria-label={`Quitar ${paso}`} disabled={!activo || actual <= min} onClick={() => poner(Math.max(min, actual - paso))}>
+          −
+        </button>
+        <input
+          className="pk-subir__campo"
+          type="text"
+          inputMode="numeric"
+          pattern="[0-9]*"
+          autoComplete="off"
+          aria-label="Cantidad a subir"
+          aria-invalid={escrita === null}
+          aria-describedby="pk-subir-ayuda"
+          value={texto}
+          onChange={(evento) => {
+            setTexto(evento.target.value);
+            const cantidad = leerCantidad(evento.target.value, limites);
+            if (cantidad !== null) setValida(cantidad);
+          }}
+        />
+        <button type="button" className="pk-subir__paso" aria-label={`Poner ${paso} más`} disabled={!activo || actual >= max} onClick={() => poner(Math.min(max, actual + paso))}>
+          +
+        </button>
+      </div>
+      <p className={`pk-subir__ayuda${escrita === null ? " pk-subir__ayuda--mal" : ""}`} id="pk-subir-ayuda">
+        De {miles(min)} a {miles(max)}
+      </p>
+      <input
+        ref={deslizador}
+        className="pk-subir__deslizador"
+        type="range"
+        min={min}
+        max={max}
+        step={1}
+        aria-label="Deslizador de la subida"
+        value={actual}
+        onChange={(evento) => poner(Number(evento.target.value))}
+      />
+      <div className="pk-subir__fila">
+        <Boton variante="secundario" disabled={!activo} onClick={() => onSubir(max)}>
+          All-in {miles(max)}
+        </Boton>
+        <Boton variante="secundario" onClick={onCancelar}>
+          Cancelar
+        </Boton>
+        <Boton disabled={!activo || escrita === null} onClick={() => escrita !== null && onSubir(escrita)}>
+          Subir a {escrita === null ? "…" : miles(escrita)}
+        </Boton>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Añadir fichas y levantarse
+// ---------------------------------------------------------------------------------------------------------------------
+
+interface PropsAnadir {
+  /** Tu saldo: lo máximo que puedes poner en la mesa. */
+  fichas: number;
+  activo: boolean;
+  onAnadir(fichas: number): void;
+  onCancelar(): void;
+}
+
+/** Las fichas que añades a tu pila (desde `COMPRA_MIN`, sin pasar de tu saldo). Entran al empezar la mano siguiente. */
+export function AnadirFichas({ fichas, activo, onAnadir, onCancelar }: PropsAnadir) {
+  const [montante, setMontante] = useState(0);
+  const cantidad = montante <= fichas ? montante : 0;
+  const destino = useRef<HTMLDivElement>(null);
+  return (
+    <div className="panel-apuesta pk-anadir">
+      <FichasApuesta montante={cantidad} tope={fichas} minimo={POKER.COMPRA_MIN} activo={activo} onCambiar={setMontante} destino={destino} />
+      <div className="pk-anadir__fila" ref={destino}>
+        <Boton variante="secundario" onClick={onCancelar}>
+          Cancelar
+        </Boton>
+        <Boton disabled={!activo || cantidad < POKER.COMPRA_MIN} onClick={() => onAnadir(cantidad)}>
+          {cantidad > 0 ? `Poner ${miles(cantidad)} en la mesa` : "Poner en la mesa"}
+        </Boton>
+      </div>
+    </div>
+  );
 }

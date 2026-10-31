@@ -2,7 +2,7 @@ import type { AsientoVista } from "../../../shared/juegos/poker";
 import type { JugadorId } from "../../../shared/juegos/tipos";
 
 // Dónde se sienta cada uno en el tapete. Todo en porcentaje del tapete (x desde la izquierda, y desde arriba), con el origen en el
-// centro de lo que se coloca. Las posiciones del móvil son las del boceto aprobado (los dos de los lados, un 2 % más hacia el borde para no tocar las cinco cartas de la mesa); las del ordenador son las de una elipse.
+// centro de lo que se coloca. Las posiciones del móvil son las del boceto aprobado, en un tapete algo más ancho que alto para dejar sitio a tus cartas y a los botones (los dos de los lados, un 2 % más hacia el borde para no tocar las cinco cartas de la mesa); las del ordenador son las de una elipse.
 
 export interface Punto {
   x: number;
@@ -27,7 +27,7 @@ export interface AsientoColocado {
 }
 
 /** El tapete de referencia, en píxeles, con el que se comprueba que los asientos caben (el real se estira, pero no cambia la forma). */
-export const TAPETE_REFERENCIA = { movil: { ancho: 300, alto: 392 }, ordenador: { ancho: 880, alto: 440 } } as const;
+export const TAPETE_REFERENCIA = { movil: { ancho: 300, alto: 363 }, ordenador: { ancho: 880, alto: 440 } } as const;
 /** Lo que ocupa un asiento (placa, cartas pequeñas y pila) en el tapete de referencia. */
 export const CAJA_ASIENTO = { movil: { ancho: 62, alto: 64 }, ordenador: { ancho: 100, alto: 93 } } as const;
 /** Lo que ocupa lo apostado (ficha y cantidad), con una cantidad de hasta tres cifras: con más, la cantidad crece hacia el centro. */
@@ -61,11 +61,11 @@ const MI_SITIO = {
 const ANILLO = {
   movil: [
     { x: 20, y: 73, apuesta: { x: 32, y: 64 } },
-    { x: 13, y: 45, apuesta: { x: 30, y: 55 } },
+    { x: 13, y: 45, apuesta: { x: 30, y: 57 } },
     { x: 18, y: 19, apuesta: { x: 30, y: 31 } },
     { x: 50, y: 9, apuesta: { x: 50, y: 25 } },
     { x: 82, y: 19, apuesta: { x: 70, y: 31 } },
-    { x: 87, y: 45, apuesta: { x: 70, y: 55 } },
+    { x: 87, y: 45, apuesta: { x: 70, y: 57 } },
     { x: 80, y: 73, apuesta: { x: 68, y: 64 } },
   ],
   ordenador: [

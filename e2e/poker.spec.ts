@@ -1,6 +1,6 @@
 import { expect, type Page, test } from "@playwright/test";
 import type { RespuestaSesion } from "../src/shared/api";
-import type { AsientoVista, VistaPoker } from "../src/shared/juegos/poker";
+import type { AsientoVista, OpcionesPoker, VistaPoker } from "../src/shared/juegos/poker";
 import { carta, entrarSimulada as baseEntrarSimulada, fichasDeApi, mensajeEstado, sinDesplazamientoHorizontal } from "./ayudas";
 
 // La mesa simulada: el socket de la mesa no llega al servidor y la prueba decide qué vista manda.
@@ -46,7 +46,7 @@ function vista(sesion: RespuestaSesion, resto: Partial<VistaPoker> = {}): VistaP
   };
 }
 
-const SIN_OPCIONES = { retirarse: false, pasar: false, igualar: null, subir: null, ensenar: false };
+const SIN_OPCIONES: OpcionesPoker = { retirarse: false, pasar: false, igualar: null, subir: null, ensenar: false };
 
 const contador = (pagina: Page) => pagina.getByText(/^Tienes [\d.]+ fichas$/);
 const sentarme = (pagina: Page) => pagina.getByRole("button", { name: /^Sentarme/ });
@@ -304,5 +304,429 @@ test.describe("mesa simulada", () => {
     await expect(page.getByText(/^0:0[4-6]$/)).toBeVisible();
     await expect(page.getByRole("group", { name: "Cartas de la mesa" }).getByRole("img")).toHaveCount(5);
     await expect(page.locator(".pk-hueco")).toHaveCount(0);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Decidir, subir, tapar, enseñar, añadir y levantarse
+// ---------------------------------------------------------------------------------------------------------------------
+
+const MESA_FLOP = [carta("10H"), carta("JD"), carta("2C")];
+
+/** Una mano en la que eres el asiento 2 y hablas tú, con las opciones que se pidan (las reglas dejan retirarse siempre). */
+function tuTurno(sesion: RespuestaSesion, opciones: Partial<OpcionesPoker>, resto: Partial<VistaPoker> = {}, yo: Partial<AsientoVista> = {}): VistaPoker {
+  return vista(sesion, {
+    asientos: [...rivales(2), miAsiento(sesion, 2, { fichas: 980, apostado: 20, ...yo })],
+    misCartas: [carta("KS"), carta("KD")],
+    turno: sesion.jugador.id,
+    opciones: { ...SIN_OPCIONES, retirarse: true, ...opciones },
+    ...resto,
+  });
+}
+
+const acciones = (mesa: { recibidas: unknown[] }) => mesa.recibidas.map((m) => m as { t: string });
+const boton = (pagina: Page, nombre: string | RegExp, exacto = true) => pagina.getByRole("button", { name: nombre, exact: exacto });
+const panelSubir = (pagina: Page) => pagina.getByRole("group", { name: "Subir la apuesta" });
+
+test.describe("decidir y subir", () => {
+  test("Pasar cuando no hay nada que igualar e Igualar N cuando lo hay, y Apostar o Subir según toque", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    mesa.alConectar(estado(tuTurno(sesion, { pasar: true, subir: { min: 20, max: 1000 } })));
+    await page.goto(`/p/${codigo}/poker`);
+
+    // Sin nada que igualar: Retirarse · Pasar · Apostar (y ni Igualar ni Subir).
+    await expect(boton(page, "Retirarse")).toBeVisible();
+    await expect(boton(page, "Pasar")).toBeVisible();
+    await expect(boton(page, "Apostar")).toBeVisible();
+    await expect(boton(page, /^Igualar/, false)).toHaveCount(0);
+    await expect(boton(page, "Subir")).toHaveCount(0);
+    await boton(page, "Pasar").click();
+    await expect.poll(() => acciones(mesa)).toContainEqual({ t: "pasar" });
+
+    // Con algo que igualar: Retirarse · Igualar 30 · Subir (y ni Pasar ni Apostar).
+    mesa.enviar(estado(tuTurno(sesion, { igualar: 30, subir: { min: 60, max: 1000 } }, { calle: "turn", ronda: 2 })));
+    await expect(boton(page, "Igualar 30")).toBeVisible();
+    await expect(boton(page, "Subir")).toBeVisible();
+    await expect(boton(page, "Pasar")).toHaveCount(0);
+    await expect(boton(page, "Apostar")).toHaveCount(0);
+    await boton(page, "Igualar 30").click();
+    await expect.poll(() => acciones(mesa)).toContainEqual({ t: "igualar" });
+
+    // Retirarse manda retirarse.
+    mesa.enviar(estado(tuTurno(sesion, { igualar: 40, subir: { min: 80, max: 1000 } }, { calle: "river", ronda: 3 })));
+    await expect(boton(page, "Igualar 40")).toBeVisible();
+    await boton(page, "Retirarse").click();
+    await expect.poll(() => acciones(mesa)).toContainEqual({ t: "retirarse" });
+  });
+
+  test("fuera de tu turno no hay botones de jugar, aunque lleguen opciones", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    // Habla otro: aunque la vista trajera opciones, los botones dependen de que el turno sea tuyo.
+    mesa.alConectar(estado(tuTurno(sesion, { pasar: true, subir: { min: 20, max: 1000 } }, { turno: 9001 })));
+    await page.goto(`/p/${codigo}/poker`);
+    await expect(page.getByText("Habla Ana")).toBeVisible();
+    await expect(page.getByRole("button", { name: /^(Retirarse|Pasar|Igualar|Apostar|Subir|All-in)/ })).toHaveCount(0);
+    // Tus cartas, en cambio, siguen a la vista.
+    await expect(page.getByRole("group", { name: "Tus cartas" }).getByRole("img")).toHaveCount(2);
+  });
+
+  test("subir con el deslizador manda { t: \"subir\", hasta }", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    mesa.alConectar(estado(tuTurno(sesion, { igualar: 30, subir: { min: 60, max: 1000 } })));
+    await page.goto(`/p/${codigo}/poker`);
+
+    await boton(page, "Subir").click();
+    await expect(panelSubir(page)).toBeVisible();
+    // Empieza en la subida mínima, con el mismo número en el campo y en el deslizador.
+    const campo = page.getByRole("textbox", { name: "Cantidad a subir" });
+    const deslizador = page.getByRole("slider", { name: "Deslizador de la subida" });
+    await expect(campo).toHaveValue("60");
+    await expect(deslizador).toHaveAttribute("min", "60");
+    await expect(deslizador).toHaveAttribute("max", "1000");
+    await expect(boton(page, "Subir a 60")).toBeVisible();
+
+    await deslizador.fill("340");
+    await expect(campo).toHaveValue("340");
+    await boton(page, "Subir a 340").click();
+    await expect.poll(() => acciones(mesa)).toContainEqual({ t: "subir", hasta: 340 });
+    expect(acciones(mesa).filter((m) => m.t === "subir")).toHaveLength(1);
+  });
+
+  test("− y + afinan de diez en diez sin salirse de los límites", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    mesa.alConectar(estado(tuTurno(sesion, { pasar: true, subir: { min: 20, max: 45 } })));
+    await page.goto(`/p/${codigo}/poker`);
+    await boton(page, "Apostar").click();
+    const campo = page.getByRole("textbox", { name: "Cantidad a subir" });
+    await expect(campo).toHaveValue("20");
+    // Por debajo del mínimo no baja.
+    await expect(boton(page, "Quitar 10")).toBeDisabled();
+    await boton(page, "Poner 10 más").click();
+    await expect(campo).toHaveValue("30");
+    await boton(page, "Poner 10 más").click();
+    await expect(campo).toHaveValue("40");
+    // Quedan 5 hasta el máximo: el último paso llega justo al tope y ya no se puede seguir.
+    await boton(page, "Poner 10 más").click();
+    await expect(campo).toHaveValue("45");
+    await expect(boton(page, "Poner 10 más")).toBeDisabled();
+    await boton(page, "Quitar 10").click();
+    await expect(campo).toHaveValue("35");
+    await expect(page.getByRole("slider", { name: "Deslizador de la subida" })).toHaveValue("35");
+  });
+
+  test("subir escribiendo la cantidad; con letras o fuera de límites no se puede mandar", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    mesa.alConectar(estado(tuTurno(sesion, { igualar: 30, subir: { min: 60, max: 1000 } })));
+    await page.goto(`/p/${codigo}/poker`);
+    await boton(page, "Subir").click();
+    const campo = page.getByRole("textbox", { name: "Cantidad a subir" });
+    await expect(campo).toHaveAttribute("inputmode", "numeric");
+    const confirmar = page.getByRole("button", { name: /^Subir a/ });
+
+    for (const mal of ["abc", "1e3", "", "59", "1001", "99999", "12,5", "-70"]) {
+      await campo.fill(mal);
+      await expect(confirmar, `«${mal}» no debería poder mandarse`).toBeDisabled();
+      await expect(campo).toHaveAttribute("aria-invalid", "true");
+    }
+    // Un clic en el botón apagado no manda nada.
+    await confirmar.click({ force: true });
+    expect(acciones(mesa).filter((m) => m.t === "subir")).toHaveLength(0);
+
+    await campo.fill("250");
+    await expect(campo).toHaveAttribute("aria-invalid", "false");
+    await expect(confirmar).toBeEnabled();
+    await expect(confirmar).toHaveText("Subir a 250");
+    // El deslizador sigue al campo.
+    await expect(page.getByRole("slider", { name: "Deslizador de la subida" })).toHaveValue("250");
+    await confirmar.click();
+    await expect.poll(() => acciones(mesa)).toContainEqual({ t: "subir", hasta: 250 });
+  });
+
+  test("All-in manda hasta con todas tus fichas", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    // 980 en la pila y 20 ya puestos: el tope de la ronda es 1.000.
+    mesa.alConectar(estado(tuTurno(sesion, { igualar: 30, subir: { min: 60, max: 1000 } })));
+    await page.goto(`/p/${codigo}/poker`);
+    await boton(page, "Subir").click();
+    await boton(page, "All-in 1.000").click();
+    await expect.poll(() => acciones(mesa)).toContainEqual({ t: "subir", hasta: 1000 });
+  });
+
+  test("con menos de la subida mínima solo se ofrece All-in", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    mesa.alConectar(estado(tuTurno(sesion, { igualar: 30, subir: { min: 50, max: 50 } }, {}, { fichas: 30, apostado: 20 })));
+    await page.goto(`/p/${codigo}/poker`);
+    await expect(boton(page, "Igualar 30")).toBeVisible();
+    await expect(boton(page, "Subir")).toHaveCount(0);
+    await expect(boton(page, "Apostar")).toHaveCount(0);
+    await boton(page, "All-in 50").click();
+    await expect(panelSubir(page)).toHaveCount(0);
+    await expect.poll(() => acciones(mesa)).toContainEqual({ t: "subir", hasta: 50 });
+  });
+
+  test("si el turno pasa con el panel abierto, se cierra; y también si cambia el rango de subir", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    mesa.alConectar(estado(tuTurno(sesion, { igualar: 30, subir: { min: 60, max: 1000 } })));
+    await page.goto(`/p/${codigo}/poker`);
+
+    // El turno pasa a otro (por ejemplo, se acabó el tiempo).
+    await boton(page, "Subir").click();
+    await expect(panelSubir(page)).toBeVisible();
+    mesa.enviar(estado(tuTurno(sesion, SIN_OPCIONES, { turno: 9001 })));
+    await expect(panelSubir(page)).toHaveCount(0);
+    await expect(boton(page, /^Subir/, false)).toHaveCount(0);
+
+    // Vuelve a ser tu turno con el mismo rango: el panel no reaparece solo.
+    mesa.enviar(estado(tuTurno(sesion, { igualar: 30, subir: { min: 60, max: 1000 } })));
+    await expect(boton(page, "Subir")).toBeVisible();
+    await expect(panelSubir(page)).toHaveCount(0);
+
+    // Con el panel abierto, otro sube y cambia el rango: el panel se cierra, no manda una cantidad vieja.
+    await boton(page, "Subir").click();
+    await expect(panelSubir(page)).toBeVisible();
+    mesa.enviar(estado(tuTurno(sesion, { igualar: 80, subir: { min: 160, max: 1000 } })));
+    await expect(panelSubir(page)).toHaveCount(0);
+    await expect(boton(page, "Igualar 80")).toBeVisible();
+  });
+
+  test("Cancelar cierra el panel sin mandar nada", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    mesa.alConectar(estado(tuTurno(sesion, { pasar: true, subir: { min: 20, max: 1000 } })));
+    await page.goto(`/p/${codigo}/poker`);
+    await boton(page, "Apostar").click();
+    await expect(panelSubir(page)).toBeVisible();
+    await boton(page, "Cancelar").click();
+    await expect(panelSubir(page)).toHaveCount(0);
+    await expect(boton(page, "Apostar")).toBeVisible();
+    expect(mesa.recibidas.filter((m) => (m as { t: string }).t !== "salir")).toEqual([]);
+  });
+
+  test("dos toques en Igualar mandan una sola acción", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    mesa.alConectar(estado(tuTurno(sesion, { igualar: 30, subir: { min: 60, max: 1000 } })));
+    await page.goto(`/p/${codigo}/poker`);
+    const igualar = boton(page, "Igualar 30");
+    await igualar.dblclick();
+    await igualar.click({ force: true });
+    await expect.poll(() => acciones(mesa).filter((m) => m.t === "igualar").length).toBe(1);
+    await page.waitForTimeout(300);
+    expect(acciones(mesa).filter((m) => m.t === "igualar")).toHaveLength(1);
+
+    // Cuando la mesa contesta (el turno pasa a otro y vuelve al tuyo en otra calle), los botones vuelven a funcionar.
+    mesa.enviar(estado(tuTurno(sesion, SIN_OPCIONES, { turno: 9001, calle: "turn" }, { apostado: 50, fichas: 950 })));
+    await expect(boton(page, "Igualar 30")).toHaveCount(0);
+    mesa.enviar(estado(tuTurno(sesion, { igualar: 30, subir: { min: 60, max: 1000 } }, { calle: "river", ronda: 2 })));
+    await expect(boton(page, "Igualar 30")).toBeEnabled();
+  });
+});
+
+for (const tamano of [
+  { ancho: 360, alto: 640 },
+  { ancho: 412, alto: 915 },
+  { ancho: 1280, alto: 720 },
+]) {
+  test(`en ${tamano.ancho}×${tamano.alto} tus cartas y los botones de decidir se ven sin desplazar, y el panel de subir cabe entero`, async ({ page, request }) => {
+    await page.setViewportSize({ width: tamano.ancho, height: tamano.alto });
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    const sentados = Array.from({ length: 8 }, (_, n) => (n === 3 ? miAsiento(sesion, n, { fichas: 980, apostado: 20, boton: true }) : asientoDe(n, { apostado: n % 2 === 0 ? 40 : 0 })));
+    mesa.alConectar(estado(vista(sesion, { asientos: sentados, turno: sesion.jugador.id, misCartas: [carta("KS"), carta("KD")], opciones: { ...SIN_OPCIONES, retirarse: true, igualar: 20, subir: { min: 60, max: 1000 } } })));
+    await page.goto(`/p/${codigo}/poker`);
+    await expect(boton(page, "Subir")).toBeVisible();
+
+    const dentroDeLaPantalla = (localizador: ReturnType<Page["locator"]>) =>
+      localizador.evaluate((el) => {
+        const r = el.getBoundingClientRect();
+        return r.top >= 0 && r.bottom <= window.innerHeight && r.left >= 0 && r.right <= window.innerWidth;
+      });
+    await page.waitForTimeout(300);
+    expect(await dentroDeLaPantalla(page.getByRole("group", { name: "Tus cartas" })), "tus cartas").toBe(true);
+    for (const nombre of ["Retirarse", "Igualar 20", "Subir"]) expect(await dentroDeLaPantalla(boton(page, nombre)), nombre).toBe(true);
+    expect(await sinDesplazamientoHorizontal(page)).toBe(true);
+
+    // Con el panel abierto, todo él a la vista, sus botones de 44 px o más, y quitarlo devuelve la fila de decidir.
+    await boton(page, "Subir").click();
+    await expect(panelSubir(page)).toBeVisible();
+    await page.waitForTimeout(300);
+    expect(await dentroDeLaPantalla(panelSubir(page)), "el panel de subir").toBe(true);
+    const pequenos = await page.evaluate(() =>
+      [...document.querySelectorAll(".pk-subir button, .pk-subir input")]
+        .map((el) => ({ nombre: el.getAttribute("aria-label") ?? el.textContent, r: el.getBoundingClientRect() }))
+        .filter(({ r }) => r.height < 43.5 || (r.width < 43.5))
+        .map(({ nombre, r }) => `${nombre} ${r.width.toFixed(1)}×${r.height.toFixed(1)}`),
+    );
+    expect(pequenos).toEqual([]);
+    expect(await sinDesplazamientoHorizontal(page)).toBe(true);
+  });
+}
+
+test.describe("tus cartas", () => {
+  test("Tapar oculta las cartas y el texto de tu jugada, y se recuerda al recargar", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    mesa.alConectar(estado(tuTurno(sesion, { pasar: true }, { mesa: MESA_FLOP, misCartas: [carta("KS"), carta("KD")] })));
+    await page.goto(`/p/${codigo}/poker`);
+
+    const cartas = page.getByRole("group", { name: "Tus cartas" });
+    await expect(cartas.getByRole("img", { name: "Rey de picas" })).toBeVisible();
+    await expect(cartas.getByRole("img", { name: "Rey de diamantes" })).toBeVisible();
+    await expect(page.getByText("Pareja de reyes")).toBeVisible();
+    await expect(page.getByText("Tu pila")).toBeVisible();
+
+    await boton(page, "Tapar").click();
+    await expect(boton(page, "Destapar")).toBeVisible();
+    await expect(cartas.getByRole("img", { name: "Carta boca abajo" })).toHaveCount(2);
+    await expect(cartas.getByRole("img", { name: "Rey de picas" })).toHaveCount(0);
+    await expect(page.getByText("Pareja de reyes")).toHaveCount(0);
+    // Lo ven solo en tu pantalla: no se manda nada a la mesa.
+    expect(acciones(mesa).filter((m) => m.t !== "salir")).toEqual([]);
+
+    // Recordado al recargar (en el navegador, como el silencio).
+    await page.reload();
+    await expect(boton(page, "Destapar")).toBeVisible();
+    await expect(page.getByRole("group", { name: "Tus cartas" }).getByRole("img", { name: "Carta boca abajo" })).toHaveCount(2);
+    await expect(page.getByText("Pareja de reyes")).toHaveCount(0);
+    expect(await page.evaluate(() => localStorage.getItem("timba.poker.tapar"))).toBe("1");
+
+    await boton(page, "Destapar").click();
+    await expect(page.getByText("Pareja de reyes")).toBeVisible();
+    await expect(page.getByRole("group", { name: "Tus cartas" }).getByRole("img", { name: "Rey de picas" })).toBeVisible();
+  });
+
+  test("la jugada se calcula con las cartas de la mesa, y antes del flop es la que tienes en la mano", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    mesa.alConectar(estado(tuTurno(sesion, { pasar: true }, { mesa: [], calle: "preflop", misCartas: [carta("AS"), carta("7D")] })));
+    await page.goto(`/p/${codigo}/poker`);
+    await expect(page.getByText("Carta alta: as")).toBeVisible();
+    mesa.enviar(estado(tuTurno(sesion, { pasar: true }, { mesa: [carta("7H"), carta("7C"), carta("2S")], calle: "flop", misCartas: [carta("AS"), carta("7D")] })));
+    await expect(page.getByText("Trío de sietes")).toBeVisible();
+  });
+
+  test("sin cartas (esperando rivales) no hay jugada, ni Tapar, pero sí tu pila", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    mesa.alConectar(estado(vista(sesion, { fase: "esperando", calle: null, finFase: null, mesa: [], botes: [], asientos: [miAsiento(sesion, 0, { tieneCartas: false, estado: "fuera", fichas: 700 })] })));
+    await page.goto(`/p/${codigo}/poker`);
+    await expect(page.getByText("Esperando rivales")).toBeVisible();
+    await expect(page.getByText("Tu pila")).toBeVisible();
+    await expect(page.getByText("700", { exact: false }).first()).toBeVisible();
+    await expect(page.getByRole("group", { name: "Tus cartas" })).toHaveCount(0);
+    await expect(boton(page, /^(Tapar|Destapar)/, false)).toHaveCount(0);
+  });
+
+  test("Enseñar mis cartas aparece en resultado y manda ensenar", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    const resultado = (ensenar: boolean) =>
+      tuTurno(sesion, { retirarse: false, ensenar }, { fase: "resultado", turno: null, mesa: [...MESA_FLOP, carta("KS"), carta("3D")].slice(0, 5), calle: "river", finFase: Date.now() + 6_000 }, { estado: "juega", apostado: 0 });
+
+    // En plena mano no se ofrece.
+    mesa.alConectar(estado(tuTurno(sesion, { pasar: true })));
+    await page.goto(`/p/${codigo}/poker`);
+    await expect(boton(page, "Pasar")).toBeVisible();
+    await expect(boton(page, /^Enseñar/, false)).toHaveCount(0);
+
+    mesa.enviar(estado(resultado(true)));
+    await expect(page.getByText("Nueva mano en")).toBeVisible();
+    await expect(boton(page, "Pasar")).toHaveCount(0);
+    await boton(page, "Enseñar mis cartas").click();
+    await expect.poll(() => acciones(mesa)).toContainEqual({ t: "ensenar" });
+
+    // Ya enseñadas, el servidor deja de ofrecerlo.
+    mesa.enviar(estado(resultado(false)));
+    await expect(boton(page, /^Enseñar/, false)).toHaveCount(0);
+    expect(acciones(mesa).filter((m) => m.t === "ensenar")).toHaveLength(1);
+  });
+});
+
+test.describe("levantarse y añadir fichas", () => {
+  test("levantarse en una mano pide confirmación; fuera de ella, no", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    const levantadas = () => acciones(mesa).filter((m) => m.t === "levantarse");
+
+    // En plena mano: pregunta, y seguir jugando no manda nada.
+    mesa.alConectar(estado(tuTurno(sesion, { pasar: true })));
+    await page.goto(`/p/${codigo}/poker`);
+    await boton(page, "Levantarme").click();
+    const dialogo = page.getByRole("dialog");
+    await expect(dialogo.getByText("Si te levantas ahora pierdes lo que llevas puesto en esta mano")).toBeVisible();
+    await dialogo.getByRole("button", { name: "Seguir jugando" }).click();
+    await expect(dialogo).toHaveCount(0);
+    expect(levantadas()).toHaveLength(0);
+    await boton(page, "Levantarme").click();
+    await dialogo.getByRole("button", { name: "Levantarme", exact: true }).click();
+    await expect.poll(levantadas).toHaveLength(1);
+
+    // Entre manos (resultado) no pregunta: manda levantarse al momento. (La mesa te levanta y te vuelves a sentar para la segunda vez.)
+    mesa.enviar(estado(vista(sesion, { asientos: rivales(2) })));
+    await expect(sentarme(page)).toBeVisible();
+    mesa.enviar(estado(tuTurno(sesion, SIN_OPCIONES, { fase: "resultado", turno: null, finFase: Date.now() + 6_000 })));
+    await expect(page.getByText("Nueva mano en")).toBeVisible();
+    await boton(page, "Levantarme").click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect.poll(levantadas).toHaveLength(2);
+  });
+
+  test("quien se ha retirado no pierde nada más: levantarse tampoco pregunta", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    mesa.alConectar(estado(tuTurno(sesion, SIN_OPCIONES, { turno: 9001 }, { estado: "retirado", tieneCartas: false })));
+    await page.goto(`/p/${codigo}/poker`);
+    await expect(page.getByText("Te has retirado de esta mano")).toBeVisible();
+    await boton(page, "Levantarme").click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect.poll(() => acciones(mesa).filter((m) => m.t === "levantarse").length).toBe(1);
+  });
+
+  test("Levantarme te deja mirando, con Sentarme a la vista", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    mesa.alConectar(estado(vista(sesion, { fase: "esperando", calle: null, finFase: null, mesa: [], botes: [], asientos: [asientoDe(0), miAsiento(sesion, 1, { estado: "fuera", tieneCartas: false })] })));
+    await page.goto(`/p/${codigo}/poker`);
+    await expect(sentarme(page)).toHaveCount(0);
+    await boton(page, "Levantarme").click();
+    await expect.poll(() => acciones(mesa).filter((m) => m.t === "levantarse").length).toBe(1);
+
+    // La mesa te levanta: te quedas en la pantalla, mirando.
+    mesa.enviar(estado(vista(sesion, { fase: "esperando", calle: null, finFase: null, mesa: [], botes: [], asientos: [asientoDe(0)] })));
+    await expect(page.getByText("Estás mirando. Siéntate para jugar")).toBeVisible();
+    await expect(sentarme(page)).toBeVisible();
+    await expect(boton(page, "Levantarme")).toHaveCount(0);
+    await expect(boton(page, "Añadir fichas")).toHaveCount(0);
+    await expect(page.getByRole("group", { name: "Tus cartas" })).toHaveCount(0);
+    await expect(page).toHaveURL(`/p/${codigo}/poker`);
+  });
+
+  test("añadir fichas manda anadir y en una mano enseña +N en la próxima mano", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    mesa.alConectar(estado(tuTurno(sesion, { pasar: true })));
+    await page.goto(`/p/${codigo}/poker`);
+    await expect(page.getByText(/en la próxima mano/)).toHaveCount(0);
+
+    await boton(page, "Añadir fichas").click();
+    // Con tu saldo de 1.000 fichas: de 10 hasta todas.
+    await expect(boton(page, "Poner 150 en la mesa", false)).toHaveCount(0);
+    await expect(boton(page, "Añadir 10")).toBeVisible();
+    await boton(page, "Añadir 100").click();
+    await boton(page, "Añadir 50").click();
+    await boton(page, "Poner 150 en la mesa").click();
+    await expect.poll(() => acciones(mesa)).toContainEqual({ t: "anadir", fichas: 150 });
+    // Mandado, el panel se cierra.
+    await expect(boton(page, "Añadir 10")).toHaveCount(0);
+
+    // La mesa lo apunta para la mano siguiente.
+    mesa.enviar(estado(tuTurno(sesion, { pasar: true }, { porEntrar: 150 })));
+    await expect(page.getByText("+150 en la próxima mano")).toBeVisible();
+  });
+
+  test("añadir fichas no deja pasar de tu saldo ni bajar de la compra mínima", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    await fichasDeApi(page, 60);
+    mesa.alConectar(estado(tuTurno(sesion, { pasar: true })));
+    await page.goto(`/p/${codigo}/poker`);
+    await expect(contador(page)).toHaveText("Tienes 60 fichas");
+    await boton(page, "Añadir fichas").click();
+    await expect(boton(page, "Poner 10 en la mesa", false)).toHaveCount(0);
+    await expect(boton(page, "Añadir 100")).toBeDisabled();
+    await boton(page, "Todo").click();
+    await expect(boton(page, "Poner 60 en la mesa")).toBeEnabled();
+    // Cancelar lo cierra sin mandar nada.
+    await boton(page, "Cancelar").click();
+    await expect(boton(page, "Añadir 10")).toHaveCount(0);
+    expect(acciones(mesa).filter((m) => m.t === "anadir")).toHaveLength(0);
   });
 });
