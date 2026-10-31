@@ -246,13 +246,22 @@
 
 /* ---------- Fichas que vuelan ---------- */
 
+/* Las capas de los vuelos se desplazan hasta casi su propio tamaño y una transformada también cuenta como desbordamiento: sin este
+   recorte la página se ensancharía en cada apuesta. Sigue el óvalo del tapete, y todos los asientos quedan dentro de él. */
+.pk-vuelos {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  overflow: clip;
+  border-radius: inherit;
+  pointer-events: none;
+}
+
 /* Cada vuelo es una capa del tamaño del tapete: así un `translate` en porcentaje recorre el tapete en las mismas medidas que sitúan los asientos.
    Lo mueve Motion, y con movimiento reducido no se pinta. */
 .pk-vuelo {
   position: absolute;
   inset: 0;
-  z-index: 1;
-  pointer-events: none;
 }
 
 .pk-vuelo .ficha {

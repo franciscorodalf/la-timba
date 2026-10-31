@@ -64,7 +64,6 @@ function Vuelo({ desde, hasta, ms, copias }: Omit<VueloFichas, "clave">) {
       <motion.span
         key={i}
         className="pk-vuelo"
-        aria-hidden="true"
         initial={{ transform: `translate(${desde.x}%, ${desde.y}%)` }}
         animate={{ transform: `translate(${hasta.x}%, ${hasta.y}%)` }}
         transition={{ duration: (ms - retardo) / 1000, delay: retardo / 1000, ease: CURVA_VUELO }}
@@ -133,9 +132,11 @@ export function Tapete({ vista, ordenador, reloj, refMazo, refBote }: Props) {
           <Mazo ref={refMazo} ancho={anchoMazo} />
         </div>
       </div>
-      {vuelos.map(({ clave, ...vuelo }) => (
-        <Vuelo key={clave} {...vuelo} />
-      ))}
+      <div className="pk-vuelos" aria-hidden="true">
+        {vuelos.map(({ clave, ...vuelo }) => (
+          <Vuelo key={clave} {...vuelo} />
+        ))}
+      </div>
     </div>
   );
 }

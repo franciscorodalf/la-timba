@@ -1248,6 +1248,65 @@ test.describe("guion", () => {
     expect(muestras.some((m) => m.miPila === "1.430")).toBe(false);
   });
 
+  test("las fichas que vuelan no desbordan la página ni se ven cortadas", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    const sentados = Array.from({ length: 8 }, (_, n) => (n === 3 ? miAsiento(sesion, n, { apostado: 20 }) : asientoDe(n, { apostado: 20 })));
+    const mano = vista(sesion, { calle: "preflop", mesa: [], botes: [], asientos: sentados, turno: 9002, misCartas: [carta("KS"), carta("KD")] });
+    mesa.alConectar(estado(mano));
+    await page.goto(`/p/${codigo}/poker`);
+    await expect(page.getByText("Pareja de reyes")).toBeVisible();
+    const reposo = await page.evaluate(() => document.documentElement.scrollHeight);
+
+    // Cada fotograma con fichas en el aire: lo que mide la página y las fichas que se salen del óvalo del tapete, donde se recortarían.
+    await page.evaluate(() => {
+      const w = window as unknown as { __vuelos: { ancho: number; alto: number; ventana: number; cortadas: number }[] };
+      w.__vuelos = [];
+      const fotograma = () => {
+        const fichas = [...document.querySelectorAll(".pk-vuelo .ficha")];
+        if (fichas.length > 0) {
+          const tapete = document.querySelector(".pk-tapete")!;
+          const caja = tapete.getBoundingClientRect();
+          const [radioX, radioY = radioX] = getComputedStyle(tapete).borderTopLeftRadius.split(" ").map((r) => Number.parseFloat(r) / 100);
+          const rx = caja.width * radioX;
+          const ry = caja.height * radioY;
+          const cortadas = fichas.filter((el) => {
+            const r = el.getBoundingClientRect();
+            const x = r.left + r.width / 2;
+            const y = r.top + r.height / 2;
+            // El tapete es una banda recta con un cuarto de elipse en cada esquina: la ficha entera cabe si cabe en la elipse de su altura, encogida lo que mide su radio.
+            const centroY = Math.min(Math.max(y, caja.top + ry), caja.bottom - ry);
+            const radio = r.width / 2;
+            return ((x - caja.left - rx) / (rx - radio)) ** 2 + ((y - centroY) / (ry - radio)) ** 2 > 1;
+          });
+          w.__vuelos.push({ ancho: document.documentElement.scrollWidth, alto: document.documentElement.scrollHeight, ventana: window.innerWidth, cortadas: cortadas.length });
+        }
+        requestAnimationFrame(fotograma);
+      };
+      requestAnimationFrame(fotograma);
+    });
+
+    // Una apuesta, el barrido al bote y un bote que va a un rival: todos los vuelos que hay en el tapete.
+    const flop = [carta("2C"), carta("7D"), carta("9S")];
+    const abierta = { ...mano, calle: "flop" as const, mesa: flop, botes: [{ cantidad: 180, jugadores: [] }], asientos: mano.asientos.map((a) => ({ ...a, apostado: 0, fichas: 980 })) };
+    mesa.enviar(estado(abierta, [{ tipo: "accion", jugadorId: 9002, accion: "subir", cantidad: 20 }, { tipo: "calle_abierta", calle: "flop", cartas: flop }]));
+    await expect(page.locator(".pk-mesa-cartas [role=img]")).toHaveCount(3);
+    await expect(page.locator(".pk-vuelo")).toHaveCount(0);
+    for (const ganador of [9001, 9003, 9008]) {
+      const pago = { ...abierta, fase: "resultado" as const, turno: null, finFase: Date.now() + 6_000, asientos: abierta.asientos.map((a) => (a.jugadorId === ganador ? { ...a, fichas: 1160 } : a)) };
+      mesa.enviar(estado(pago, [{ tipo: "bote_ganado", jugadorId: ganador, cantidad: 180, indiceBote: 0 }]));
+      await expect(page.locator(".pk-vuelo").first()).toBeVisible();
+      await expect(page.locator(".pk-vuelo")).toHaveCount(0);
+    }
+
+    const muestras = await page.evaluate(() => (window as unknown as { __vuelos: { ancho: number; alto: number; ventana: number; cortadas: number }[] }).__vuelos);
+    expect(muestras.length, "se ha visto volar alguna ficha").toBeGreaterThan(0);
+    for (const { ancho, alto, ventana, cortadas } of muestras) {
+      expect(ancho, "la página no se ensancha").toBeLessThanOrEqual(ventana);
+      expect(alto, "la página no se alarga").toBeLessThanOrEqual(reposo);
+      expect(cortadas, "ninguna ficha se sale del tapete").toBe(0);
+    }
+  });
+
   test("las hojas de subir y añadir no se tocan cuando llega una vista", async ({ page, request }) => {
     const { sesion, codigo, mesa } = await entrarSimulada(page, request);
     mesa.alConectar(estado(preflop(sesion, { turno: 9001, opciones: SIN_OPCIONES })));
