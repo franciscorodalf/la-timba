@@ -1,0 +1,329 @@
+/* Mesa de póker. En móvil, el tapete ovalado en vertical con los rivales alrededor y tú abajo, en el borde; debajo, el panel con el
+   estado y los controles. Desde 900 px, el mismo tapete en horizontal. Las posiciones de los asientos las pone `poker/asientos.ts`
+   (en porcentaje del tapete) con las variables `--x` y `--y`. */
+
+.pk-mesa {
+  flex: none;
+  display: flex;
+  justify-content: center;
+  /* El canto de madera sobresale del tapete: deja sitio para que no toque la barra. */
+  margin-top: 20px;
+}
+
+/* ---------- Tapete ---------- */
+
+.pk-tapete {
+  position: relative;
+  /* En un móvil de 640 px de alto sale casi el del boceto (378 px frente a 392); más alto, hasta 460; más bajo, no baja de 340. */
+  height: clamp(340px, calc(100dvh - 262px), 460px);
+  aspect-ratio: 300 / 392;
+  max-width: 100%;
+  border-radius: 50% / 38%;
+  background:
+    radial-gradient(ellipse 70% 55% at 50% 30%, rgba(255, 255, 255, 0.08), transparent 70%),
+    radial-gradient(ellipse at 50% 42%, var(--tapete-1) 0%, var(--tapete-2) 60%, var(--tapete-3) 100%);
+  box-shadow:
+    inset 0 0 0 2px rgba(212, 175, 55, 0.18),
+    inset 0 0 50px rgba(0, 0, 0, 0.45),
+    0 0 0 10px var(--madera-1),
+    0 0 0 13px var(--madera-2),
+    0 0 0 14px rgba(0, 0, 0, 0.45),
+    0 22px 50px rgba(0, 0, 0, 0.5);
+}
+
+.pk-asientos,
+.pk-apuestas {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  pointer-events: none;
+}
+
+/* ---------- Asientos ---------- */
+
+.pk-asiento {
+  position: absolute;
+  left: var(--x);
+  top: var(--y);
+  translate: -50% -50%;
+  width: 62px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+/* La placa lleva solo el nombre: la cantidad va en la pila, debajo. */
+.pk-placa {
+  max-width: 100%;
+  padding: 2px 8px;
+  border: 1px solid rgba(212, 175, 55, 0.35);
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.5);
+  color: var(--crema);
+  font: 700 0.6875rem/1.3 var(--fuente-ui);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition:
+    background-color 0.2s,
+    border-color 0.2s,
+    color 0.2s,
+    box-shadow 0.2s;
+}
+
+/* Quien tiene la palabra, en dorado. */
+.pk-asiento--turno .pk-placa {
+  border-color: var(--oro-claro);
+  background: linear-gradient(180deg, #e6c75f, var(--oro) 60%, #bd9a2c);
+  color: var(--tinta);
+  box-shadow: 0 0 10px rgba(245, 215, 110, 0.55);
+}
+
+.pk-asiento--yo .pk-placa {
+  border-color: rgba(243, 231, 196, 0.6);
+}
+
+/* Quien se ha retirado, no juega esta mano o no está conectado se apaga. */
+.pk-asiento--retirado .pk-placa,
+.pk-asiento--fuera .pk-placa,
+.pk-asiento--desconectado .pk-placa {
+  opacity: 0.5;
+}
+
+.pk-asiento--retirado .pk-pila,
+.pk-asiento--fuera .pk-pila,
+.pk-asiento--desconectado .pk-pila {
+  opacity: 0.7;
+}
+
+/* Las dos cartas pequeñas de quien sigue en la mano. El hueco se reserva siempre: la pila no sube cuando alguien se retira. */
+.pk-cartas {
+  display: flex;
+  justify-content: center;
+  min-height: calc(var(--ancho-carta) * 1.4);
+}
+
+/* Tus cartas grandes van debajo del tapete: en tu sitio solo están la placa y tu pila. */
+.pk-asiento--yo .pk-cartas {
+  display: none;
+}
+
+.pk-cartas__carta {
+  rotate: -6deg;
+}
+
+.pk-cartas__carta + .pk-cartas__carta {
+  rotate: 6deg;
+  margin-left: calc(var(--ancho-carta) * -0.28);
+}
+
+/* La pila: una ficha con la cantidad. */
+.pk-pila {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--crema);
+  font: 700 0.6875rem/1.3 var(--fuente-ui);
+  font-variant-numeric: tabular-nums lining-nums;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+}
+
+.pk-pila .ficha {
+  flex: none;
+}
+
+.pk-pila--allin {
+  color: var(--oro-claro);
+}
+
+/* El botón del repartidor: una ficha crema con una D, junto a las cartas y hacia el centro del tapete (más abajo que la placa, para no tapar lo apostado). */
+.pk-boton {
+  position: absolute;
+  top: 24px;
+  right: -10px;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--crema);
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.55),
+    inset 0 0 0 1.5px rgba(139, 94, 52, 0.55);
+  color: var(--tinta);
+  font: 800 0.625rem/1 var(--fuente-ui);
+}
+
+.pk-asiento--der .pk-boton {
+  right: auto;
+  left: -10px;
+}
+
+/* Lo apostado en la ronda, entre cada asiento y el centro. */
+.pk-apuesta {
+  position: absolute;
+  left: var(--x);
+  top: var(--y);
+  translate: -50% -50%;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 7px 1px 2px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.38);
+  color: var(--crema);
+  font: 700 0.6875rem/1.3 var(--fuente-ui);
+  font-variant-numeric: tabular-nums lining-nums;
+  white-space: nowrap;
+}
+
+.pk-apuesta .ficha {
+  flex: none;
+}
+
+/* Se sujeta por el borde que mira al centro: una cantidad larga crece hacia el centro y no se acerca a su asiento. */
+.pk-apuesta--izq {
+  translate: 0 -50%;
+}
+
+.pk-apuesta--der {
+  translate: -100% -50%;
+}
+
+/* ---------- Centro ---------- */
+
+.pk-centro {
+  position: absolute;
+  left: 50%;
+  top: 44%;
+  translate: -50% -50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.pk-mesa-cartas {
+  display: flex;
+  gap: 2px;
+}
+
+/* El hueco impreso donde caerá cada carta que falta. */
+.pk-hueco {
+  flex: none;
+  width: var(--ancho-carta);
+  height: calc(var(--ancho-carta) * 1.4);
+  border: 1.5px dashed rgba(212, 175, 55, 0.32);
+  border-radius: calc(var(--ancho-carta) * 0.08);
+  box-shadow: inset 0 0 0 3px rgba(0, 0, 0, 0.06);
+}
+
+.pk-bote {
+  font: 600 0.8125rem/1.3 var(--fuente-titulo);
+  color: var(--crema-tenue);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.pk-bote b {
+  color: var(--oro);
+}
+
+/* Sin bote sigue ocupando su hueco: las cartas no se mueven cuando llega el primero. */
+.pk-bote--vacio {
+  visibility: hidden;
+}
+
+/* ---------- Panel de debajo ---------- */
+
+.pk-panel {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 28px;
+  min-height: 150px;
+}
+
+/* ---------- Ordenador ---------- */
+
+.pk--ordenador .barra-mesa {
+  width: min(1180px, 100%);
+  margin: 0 auto;
+}
+
+.pk--ordenador .pk-mesa {
+  margin-top: 26px;
+}
+
+.pk--ordenador .pk-tapete {
+  height: clamp(300px, calc(100dvh - 300px), 520px);
+  aspect-ratio: 2 / 1;
+  border-radius: 50%;
+  box-shadow:
+    inset 0 0 0 2px rgba(212, 175, 55, 0.18),
+    inset 0 0 70px rgba(0, 0, 0, 0.45),
+    0 0 0 12px var(--madera-1),
+    0 0 0 15px var(--madera-2),
+    0 0 0 16px rgba(0, 0, 0, 0.45),
+    0 28px 60px rgba(0, 0, 0, 0.55);
+}
+
+.pk--ordenador .pk-asiento {
+  width: 100px;
+  gap: 3px;
+}
+
+.pk--ordenador .pk-placa {
+  padding: 3px 12px;
+  font-size: 0.8125rem;
+}
+
+.pk--ordenador .pk-pila,
+.pk--ordenador .pk-apuesta {
+  gap: 5px;
+  font-size: 0.875rem;
+}
+
+.pk--ordenador .pk-apuesta {
+  padding: 2px 10px 2px 3px;
+}
+
+.pk--ordenador .pk-boton {
+  top: 34px;
+  right: -14px;
+  width: 24px;
+  height: 24px;
+  font-size: 0.75rem;
+}
+
+.pk--ordenador .pk-asiento--der .pk-boton {
+  left: -14px;
+}
+
+.pk--ordenador .pk-centro {
+  gap: 10px;
+}
+
+.pk--ordenador .pk-mesa-cartas {
+  gap: 8px;
+}
+
+.pk--ordenador .pk-bote {
+  font-size: 1.0625rem;
+}
+
+.pk--ordenador .pk-panel {
+  width: min(560px, 100%);
+  margin: 30px auto 0;
+}
+
+/* Movimiento reducido: la placa del turno cambia de golpe, sin fundido. */
+@media (prefers-reduced-motion: reduce) {
+  .pk-placa {
+    transition: none;
+  }
+}

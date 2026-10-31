@@ -41,6 +41,12 @@ const FASES: Record<IdJuego, Record<string, TextoFase>> = {
 };
 const FASE_DESCONOCIDA: TextoFase = { cuenta: false, texto: () => "En juego" };
 
+/** Lo que dice la tarjeta de una mesa en `esperando`: libre, o con alguien sentado que espera apuestas (en póker, rivales). */
+export function textoDeEspera(juego: IdJuego, sentados: number): string {
+  if (sentados === 0) return "Mesa libre";
+  return juego === "poker" ? "Esperando rivales" : "Esperando apuestas";
+}
+
 /** Pica para el blackjack, herradura para la carrera y diamante para el póker. */
 function Icono({ juego }: { juego: IdJuego }) {
   return (
@@ -76,7 +82,7 @@ export function TarjetaMesa({ juego, resumen }: Props) {
   const ahora = useAhoraServidor(conCuenta);
 
   let estado: ReactNode;
-  if (fase === "esperando") estado = jugadores.length === 0 ? "Mesa libre" : "Esperando apuestas";
+  if (fase === "esperando") estado = textoDeEspera(juego, jugadores.length);
   else estado = textoFase.texto(conCuenta ? <b className="sala-mesa__cuenta">{cuentaAtras(finFase - ahora)}</b> : null);
 
   return (

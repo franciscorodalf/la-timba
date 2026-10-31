@@ -108,17 +108,7 @@ export function Sala({ codigo }: { codigo: string }) {
               <div className="sala-mesas">
                 <TarjetaMesa juego="blackjack" resumen={sala.mesas.blackjack} />
                 <TarjetaMesa juego="carrera" resumen={sala.mesas.carrera} />
-                <article className="sala-mesa sala-mesa--proxima">
-                  <div className="sala-mesa__icono" aria-hidden="true">
-                    <svg viewBox="0 0 24 24" width="26" height="26" fill="currentColor" focusable="false">
-                      <path d="M12 2.5 20 12l-8 9.5L4 12z" />
-                    </svg>
-                  </div>
-                  <div className="sala-mesa__cuerpo">
-                    <h3 className="sala-mesa__nombre">Póker</h3>
-                    <p className="sala-mesa__estado">Próximamente</p>
-                  </div>
-                </article>
+                <TarjetaMesa juego="poker" resumen={sala.mesas.poker} />
               </div>
             </section>
 
