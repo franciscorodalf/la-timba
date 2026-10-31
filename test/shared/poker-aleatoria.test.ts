@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Carta, Rng } from "../../src/shared/cartas";
 import { POKER, poker, type AccionPoker, type EstadoPoker, type VistaPoker } from "../../src/shared/juegos/poker";
-import type { Evento, JugadorId, Paso } from "../../src/shared/juegos/tipos";
+import type { CodigoError, Evento, JugadorId, Paso } from "../../src/shared/juegos/tipos";
 import { T0, apodoDe } from "./ayudas-poker";
 
 const MANOS_POR_MESA = 100;
@@ -108,11 +108,14 @@ class Partida {
     this.comprobar(p.eventos);
   }
 
-  private actuar(id: JugadorId, accion: AccionPoker) {
+  /** `tolerado`: un error que la mesa puede dar sin que sea un fallo, porque no cambia nada. */
+  private actuar(id: JugadorId, accion: AccionPoker, tolerado?: CodigoError): boolean {
     const p = poker.aplicar(this.e, id, accion, this.ahora, this.azar, apodoDe(id));
+    if (!p.ok && p.error === tolerado) return false;
     if (!p.ok) this.fallar(`${id} no pudo hacer ${JSON.stringify(accion)}: ${p.error}`);
     if (accion.t === "sentarse" || accion.t === "anadir") this.comprado += accion.fichas;
     this.registrar(p);
+    return true;
   }
 
   private tick() {
@@ -142,7 +145,10 @@ class Partida {
   private sentarAlguien() {
     const libres = Array.from({ length: this.jugadores }, (_, i) => i + 1).filter((id) => !this.e.asientos.some((a) => a.jugadorId === id));
     if (libres.length === 0) return;
-    this.actuar(this.uno(libres), { t: "sentarse", fichas: this.uno([POKER.COMPRA_MIN, 15, 25, 60, 150, 400]) });
+    const id = this.uno(libres);
+    const accion: AccionPoker = { t: "sentarse", fichas: this.uno([POKER.COMPRA_MIN, 15, 25, 60, 150, 400]) };
+    // Con tantas entradas y salidas, alguien llega al límite de sesiones por hora: la mesa lo rechaza sin cobrar y pasa un rato antes del siguiente intento.
+    if (!this.actuar(id, accion, "demasiadas_sesiones")) this.ahora += 600_000;
   }
 
   /** Lo que puede pasar en cualquier momento, sin ser el turno de nadie en concreto. */

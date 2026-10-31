@@ -305,7 +305,7 @@ test.describe("Perfil", () => {
       await page.goto("/perfil");
 
       await botonRescate(page).click();
-      await expect(page.getByRole("alert")).toHaveText("Espera a que acabe tu ronda");
+      await expect(page.getByRole("alert")).toHaveText("Tienes fichas en juego: espera a que acabe tu ronda o levántate de la mesa de póker");
       await expect(fichasDelPerfil(page)).toHaveText("0");
       await expect(botonRescate(page)).toBeEnabled();
       await expect(botonRescate(page)).not.toHaveAttribute("aria-busy", "true");

@@ -155,6 +155,34 @@ describe("MesaPoker: sentarse, añadir y levantarse", () => {
     expect(await pendientesDe(codigo)).toBe(0);
   });
 
+  it("con el límite de sesiones no se cobra nada", async () => {
+    const {
+      codigo,
+      js: [ana],
+    } = await nuevaMesa(1);
+    const conexion = await entrar(codigo, ana.token);
+
+    // Una sesión de verdad deja su instante en la misma escritura de sentarse; las nueve restantes se fijan sin pasar por el límite de mensajes.
+    await sentar(conexion, ana.id, 100);
+    enviar(conexion, { t: "levantarse" });
+    await hasta(conexion, (m) => m.vista.asientos.length === 0);
+    expect((await estadoMesa(codigo)).sesiones[ana.id]).toEqual([T]);
+    await runInDurableObject(mesa(codigo), (m) => {
+      m.estado = { ...m.estado, sesiones: { [ana.id]: Array.from({ length: POKER.SESIONES_POR_HORA }, (_, i) => T + i) } };
+    });
+    expect(await fichas(ana.id)).toBe(1000);
+    const pendientes = await pendientesDe(codigo);
+    const guardadas = (await estadoMesa(codigo)).siguienteSesion;
+
+    enviar(conexion, { t: "sentarse", fichas: 100 });
+    expect(await conexion.recibir("error")).toEqual({ t: "error", codigo: "demasiadas_sesiones" });
+    expect((await estadoMesa(codigo)).asientos).toEqual([]);
+    expect((await estadoMesa(codigo)).siguienteSesion).toBe(guardadas);
+    expect((await guardado(codigo))!.cobro).toBeNull();
+    expect(await fichas(ana.id)).toBe(1000);
+    expect(await pendientesDe(codigo)).toBe(pendientes);
+  });
+
   it("doble sentarse cobra una vez", async () => {
     const {
       codigo,

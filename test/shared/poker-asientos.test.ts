@@ -80,6 +80,39 @@ describe("póker: asientos", () => {
     expect(error(intentar(e, 9, { t: "sentarse", fichas: 100 }))).toBe("sin_asiento");
   });
 
+  it("la sesión 11 en una hora da demasiadas_sesiones y no cobra", () => {
+    let e = vacia();
+    for (let i = 0; i < POKER.SESIONES_POR_HORA; i++) {
+      const ahora = T0 + i * 1000;
+      e = aplicar(e, 1, { t: "sentarse", fichas: 100 }, ahora).estado;
+      e = aplicar(e, 1, { t: "levantarse" }, ahora + 500).estado;
+    }
+    expect(e.asientos).toEqual([]);
+    const intento = intentar(e, 1, { t: "sentarse", fichas: 100 }, T0 + 20_000);
+    expect(error(intento)).toBe("demasiadas_sesiones");
+    // Otro jugador no paga las sesiones de este, y la mesa sigue igual.
+    expect(error(intentar(e, 2, { t: "sentarse", fichas: 100 }, T0 + 20_000))).toBe("ok");
+    expect(e.siguienteSesion).toBe(POKER.SESIONES_POR_HORA + 1);
+  });
+
+  it("pasada la hora se puede volver a sentar", () => {
+    let e = vacia();
+    for (let i = 0; i < POKER.SESIONES_POR_HORA; i++) {
+      e = aplicar(e, 1, { t: "sentarse", fichas: 100 }, T0 + i).estado;
+      e = aplicar(e, 1, { t: "levantarse" }, T0 + i).estado;
+    }
+    // La más antigua cumple la hora justo cuando deja de contar; la siguiente sigue dentro.
+    expect(error(intentar(e, 1, { t: "sentarse", fichas: 100 }, T0 + 3_600_000 - 1))).toBe("demasiadas_sesiones");
+    const libre = intentar(e, 1, { t: "sentarse", fichas: 100 }, T0 + 3_600_000);
+    expect(error(libre)).toBe("ok");
+    // Solo una ha caducado: la siguiente se sienta, pero la otra sesión vuelve a llenar el cupo.
+    if (!libre.ok) throw new Error("no se pudo sentar");
+    expect(error(intentar(aplicar(libre.estado, 1, { t: "levantarse" }, T0 + 3_600_000).estado, 1, { t: "sentarse", fichas: 100 }, T0 + 3_600_000))).toBe("demasiadas_sesiones");
+    // Y con la hora entera pasada para todas, el estado ya no guarda nada de ellas.
+    const tarde = aplicar(e, 1, { t: "sentarse", fichas: 100 }, T0 + 2 * 3_600_000).estado;
+    expect(Object.values(tarde.sesiones).flat()).toEqual([T0 + 2 * 3_600_000]);
+  });
+
   it("sentarse dos veces da accion_invalida", () => {
     expect(error(intentar(conUno(), 1, { t: "sentarse", fichas: 100 }))).toBe("accion_invalida");
   });

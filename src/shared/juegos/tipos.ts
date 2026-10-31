@@ -23,6 +23,8 @@ export type CodigoError =
   | "sin_casilla"
   /** No queda ningún asiento libre en una mesa con asientos numerados (el póker). */
   | "sin_asiento"
+  /** Sentarse y levantarse más de `POKER.SESIONES_POR_HORA` veces en una hora: protege la cuota diaria gratuita. */
+  | "demasiadas_sesiones"
   | "no_sentado"
   | "sin_fichas"
   | "demasiados_mensajes"

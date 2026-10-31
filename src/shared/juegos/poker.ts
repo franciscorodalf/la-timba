@@ -15,7 +15,11 @@ export const POKER = {
   CALLE_MS: 900,
   SOLO_MS: 600_000,
   FALTAS_MAX: 2,
+  /** Cuántas veces puede sentarse un jugador en una hora: cada ciclo de sentarse y levantarse gasta unas 13 filas de la cuota diaria. */
+  SESIONES_POR_HORA: 10,
 } as const;
+
+const HORA_MS = 3_600_000;
 
 // ---------------------------------------------------------------------------
 // Máquina de estados de la mesa
@@ -102,6 +106,8 @@ export interface EstadoPoker {
   /** El número de asiento de quien hizo la última apuesta o subida de la ronda. */
   ultimoAgresor: number | null;
   siguienteSesion: number;
+  /** Cuándo se sentó cada jugador en la última hora, para el límite `POKER.SESIONES_POR_HORA`. Se poda al sentarse, en la misma escritura. */
+  sesiones: Record<JugadorId, number[]>;
   /** Lo que dejaron en la mano quienes se levantaron a mitad. */
   abandonos: { jugadorId: JugadorId; aportado: number }[];
   /** Los botes que se enseñan en `resultado`; durante la mano, la vista los calcula. */
@@ -404,6 +410,8 @@ function esperarRival(e: EstadoPoker, ahora: number): void {
 function sentarse(e: EstadoPoker, jugadorId: JugadorId, fichas: number, ahora: number, rng: Rng, apodo: string | undefined): Paso<EstadoPoker> {
   if (asientoDe(e, jugadorId)) return fallo("accion_invalida");
   if (!compraValida(fichas)) return fallo("apuesta_invalida");
+  // Sentarse y levantarse en bucle no cuesta fichas, pero sí filas de la cuota diaria: el límite se mira antes del cobro.
+  if ((e.sesiones[jugadorId] ?? []).filter((instante) => ahora - instante < HORA_MS).length >= POKER.SESIONES_POR_HORA) return fallo("demasiadas_sesiones");
   const asiento = primerAsientoLibre(e);
   if (asiento === null) return fallo("sin_asiento");
   // `Mesa` siempre lo pasa: mejor un error que un asiento sin nombre.
@@ -430,6 +438,13 @@ function sentarse(e: EstadoPoker, jugadorId: JugadorId, fichas: number, ahora: n
   };
   s.asientos.splice(s.asientos.filter((x) => x.asiento < asiento).length, 0, a);
   s.siguienteSesion += 1;
+  // Se podan las sesiones que ya cumplieron la hora, para que el estado no crezca.
+  s.sesiones[jugadorId] = [...(s.sesiones[jugadorId] ?? []), ahora];
+  for (const [id, instantes] of Object.entries(s.sesiones)) {
+    const recientes = instantes.filter((instante) => ahora - instante < HORA_MS);
+    if (recientes.length > 0) s.sesiones[Number(id)] = recientes;
+    else delete s.sesiones[Number(id)];
+  }
 
   const eventos: Evento[] = [];
   if (s.fase === "esperando") {
@@ -642,6 +657,7 @@ export const poker: Juego<EstadoPoker, AccionPoker> = {
       subidaMinima: POKER.CIEGA_GRANDE,
       ultimoAgresor: null,
       siguienteSesion: 1,
+      sesiones: {},
       abandonos: [],
       botes: [],
     };
