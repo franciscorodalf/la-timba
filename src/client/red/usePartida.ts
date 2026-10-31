@@ -51,7 +51,7 @@ export function leerMensajeSala(datos: unknown): MensajeSala | null {
   const esObjeto = (valor: unknown): valor is Record<string, any> => typeof valor === "object" && valor !== null;
   if (!esObjeto(mensaje) || mensaje.t !== "sala" || typeof mensaje.codigo !== "string" || typeof mensaje.ahora !== "number") return null;
   if (!Array.isArray(mensaje.conectados) || !Array.isArray(mensaje.rankingNoche)) return null;
-  if (!esObjeto(mensaje.mesas) || !esObjeto(mensaje.mesas.blackjack) || !esObjeto(mensaje.mesas.carrera)) return null;
+  if (!esObjeto(mensaje.mesas) || !esObjeto(mensaje.mesas.blackjack) || !esObjeto(mensaje.mesas.carrera) || !esObjeto(mensaje.mesas.poker)) return null;
   return mensaje as unknown as MensajeSala;
 }
 

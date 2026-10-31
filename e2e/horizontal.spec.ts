@@ -1,6 +1,7 @@
 import { expect, type Page, test } from "@playwright/test";
 import type { VistaBJ } from "../src/shared/juegos/blackjack";
 import type { VistaCarrera } from "../src/shared/juegos/carrera";
+import type { VistaPoker } from "../src/shared/juegos/poker";
 import { abrirPartida, apodoUnico, carta as c, conSesion, entrarSimulada, fichasDeApi, mensajeEstado, registrar } from "./ayudas";
 
 // Un móvil de pie (el Pixel 7) y el mismo, girado: 915×412 con puntero táctil. Solo en el proyecto `movil`: el de escritorio
@@ -67,6 +68,26 @@ test.describe("móvil apaisado", () => {
     const pista = page.locator(".carrera-mesa");
     await expect(pista).toBeAttached();
     await expect(pista).toBeHidden();
+    const volver = page.getByRole("button", { name: "Volver a la sala", includeHidden: true });
+    await expect(volver).toBeAttached();
+    await expect(volver).toBeHidden();
+    expect(await alturaDeLaPagina(page)).toBeLessThanOrEqual(APAISADO.height);
+  });
+
+  test("en la mesa de póker también", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrarSimulada<VistaPoker>(page, request, "mesa-poker");
+    await fichasDeApi(page, 1000);
+    mesa.alConectar(
+      mensajeEstado<VistaPoker>({ ronda: 0, fase: "esperando", calle: null, finFase: null, mesa: [], botes: [], turno: null, asientos: [], asientosLibres: 8, yo: sesion.jugador.id, misCartas: null, opciones: null, porEntrar: 0 }),
+    );
+    await page.goto(`/p/${codigo}/poker`);
+
+    await expect(aviso(page)).toBeVisible();
+    const caja = (await page.locator(".girar-movil").boundingBox())!;
+    expect(caja).toMatchObject({ x: 0, y: 0, width: APAISADO.width, height: APAISADO.height });
+    const tapete = page.locator(".pk-tapete");
+    await expect(tapete).toBeAttached();
+    await expect(tapete).toBeHidden();
     const volver = page.getByRole("button", { name: "Volver a la sala", includeHidden: true });
     await expect(volver).toBeAttached();
     await expect(volver).toBeHidden();

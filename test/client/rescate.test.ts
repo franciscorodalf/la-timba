@@ -6,7 +6,7 @@ describe("errorRescate", () => {
   it("con apuestas pendientes pide esperar a que acabe la ronda", () => {
     expect(errorRescate(new ErrorApi(409, "apuestas_pendientes", { error: "apuestas_pendientes" }))).toEqual({
       tipo: "aviso",
-      texto: "Espera a que acabe tu ronda",
+      texto: "Tienes fichas en juego: espera a que acabe tu ronda o levántate de la mesa de póker",
     });
   });
 

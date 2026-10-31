@@ -38,6 +38,7 @@ type Mesas = Record<IdJuego, ResumenMesa>;
 const MESA_DE: Record<IdJuego, (env: Env) => unknown> = {
   blackjack: (env) => env.MesaBlackjack,
   carrera: (env) => env.MesaCarrera,
+  poker: (env) => env.MesaPoker,
 };
 const JUEGOS = Object.keys(MESA_DE) as IdJuego[];
 /**

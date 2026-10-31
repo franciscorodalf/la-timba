@@ -5,15 +5,17 @@ import { apodoValido, firmarToken, pinValido, verificarToken } from "./auth";
 import { Jugadores, jugadoresGlobal } from "./jugadores";
 import { MesaBlackjack } from "./mesa-blackjack";
 import { MesaCarrera } from "./mesa-carrera";
+import { MesaPoker } from "./mesa-poker";
 import { Partida } from "./partida";
 
-export { Jugadores, MesaBlackjack, MesaCarrera, Partida };
+export { Jugadores, MesaBlackjack, MesaCarrera, MesaPoker, Partida };
 
 export interface Env {
   Jugadores: DurableObjectNamespace<Jugadores>;
   Partida: DurableObjectNamespace<Partida>;
   MesaBlackjack: DurableObjectNamespace<MesaBlackjack>;
   MesaCarrera: DurableObjectNamespace<MesaCarrera>;
+  MesaPoker: DurableObjectNamespace<MesaPoker>;
   TOKEN_SECRET: string;
   ASSETS: Fetcher;
 }
@@ -222,8 +224,8 @@ async function manejarApi(request: Request, env: Env): Promise<Response> {
 
 // ---------- WebSockets (/parties/*) ----------
 
-/** Las únicas rutas de /parties: la sala y las dos mesas de una partida, con su código (aún sin pasar a mayúsculas). */
-const RUTA_PARTY = /^\/parties\/(partida|mesa-blackjack|mesa-carrera)\/([A-Za-z2-9]{4})$/;
+/** Las únicas rutas de /parties: la sala y las mesas de una partida, con su código (aún sin pasar a mayúsculas). */
+const RUTA_PARTY = /^\/parties\/(partida|mesa-blackjack|mesa-carrera|mesa-poker)\/([A-Za-z2-9]{4})$/;
 
 /** Cabeceras con las que partyserver configura el Durable Object: las pone el enrutador, nunca el cliente. */
 const CABECERAS_PARTYKIT = ["x-partykit-props", "x-partykit-room", "x-partykit-jurisdiction"];

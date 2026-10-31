@@ -19,7 +19,7 @@ const perfilDe = (apodo: string, resto: Partial<Perfil> = {}): Perfil => ({
   partidas: 0,
   gananciasTotales: 0,
   mayorPremio: 0,
-  porJuego: { blackjack: { partidas: 0, victorias: 0 }, carrera: { partidas: 0, victorias: 0 } },
+  porJuego: { blackjack: { partidas: 0, victorias: 0 }, carrera: { partidas: 0, victorias: 0 }, poker: { partidas: 0, victorias: 0 } },
   ...resto,
 });
 
@@ -72,7 +72,7 @@ test.describe("Perfil", () => {
       partidas: 20,
       gananciasTotales: -1250,
       mayorPremio: 5400,
-      porJuego: { blackjack: { partidas: 12, victorias: 8 }, carrera: { partidas: 8, victorias: 1 } },
+      porJuego: { blackjack: { partidas: 12, victorias: 8 }, carrera: { partidas: 8, victorias: 1 }, poker: { partidas: 0, victorias: 0 } },
     });
     await simularPerfil(page, () => datos);
     await page.goto("/perfil");
@@ -305,7 +305,7 @@ test.describe("Perfil", () => {
       await page.goto("/perfil");
 
       await botonRescate(page).click();
-      await expect(page.getByRole("alert")).toHaveText("Espera a que acabe tu ronda");
+      await expect(page.getByRole("alert")).toHaveText("Tienes fichas en juego: espera a que acabe tu ronda o levántate de la mesa de póker");
       await expect(fichasDelPerfil(page)).toHaveText("0");
       await expect(botonRescate(page)).toBeEnabled();
       await expect(botonRescate(page)).not.toHaveAttribute("aria-busy", "true");

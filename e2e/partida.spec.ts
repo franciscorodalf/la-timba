@@ -9,13 +9,13 @@ const jugadoresEnLaSala = (pagina: Page) => pagina.getByRole("list", { name: "Ju
 
 const MESA_LIBRE = { jugadores: [], fase: "esperando", finFase: null };
 
-/** Un mensaje de sala como el que manda el servidor, con las dos mesas libres salvo lo que se cambie. */
+/** Un mensaje de sala como el que manda el servidor, con las mesas libres salvo lo que se cambie. */
 const mensajeSala = (codigo: string, resto: Partial<MensajeSala> = {}): MensajeSala => ({
   t: "sala",
   codigo,
   ahora: Date.now(),
   conectados: [],
-  mesas: { blackjack: MESA_LIBRE, carrera: MESA_LIBRE },
+  mesas: { blackjack: MESA_LIBRE, carrera: MESA_LIBRE, poker: MESA_LIBRE },
   rankingNoche: [],
   ...resto,
 });
@@ -68,12 +68,12 @@ test("A crea la partida, B entra con el código en minúsculas y ambos se ven en
       await expect(jugadoresEnLaSala(pagina).getByText(apodoB)).toBeVisible();
     }
 
-    // Las dos mesas están libres, el póker aún no existe y nadie ha jugado esta noche.
-    await expect(page.getByRole("link", { name: "Entrar en Blackjack" })).toBeVisible();
-    await expect(page.getByRole("link", { name: "Entrar en Carrera" })).toBeVisible();
-    await expect(page.getByText("Mesa libre")).toHaveCount(2);
-    await expect(page.getByText("Próximamente")).toBeVisible();
-    await expect(page.getByRole("link", { name: /Póker/ })).toHaveCount(0);
+    // Las tres mesas están libres, cada una con su enlace, y nadie ha jugado esta noche.
+    await expect(page.getByRole("link", { name: "Entrar en Blackjack" })).toHaveAttribute("href", `/p/${codigo}/blackjack`);
+    await expect(page.getByRole("link", { name: "Entrar en Carrera" })).toHaveAttribute("href", `/p/${codigo}/carrera`);
+    await expect(page.getByRole("link", { name: "Entrar en Póker" })).toHaveAttribute("href", `/p/${codigo}/poker`);
+    await expect(page.getByText("Mesa libre")).toHaveCount(3);
+    await expect(page.getByText("Próximamente")).toHaveCount(0);
     await expect(page.getByRole("heading", { name: "Esta noche" })).toBeVisible();
     await expect(page.getByText("Aún no ha jugado nadie")).toBeVisible();
 
@@ -283,6 +283,7 @@ test.describe("mesas", () => {
           mesas: {
             blackjack: { jugadores: ["Ana", "Leo", "Mía"], fase: "decisiones", finFase: Date.now() + 9_000 },
             carrera: { jugadores: ["Sol"], fase: "apuestas", finFase: finApuestas },
+            poker: MESA_LIBRE,
           },
           rankingNoche: [
             { apodo: "Leo", neto: 420 },
@@ -361,7 +362,7 @@ test.describe("cuentas atrás", () => {
     const sala = await simularSala(page);
     // El servidor va 60 s por delante del reloj del navegador, y dice que las apuestas cierran dentro de 12 s (de su reloj).
     const servidor = Date.now() + 60_000;
-    sala.alConectar(mensajeSala(codigo, { ahora: servidor, mesas: { blackjack: MESA_LIBRE, carrera: { jugadores: ["Sol"], fase: "apuestas", finFase: servidor + 12_000 } } }));
+    sala.alConectar(mensajeSala(codigo, { ahora: servidor, mesas: { blackjack: MESA_LIBRE, carrera: { jugadores: ["Sol"], fase: "apuestas", finFase: servidor + 12_000 }, poker: MESA_LIBRE } }));
 
     await page.goto(`/p/${codigo}`);
 
@@ -378,15 +379,15 @@ test.describe("cuentas atrás", () => {
     const sala = await simularSala(page);
     sala.alConectar(mensajeSala(codigo));
     await page.goto(`/p/${codigo}`);
-    await expect(page.getByText("Mesa libre")).toHaveCount(2);
+    await expect(page.getByText("Mesa libre")).toHaveCount(3);
 
     // Ocho veces: la mesa se queda libre y vuelve a abrir apuestas, y cada vez el reloj del servidor se aparta un minuto
     // más o menos del anterior. Si la tarjeta pintara con la hora de su último latido, saldría una cuenta de más de 15 s.
     for (let vuelta = 0; vuelta < 8; vuelta++) {
       const ahora = Date.now() + (vuelta % 2) * 60_000;
       sala.enviar(mensajeSala(codigo, { ahora }));
-      await expect(page.getByText("Mesa libre")).toHaveCount(2);
-      sala.enviar(mensajeSala(codigo, { ahora, mesas: { blackjack: MESA_LIBRE, carrera: { jugadores: ["Sol"], fase: "apuestas", finFase: ahora + 15_000 } } }));
+      await expect(page.getByText("Mesa libre")).toHaveCount(3);
+      sala.enviar(mensajeSala(codigo, { ahora, mesas: { blackjack: MESA_LIBRE, carrera: { jugadores: ["Sol"], fase: "apuestas", finFase: ahora + 15_000 }, poker: MESA_LIBRE } }));
       await expect(page.getByText(/^Sale en 0:\d\d$/)).toBeVisible();
     }
 
@@ -409,6 +410,7 @@ test.describe("cuentas atrás", () => {
         mesas: {
           blackjack: { jugadores: ["Ana"], fase: "banca", finFase: ahora + 1_000 },
           carrera: { jugadores: ["Sol"], fase: "carrera", finFase: ahora + 800 },
+          poker: MESA_LIBRE,
         },
       }),
     );
@@ -417,11 +419,11 @@ test.describe("cuentas atrás", () => {
     await expect(page.getByText("¡Corren los caballos!")).toBeVisible();
     expect(await vigilancia.latidos()).toBe(0);
 
-    sala.enviar(mensajeSala(codigo, { mesas: { blackjack: MESA_LIBRE, carrera: { jugadores: ["Sol"], fase: "apuestas", finFase: Date.now() + 20_000 } } }));
+    sala.enviar(mensajeSala(codigo, { mesas: { blackjack: MESA_LIBRE, carrera: { jugadores: ["Sol"], fase: "apuestas", finFase: Date.now() + 20_000 }, poker: MESA_LIBRE } }));
     await expect(page.getByText(/^Sale en 0:\d\d$/)).toBeVisible();
     expect(await vigilancia.latidos()).toBe(1);
 
-    sala.enviar(mensajeSala(codigo, { mesas: { blackjack: MESA_LIBRE, carrera: { jugadores: ["Sol"], fase: "carrera", finFase: Date.now() + 800 } } }));
+    sala.enviar(mensajeSala(codigo, { mesas: { blackjack: MESA_LIBRE, carrera: { jugadores: ["Sol"], fase: "carrera", finFase: Date.now() + 800 }, poker: MESA_LIBRE } }));
     await expect(page.getByText("¡Corren los caballos!")).toBeVisible();
     expect(await vigilancia.latidos()).toBe(0);
   });
