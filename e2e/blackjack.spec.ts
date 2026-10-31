@@ -1527,6 +1527,8 @@ test.describe("mesa simulada", () => {
       ),
     );
     await expect(page.getByText("La banca mira su carta…")).toBeVisible();
+    // Hasta que un fotograma la haya pintado: si la ronda siguiente llegara antes, el texto duraría menos de un fotograma y el muestreo no lo vería.
+    await expect.poll(async () => (await fotogramasBanca(page)).some((f) => f.mira), { intervals: [20] }).toBe(true);
     const antes = await sonidos();
     mesa.enviar(estado(vista(sesion, { ronda: 2 })));
     await expect(page.getByText("Haz tu apuesta")).toBeVisible();
