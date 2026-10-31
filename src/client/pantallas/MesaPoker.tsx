@@ -47,8 +47,10 @@ export function MesaPoker({ codigo }: { codigo: string }) {
   usePrecargarBaraja();
   usePrecargarTipografia();
 
-  // Las fichas se vuelven a leer al (re)conectar y al empezar cada mano.
-  useFichasAlDia(conectado, vista?.ronda);
+  // Las fichas se vuelven a leer solo al (re)conectar: el saldo no cambia entre manos, porque lo que juegas está en la mesa y no en tu
+  // cuenta. Pasar la ronda pediría `/api/fichas` en cada mano por cada cliente. Los cambios reales (sentarse, levantarse, añadir) los
+  // cubren los efectos de `sentado` y `porEntrar`.
+  useFichasAlDia(conectado, undefined);
 
   const fichas = jugador?.fichas ?? 0;
   const mio = vista?.asientos.find((a) => a.jugadorId === vista.yo);

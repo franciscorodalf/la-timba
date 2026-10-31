@@ -398,6 +398,25 @@ test.describe("mesa simulada", () => {
     await expect(page.getByRole("group", { name: "Cartas de la mesa" }).getByRole("img")).toHaveCount(5);
     await expect(page.locator(".pk-hueco")).toHaveCount(0);
   });
+
+  test("al llegar una mano nueva no se piden las fichas otra vez", async ({ page, request }) => {
+    const peticiones: string[] = [];
+    page.on("request", (r) => {
+      if (new URL(r.url()).pathname === "/api/fichas") peticiones.push(r.url());
+    });
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    mesa.alConectar(estado(tuTurno(sesion, { igualar: 5 }, { calle: "preflop", mesa: [], botes: [] })));
+    await page.goto(`/p/${codigo}/poker`);
+    await expect(boton(page, "Igualar 5")).toBeVisible();
+    // Al conectar sí se leen (y la prueba comprueba que cuenta las peticiones).
+    await expect.poll(() => peticiones.length).toBeGreaterThan(0);
+    const alConectar = peticiones.length;
+
+    mesa.enviar(estado(tuTurno(sesion, { igualar: 10 }, { ronda: 2, calle: "preflop", mesa: [], botes: [] })));
+    await expect(boton(page, "Igualar 10")).toBeVisible();
+    await page.waitForTimeout(500);
+    expect(peticiones).toHaveLength(alConectar);
+  });
 });
 
 // ---------------------------------------------------------------------------------------------------------------------
