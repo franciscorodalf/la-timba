@@ -1,13 +1,12 @@
 # Estado del desarrollo
 
-Notas para retomar el trabajo en local. Última actualización: 30/10/2026.
+Notas para retomar el trabajo en local. Última actualización: 31/10/2026.
 
 ## Dónde está todo
 
-- **Rama de trabajo:** `feat/la-timba-v1-830fa7`, ya rebasada sobre `main`. `main` tiene la v1, que se fusionó con el PR #1.
-  Todavía no hay PR para esta rama. Se abre uno solo, contra `main`, cuando el plan esté terminado.
-- **Plan en curso:** `docs/superpowers/plans/2026-10-29-blackjack-completo.md`.
-- **Spec que manda:** `docs/superpowers/specs/2026-10-29-blackjack-completo-design.md`, que amplía `docs/superpowers/specs/2026-10-17-la-timba-design.md`.
+- **`main`** tiene la v1 (PR #1) y el blackjack completo con la carrera de seis tramos (PR #2).
+- **Lo siguiente:** la mesa de póker. Spec: `docs/superpowers/specs/2026-10-31-poker-design.md`, en la rama `feat/poker`.
+- **Plan terminado:** `docs/superpowers/plans/2026-10-29-blackjack-completo.md`, con su spec `docs/superpowers/specs/2026-10-29-blackjack-completo-design.md`.
 
 | Tarea | Qué | Estado |
 |---|---|---|
@@ -22,27 +21,12 @@ Notas para retomar el trabajo en local. Última actualización: 30/10/2026.
 | 9 | Pantalla: seguro y la banca mira | hecha y revisada |
 | 10 | README, CLAUDE.md y capturas | hecha |
 | — | Revisión final de toda la rama | hecha |
-| — | PR a `main` | **pendiente** |
+| — | PR a `main` | hecho (#2) |
 
-## Cómo seguir en local
+## Datos para seguir
 
-```bash
-git fetch origin && git checkout feat/la-timba-v1-830fa7 && git pull
-npm ci
-cp .dev.vars.example .dev.vars        # si no lo tienes
-npx tsc --noEmit -p . && npm test     # ~690 tests
-npm run e2e                           # sin otro `npm run dev` abierto
-```
-
-- Para seguir el plan con Claude Code: «Sigue el plan `docs/superpowers/plans/2026-10-29-blackjack-completo.md` desde la Tarea 10 con subagent-driven-development; lee `docs/ESTADO.md`». El registro de progreso de las sesiones (`.superpowers/`) no está en Git: este archivo lo sustituye.
 - **Presupuesto:** `test/server/presupuesto.test.ts` exige que la noche típica quede en el 30 % o menos de cada límite diario. Con la medida pesimista (1 de cada 3 rondas con dos casillas, seguro y división) da 27,2 % de filas escritas, 14,7 % de peticiones a Durable Objects, 7,7 % de peticiones al Worker y 0,4 % de filas leídas. El 53 % de las escrituras son del libro de `Jugadores`.
 - **Despliegue:** lo haces tú con `npm run deploy`. Las mesas guardadas por la versión anterior se ponen al día solas al cargar (`Juego.normalizar`).
-
-## Lo que falta del plan
-
-Abrir el PR a `main`. La revisión final no encontró nada que impida fusionar: se leyeron enteros los cambios de reglas y servidor, y el guion y la mesa de blackjack en el cliente, con los cinco puntos de «Review Focus» del plan. La hizo la misma sesión que cerró la Tarea 10, así que una revisión independiente aún podría encontrar algo.
-
-Con el código de la rama, en un Mac: tipos correctos, 689 tests y 296 e2e en verde (20 se saltan por ser solo de un dispositivo).
 
 ## Decisiones que tomé por mi cuenta (revísalas)
 
@@ -127,11 +111,12 @@ La Playwright del proyecto (1.64.1) pide chromium 1248, y allí solo hay la 1243
 
 ## Después de este plan
 
-1. **Chat de partida** (decidido): un chat por código de partida, visible en la sala y en todas sus mesas, solo para quien tiene el código.
+1. **Póker** (en curso): Texas Hold'em sin límite con todas sus reglas, tabla de jugadas y botón para tapar o enseñar tus cartas. Ver su spec.
+2. **Chat de partida** (decidido): un chat por código de partida, visible en la sala y en todas sus mesas, solo para quien tiene el código.
    - Va por el socket de la sala, que ya está abierto en todas las pantallas.
-   - Guarda en la memoria de `Partida` los últimos 30–50 mensajes, sin escribir en la base de datos.
+   - Guarda los últimos 30 mensajes en una sola fila de `Partida`, con una escritura por mensaje. En memoria no bastaría: `Partida` hiberna y lo perdería. Con unos 300 mensajes por noche, sube unos 0,3 puntos las filas escritas.
+   - Quien entra tarde o recarga ve esos mensajes.
    - Lleva límite de longitud y de mensajes por segundo.
-   - Pendiente de diseñar: cómo se ve en un móvil de 360 px sin tapar la mesa (seguramente un botón con contador de no leídos), y si quien entra tarde ve los últimos mensajes.
+   - Pendiente de diseñar: cómo se ve en un móvil de 360 px sin tapar la mesa, seguramente con un botón y un contador de no leídos.
    - Necesita su propio spec antes de implementarse.
-2. **La Bomba** (juego de palabras).
-3. **Póker**, con un botón para enseñar u ocultar tus cartas.
+3. **La Bomba** (juego de palabras).
