@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { type AccionPoker, type OpcionesPoker, POKER, type VistaPoker } from "../../../shared/juegos/poker";
 import { Aviso } from "../../componentes/Aviso";
 import { Boton } from "../../componentes/Boton";
@@ -71,14 +72,37 @@ interface PropsDecidir {
   tuTurno: boolean;
   /** La mesa está conectada y no estás esperando la respuesta a tu última acción. */
   activo: boolean;
+  /** La cuenta atrás que enseña `EstadoMesa` (`0:13`): la hoja de subir tapa esa línea y la repite. */
+  cuenta: string | null;
+  /** Donde se abre la hoja de subir (el `main` de la mesa). */
+  hoja: HTMLElement | null;
   onActuar(accion: AccionPoker): void;
+}
+
+/**
+ * Una hoja que se queda pegada al borde de abajo de la pantalla. Va en `hoja` (el `main` de la mesa) y no donde se abre: la hoja
+ * pegajosa solo sube hasta lo alto de quien la contiene, y en el panel de debajo del tapete no le cabría en un móvil bajo.
+ */
+function Hoja({ hoja, clase, children }: { hoja: HTMLElement | null; clase?: string; children: ReactNode }) {
+  if (hoja === null) return null;
+  return createPortal(<div className={`pk-hoja${clase ? ` ${clase}` : ""}`}>{children}</div>, hoja);
+}
+
+/** «Tu turno 0:13» dentro de las hojas que tapan la línea de estado: mientras decides, el tiempo sigue a la vista. */
+function CuentaTurno({ cuenta }: { cuenta: string | null }) {
+  if (cuenta === null) return null;
+  return (
+    <p className="pk-cuenta">
+      <span>Tu turno</span> <b>{cuenta}</b>
+    </p>
+  );
 }
 
 /**
  * La fila de decidir: Retirarse · Pasar o Igualar N · Apostar o Subir. Si tus fichas no llegan a la subida mínima, el tercero es
  * solo «All-in N». En el resultado, aquí está «Enseñar mis cartas». La fila reserva su alto aunque no haya nada que decidir.
  */
-export function Decidir({ opciones, tuTurno, activo, onActuar }: PropsDecidir) {
+export function Decidir({ opciones, tuTurno, activo, cuenta, hoja, onActuar }: PropsDecidir) {
   const subir = tuTurno && opciones?.retirarse === true ? opciones.subir : null;
   const [abierto, setAbierto] = useState<LimitesSubida | null>(null);
   // El panel vale mientras te toque y no cambie el rango: con otro rango la cantidad que tenías ya no significa lo mismo.
@@ -105,8 +129,11 @@ export function Decidir({ opciones, tuTurno, activo, onActuar }: PropsDecidir) {
 
   if (panel !== null) {
     return (
-      <div className="pk-acciones pk-acciones--subir">
-        <PanelSubir limites={panel} activo={activo} onSubir={(hasta) => actuar({ t: "subir", hasta })} onCancelar={() => setAbierto(null)} />
+      // La fila sigue ahí, vacía: la mesa no salta al abrir la hoja.
+      <div className="pk-acciones">
+        <Hoja hoja={hoja}>
+          <PanelSubir limites={panel} activo={activo} cuenta={cuenta} onSubir={(hasta) => actuar({ t: "subir", hasta })} onCancelar={() => setAbierto(null)} />
+        </Hoja>
       </div>
     );
   }
@@ -146,6 +173,7 @@ export function Decidir({ opciones, tuTurno, activo, onActuar }: PropsDecidir) {
 interface PropsPanelSubir {
   limites: LimitesSubida;
   activo: boolean;
+  cuenta: string | null;
   onSubir(hasta: number): void;
   onCancelar(): void;
 }
@@ -154,7 +182,7 @@ interface PropsPanelSubir {
  * Subir a la cantidad que quieras: el número en grande (se puede escribir), un deslizador de `min` a `max`, − y + de una ciega
  * grande, All-in y Cancelar. El deslizador y el campo son la misma cantidad; lo escrito que no vale deja apagado «Subir a N».
  */
-export function PanelSubir({ limites, activo, onSubir, onCancelar }: PropsPanelSubir) {
+export function PanelSubir({ limites, activo, cuenta, onSubir, onCancelar }: PropsPanelSubir) {
   const { min, max } = limites;
   const paso = pasoDeSubida(limites);
   const [texto, setTexto] = useState(String(min));
@@ -173,6 +201,12 @@ export function PanelSubir({ limites, activo, onSubir, onCancelar }: PropsPanelS
 
   return (
     <div className="pk-subir" role="group" aria-label="Subir la apuesta">
+      <div className="pk-subir__cabeza">
+        <CuentaTurno cuenta={cuenta} />
+        <p className={`pk-subir__ayuda${escrita === null ? " pk-subir__ayuda--mal" : ""}`} id="pk-subir-ayuda">
+          De {miles(min)} a {miles(max)}
+        </p>
+      </div>
       <div className="pk-subir__cantidad">
         <button type="button" className="pk-subir__paso" aria-label={`Quitar ${paso}`} disabled={!activo || actual <= min} onClick={() => poner(Math.max(min, actual - paso))}>
           −
@@ -197,9 +231,6 @@ export function PanelSubir({ limites, activo, onSubir, onCancelar }: PropsPanelS
           +
         </button>
       </div>
-      <p className={`pk-subir__ayuda${escrita === null ? " pk-subir__ayuda--mal" : ""}`} id="pk-subir-ayuda">
-        De {miles(min)} a {miles(max)}
-      </p>
       <input
         ref={deslizador}
         className="pk-subir__deslizador"
@@ -234,17 +265,22 @@ interface PropsAnadir {
   /** Tu saldo: lo máximo que puedes poner en la mesa. */
   fichas: number;
   activo: boolean;
+  /** La cuenta de tu turno, si te toca: la hoja tapa la línea de estado. `null` si no te toca. */
+  cuenta: string | null;
+  /** Donde se abre la hoja (el `main` de la mesa). */
+  hoja: HTMLElement | null;
   onAnadir(fichas: number): void;
   onCancelar(): void;
 }
 
 /** Las fichas que añades a tu pila (desde `COMPRA_MIN`, sin pasar de tu saldo). Entran al empezar la mano siguiente. */
-export function AnadirFichas({ fichas, activo, onAnadir, onCancelar }: PropsAnadir) {
+export function AnadirFichas({ fichas, activo, cuenta, hoja, onAnadir, onCancelar }: PropsAnadir) {
   const [montante, setMontante] = useState(0);
   const cantidad = montante <= fichas ? montante : 0;
   const destino = useRef<HTMLDivElement>(null);
   return (
-    <div className="panel-apuesta pk-anadir">
+    <Hoja hoja={hoja} clase="panel-apuesta pk-anadir">
+      <CuentaTurno cuenta={cuenta} />
       <FichasApuesta montante={cantidad} tope={fichas} minimo={POKER.COMPRA_MIN} activo={activo} onCambiar={setMontante} destino={destino} />
       <div className="pk-anadir__fila" ref={destino}>
         <Boton variante="secundario" onClick={onCancelar}>
@@ -254,6 +290,6 @@ export function AnadirFichas({ fichas, activo, onAnadir, onCancelar }: PropsAnad
           {cantidad > 0 ? `Poner ${miles(cantidad)} en la mesa` : "Poner en la mesa"}
         </Boton>
       </div>
-    </div>
+    </Hoja>
   );
 }

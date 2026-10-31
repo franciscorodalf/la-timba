@@ -342,9 +342,8 @@
 /* ---------- Subir ---------- */
 
 /* La hoja de subir y la de añadir fichas se quedan pegadas al borde de abajo de la pantalla, por encima de tus cartas: abrirlas no
-   obliga a desplazar la página para llegar a sus botones. */
-.pk-acciones--subir,
-.pk-anadir {
+   obliga a desplazar la página para llegar a sus botones. Van al final del `main` (ver `Hoja`): pegajosas, suben hasta lo alto de él. */
+.pk-hoja {
   position: sticky;
   bottom: 16px;
   z-index: 4;
@@ -353,6 +352,22 @@
   border-radius: 14px;
   background: var(--tapete-barra);
   box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.45);
+}
+
+/* «Tu turno 0:13» arriba de la hoja, con la misma letra que la cuenta de `EstadoMesa`. */
+.pk-cuenta {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0;
+  color: var(--crema-tenue);
+  font-size: 0.875rem;
+}
+
+.pk-cuenta b {
+  color: var(--oro);
+  font: 600 1.0625rem/1.2 var(--fuente-titulo);
+  font-variant-numeric: tabular-nums lining-nums;
 }
 
 .pk-subir {
@@ -416,11 +431,18 @@
   color: var(--fallo);
 }
 
+/* Arriba: la cuenta de tu turno a la izquierda y el rango permitido a la derecha. */
+.pk-subir__cabeza {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 .pk-subir__ayuda {
-  margin: 0;
+  margin: 0 0 0 auto;
   color: var(--crema-tenue);
   font: 500 0.75rem/1.3 var(--fuente-ui);
-  text-align: center;
 }
 
 .pk-subir__ayuda--mal {
@@ -543,6 +565,11 @@
 .pk--ordenador .pk-panel {
   width: min(560px, 100%);
   margin: 30px auto 0;
+}
+
+.pk--ordenador .pk-hoja {
+  width: min(560px, 100%);
+  margin-inline: auto;
 }
 
 .pk--ordenador .pk-mias {

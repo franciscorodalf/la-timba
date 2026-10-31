@@ -559,6 +559,35 @@ for (const tamano of [
   });
 }
 
+test("en 360×640, con el panel de subir abierto, la cuenta atrás de tu turno se ve y no está tapada", async ({ page, request }) => {
+  await page.setViewportSize({ width: 360, height: 640 });
+  const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+  const sentados = Array.from({ length: 8 }, (_, n) => (n === 3 ? miAsiento(sesion, n, { fichas: 980, apostado: 20, boton: true }) : asientoDe(n)));
+  mesa.alConectar(estado(vista(sesion, { asientos: sentados, turno: sesion.jugador.id, finFase: Date.now() + 14_000, misCartas: [carta("KS"), carta("KD")], opciones: { ...SIN_OPCIONES, retirarse: true, igualar: 20, subir: { min: 60, max: 1000 } } })));
+  await page.goto(`/p/${codigo}/poker`);
+  await boton(page, "Subir").click();
+  await expect(panelSubir(page)).toBeVisible();
+  await page.waitForTimeout(300);
+
+  const cuenta = panelSubir(page).locator(".pk-cuenta b");
+  await expect(cuenta).toHaveText(/^0:1[2-4]$/);
+  const visible = await cuenta.evaluate((el) => {
+    const r = el.getBoundingClientRect();
+    const arriba = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    return { dentro: r.top >= 0 && r.bottom <= window.innerHeight && r.left >= 0 && r.right <= window.innerWidth, libre: arriba !== null && el.contains(arriba) };
+  });
+  expect(visible).toEqual({ dentro: true, libre: true });
+  // Y sigue siendo la misma cuenta que baja: pasados dos segundos, marca menos.
+  const antes = (await cuenta.textContent())!;
+  await expect.poll(async () => (await cuenta.textContent())!, { timeout: 5_000 }).not.toBe(antes);
+
+  // La hoja de añadir fichas, en tu turno, también la lleva.
+  await boton(page, "Cancelar").click();
+  await boton(page, "Añadir fichas").scrollIntoViewIfNeeded();
+  await boton(page, "Añadir fichas").click();
+  await expect(page.locator(".pk-anadir .pk-cuenta b")).toHaveText(/^0:\d\d$/);
+});
+
 test.describe("tus cartas", () => {
   test("Tapar oculta las cartas y el texto de tu jugada, y se recuerda al recargar", async ({ page, request }) => {
     const { sesion, codigo, mesa } = await entrarSimulada(page, request);

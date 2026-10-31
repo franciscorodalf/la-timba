@@ -65,6 +65,8 @@ export function MesaPoker({ codigo }: { codigo: string }) {
   // Y con decidir: hasta que cambie el turno o lo que llevas puesto, un segundo toque no manda otra acción.
   const decidir = useEnvioUnico(vista === null || mio === undefined ? null : `${vista.ronda}:${vista.fase}:${vista.calle}:${vista.turno}:${mio.estado}:${mio.apostado}:${mio.fichas}:${vista.opciones?.ensenar}`, error, conectado);
 
+  // Las hojas de subir y de añadir fichas se abren en el `main`, para que puedan pegarse abajo de la pantalla.
+  const [hoja, setHoja] = useState<HTMLElement | null>(null);
   const [anadiendo, setAnadiendo] = useState(false);
   const [levantando, setLevantando] = useState(false);
   // Levantado (por ti o por la mesa), lo que tenías abierto no sigue: al volver a sentarte no reaparece.
@@ -92,7 +94,7 @@ export function MesaPoker({ codigo }: { codigo: string }) {
   };
 
   return (
-    <main className={`marco-mesa pk${ordenador ? " pk--ordenador" : ""}`}>
+    <main ref={setHoja} className={`marco-mesa pk${ordenador ? " pk--ordenador" : ""}`}>
       <Reconectando conectado={conectado || vista === null} />
       <BarraMesa titulo="Póker" onVolver={salida.alVolver} />
 
@@ -113,6 +115,8 @@ export function MesaPoker({ codigo }: { codigo: string }) {
               opciones={vista.opciones}
               tuTurno={tuTurno}
               activo={conectado && !decidir.esperando}
+              cuenta={tuTurno ? cuenta : null}
+              hoja={hoja}
               onActuar={(accion) => {
                 enviar(accion);
                 decidir.marcarEnviado();
@@ -122,6 +126,8 @@ export function MesaPoker({ codigo }: { codigo: string }) {
               <AnadirFichas
                 fichas={fichas}
                 activo={conectado && !anadir.esperando}
+                cuenta={tuTurno && fase === "mano" ? cuenta : null}
+                hoja={hoja}
                 onCancelar={() => setAnadiendo(false)}
                 onAnadir={(cantidad) => {
                   enviar({ t: "anadir", fichas: cantidad });
