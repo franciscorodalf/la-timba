@@ -22,6 +22,7 @@ const AVISO_RESCATE_MS = 6000;
 const JUEGOS: { id: IdJuego; nombre: string }[] = [
   { id: "blackjack", nombre: "Blackjack" },
   { id: "carrera", nombre: "Carrera" },
+  { id: "poker", nombre: "Póker" },
 ];
 
 function Dato({ etiqueta, valor }: { etiqueta: string; valor: string }) {

@@ -1,7 +1,7 @@
 import type { Rng } from "../cartas";
 
 export type JugadorId = number;
-export type IdJuego = "blackjack" | "carrera";
+export type IdJuego = "blackjack" | "carrera" | "poker";
 export interface Evento {
   tipo: string;
   [k: string]: unknown;

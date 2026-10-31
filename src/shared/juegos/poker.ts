@@ -623,8 +623,7 @@ function vista(e: EstadoPoker, jugadorId: JugadorId | null, _ahora: number): Vis
   };
 }
 
-/** `IdJuego` se amplía cuando la mesa exista en el servidor; hasta entonces, el `id` va aparte. */
-export const poker: Omit<Juego<EstadoPoker, AccionPoker>, "id"> & { id: "poker" } = {
+export const poker: Juego<EstadoPoker, AccionPoker> = {
   id: "poker",
   maxJugadores: POKER.MAX_JUGADORES,
 

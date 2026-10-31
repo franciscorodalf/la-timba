@@ -13,13 +13,18 @@
       { "name": "Jugadores", "class_name": "Jugadores" },
       { "name": "Partida", "class_name": "Partida" },
       { "name": "MesaBlackjack", "class_name": "MesaBlackjack" },
-      { "name": "MesaCarrera", "class_name": "MesaCarrera" }
+      { "name": "MesaCarrera", "class_name": "MesaCarrera" },
+      { "name": "MesaPoker", "class_name": "MesaPoker" }
     ]
   },
   "migrations": [
     {
       "tag": "v1",
       "new_sqlite_classes": ["Jugadores", "Partida", "MesaBlackjack", "MesaCarrera"]
+    },
+    {
+      "tag": "v2",
+      "new_sqlite_classes": ["MesaPoker"]
     }
   ]
 }

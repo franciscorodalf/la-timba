@@ -112,7 +112,6 @@ describe("enrutado de /parties/*", () => {
       `/parties/partida/${codigo}/`,
       `/parties/partida/${codigo}/extra`,
       `/parties/Partida/${codigo}`,
-      `/parties/mesa-poker/${codigo}`,
       `/parties/mesa-blackjack`,
       `/parties/main/${codigo}`,
     ];
@@ -129,7 +128,7 @@ describe("enrutado de /parties/*", () => {
 
   it("solo se admiten WebSockets: una petición HTTP normal a una partida válida → 404", async () => {
     const { token, codigo } = await nuevaPartida();
-    for (const sala of ["partida", "mesa-blackjack", "mesa-carrera"]) {
+    for (const sala of ["partida", "mesa-blackjack", "mesa-carrera", "mesa-poker"]) {
       for (const metodo of ["GET", "POST"]) {
         const res = await worker.fetch(new Request(`http://x/parties/${sala}/${codigo}?token=${token}`, { method: metodo }), env);
         expect(res.status, `${metodo} ${sala}`).toBe(404);
@@ -140,7 +139,7 @@ describe("enrutado de /parties/*", () => {
 
   it("las mesas pasan por el mismo filtro: 401 sin token, 404 sin partida y 101 con ambos", async () => {
     const { token, codigo } = await nuevaPartida();
-    for (const nombre of ["mesa-blackjack", "mesa-carrera"]) {
+    for (const nombre of ["mesa-blackjack", "mesa-carrera", "mesa-poker"]) {
       const ruta = `/parties/${nombre}/${codigo}`;
       expect((await intentarConectar(ruta)).status, nombre).toBe(401);
       expect((await intentarConectar(`/parties/${nombre}/ZZ99`, token)).status, nombre).toBe(404);
@@ -294,7 +293,7 @@ describe("Partida: sala", () => {
       codigo,
       ahora: expect.any(Number),
       conectados: [jugador.apodo],
-      mesas: { blackjack: MESA_VACIA, carrera: MESA_VACIA },
+      mesas: { blackjack: MESA_VACIA, carrera: MESA_VACIA, poker: MESA_VACIA },
       rankingNoche: [],
     });
   });
@@ -538,7 +537,7 @@ describe("Partida: sala", () => {
     const conexionB = await abrir(codigo, b.token);
     const entrante = await conexionB.recibir("sala");
     expect(entrante.conectados).toEqual([a.jugador.apodo, b.jugador.apodo]);
-    expect(entrante.mesas).toEqual({ blackjack: MESA_VACIA, carrera: sentada.mesas.carrera });
+    expect(entrante.mesas).toEqual({ blackjack: MESA_VACIA, carrera: sentada.mesas.carrera, poker: MESA_VACIA });
     expect(entrante.rankingNoche).toEqual([{ apodo: a.jugador.apodo, neto: 50 }]);
     expect((await conexionA.recibir("sala")).conectados).toEqual([a.jugador.apodo, b.jugador.apodo]);
 
@@ -561,13 +560,13 @@ describe("Partida: los resúmenes de las mesas, en memoria", () => {
       return original;
     });
     const conexion = await abrir(codigo, token);
-    expect((await conexion.recibir("sala")).mesas).toEqual({ blackjack: MESA_VACIA, carrera: { jugadores: [], fase: "desconocida", finFase: null } });
+    expect((await conexion.recibir("sala")).mesas).toEqual({ blackjack: MESA_VACIA, carrera: { jugadores: [], fase: "desconocida", finFase: null }, poker: MESA_VACIA });
 
     await runInDurableObject(sala(codigo), (partida) => {
       (partida as unknown as { env: Env }).env = real;
     });
     await sala(codigo).actualizarMesa("blackjack", { jugadores: [jugador.apodo], fase: "apuestas", finFase: 5 });
-    expect((await conexion.recibir("sala")).mesas).toEqual({ blackjack: { jugadores: [jugador.apodo], fase: "apuestas", finFase: 5 }, carrera: MESA_VACIA });
+    expect((await conexion.recibir("sala")).mesas).toEqual({ blackjack: { jugadores: [jugador.apodo], fase: "apuestas", finFase: 5 }, carrera: MESA_VACIA, poker: MESA_VACIA });
   });
 
   it("lo que manda una mesa no lo pisa la respuesta, más vieja, a lo que la sala le preguntó; y el ranking sale al día", async () => {
@@ -700,6 +699,6 @@ describe("Partida: ciclo de vida", () => {
     expect(await sala(codigo).existe()).toBe(true);
     const nueva = await abrir(codigo, token);
     const mensaje: MensajeSala = await nueva.recibir("sala");
-    expect(mensaje.mesas).toEqual({ blackjack: MESA_VACIA, carrera: MESA_VACIA });
+    expect(mensaje.mesas).toEqual({ blackjack: MESA_VACIA, carrera: MESA_VACIA, poker: MESA_VACIA });
   });
 });

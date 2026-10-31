@@ -1,7 +1,7 @@
 import { type Connection, type ConnectionContext, Server, type WSMessage } from "partyserver";
 import type { FilaRankingPartida, MensajeMesa } from "../shared/api";
 import { rngCripto, type Rng } from "../shared/cartas";
-import type { CodigoError, Evento, FilaLiquidacion, Juego, JugadorId, Paso, ResumenMesa } from "../shared/juegos/tipos";
+import type { CodigoError, Evento, FilaLiquidacion, Juego, JugadorId, LiquidacionPaso, Paso, ResumenMesa } from "../shared/juegos/tipos";
 import type { Env } from "./index";
 import { type Jugadores, jugadoresGlobal } from "./jugadores";
 import type { RondaLiquidada } from "./partida";
@@ -65,6 +65,9 @@ interface Registro<E> {
 }
 
 type PasoOk<E> = Extract<Paso<E>, { ok: true }>;
+
+/** Las rondas que cierra un cambio: lo normal es una o ninguna, pero en el póker se pueden levantar varios a la vez. */
+const rondasQueCierra = <E>({ liquidacion, liquidaciones = [] }: PasoOk<E>): LiquidacionPaso[] => (liquidacion === undefined ? liquidaciones : [liquidacion, ...liquidaciones]);
 
 /** Para los manejadores de WebSocket: la cola ya registró el fallo y partyserver no debe ver un rechazo. */
 const ignorar = (): void => {};
@@ -297,7 +300,7 @@ export abstract class Mesa<E extends { ronda: number }, A extends { t: string }>
     const ahora = this.ahora();
     await this.alDia(ahora);
     const estado = this.estado;
-    const p = this.juego.aplicar(estado, yo.jugadorId, accion, ahora, this.rng);
+    const p = this.juego.aplicar(estado, yo.jugadorId, accion, ahora, this.rng, yo.apodo);
     if (!p.ok) return this.enviarError(conn, p.error);
     // Una acción sin efecto no se guarda ni se cobra.
     if (p.estado === estado) return;
@@ -307,7 +310,8 @@ export abstract class Mesa<E extends { ronda: number }, A extends { t: string }>
     // Se acaba de quedar sin fichas: durante la pausa no se guarda la intención ni se pregunta a Jugadores.
     if ((this.sinFichasHasta.get(yo.jugadorId) ?? ahora) > ahora) return this.enviarError(conn, "sin_fichas");
 
-    const cobro = await this.cobrar(yo.jugadorId, costo, estado.ronda, ahora);
+    const ronda = this.juego.rondaDelCobro?.(estado, yo.jugadorId, accion) ?? estado.ronda;
+    const cobro = await this.cobrar(yo.jugadorId, costo, ronda, ahora);
     if (cobro !== "ok") return this.enviarError(conn, cobro);
     await this.confirmar(p, ahora, { cerrarCobro: true });
   }
@@ -379,7 +383,7 @@ export abstract class Mesa<E extends { ronda: number }, A extends { t: string }>
       this.programarAviso(ahora);
       return false;
     }
-    if (p.anunciado === true && p.liquidacion === undefined) {
+    if (p.anunciado === true && rondasQueCierra(p).length === 0) {
       this.estado = p.estado;
       this.programarAviso(ahora);
       return false;
@@ -438,11 +442,14 @@ export abstract class Mesa<E extends { ronda: number }, A extends { t: string }>
     { excluir, cerrarCobro = false }: { excluir?: string; cerrarCobro?: boolean } = {},
   ): Promise<void> {
     const cambios: Partial<Registro<E>> = { estado: p.estado };
-    if (p.liquidacion !== undefined) {
-      const { ronda, filas, visibleEn } = p.liquidacion;
-      const liquidacion: Liquidacion = { rondaId: this.rondaId(ronda), filas, momento: ahora };
-      if (visibleEn !== undefined) liquidacion.visibleEn = visibleEn;
-      cambios.pendientes = [...this.pendientes, liquidacion];
+    const cerradas = rondasQueCierra(p);
+    if (cerradas.length > 0) {
+      const nuevas = cerradas.map(({ ronda, filas, visibleEn }) => {
+        const liquidacion: Liquidacion = { rondaId: this.rondaId(ronda), filas, momento: ahora };
+        if (visibleEn !== undefined) liquidacion.visibleEn = visibleEn;
+        return liquidacion;
+      });
+      cambios.pendientes = [...this.pendientes, ...nuevas];
     }
     if (cerrarCobro) cambios.cobro = null;
     await this.guardar(cambios);

@@ -9,6 +9,7 @@ const sala = {
   mesas: {
     blackjack: { jugadores: [], fase: "esperando", finFase: null },
     carrera: { jugadores: ["Ana"], fase: "apuestas", finFase: 1_000 },
+    poker: { jugadores: [], fase: "esperando", finFase: null },
   },
   rankingNoche: [{ apodo: "Ana", neto: 50 }],
 };
@@ -32,6 +33,7 @@ describe("leerMensajeSala", () => {
     expect(leerMensajeSala(JSON.stringify({ ...sala, ahora: "mañana" }))).toBeNull();
     expect(leerMensajeSala(JSON.stringify({ ...sala, rankingNoche: undefined }))).toBeNull();
     expect(leerMensajeSala(JSON.stringify({ ...sala, mesas: { blackjack: sala.mesas.blackjack } }))).toBeNull();
+    expect(leerMensajeSala(JSON.stringify({ ...sala, mesas: { blackjack: sala.mesas.blackjack, carrera: sala.mesas.carrera } }))).toBeNull();
     expect(leerMensajeSala(JSON.stringify({ ...sala, mesas: null }))).toBeNull();
   });
 });
