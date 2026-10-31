@@ -11,6 +11,8 @@ La Timba es una web gratuita para jugar a las cartas con amigos. Alguien crea un
 - **Documentos:**
   - Spec (manda sobre el plan y sobre el código): `docs/superpowers/specs/2026-10-17-la-timba-design.md`
   - Plan original: `docs/superpowers/plans/2026-10-17-la-timba.md`
+  - Spec del blackjack completo y de la carrera de seis tramos (amplía el anterior y, si chocan, manda): `docs/superpowers/specs/2026-10-29-blackjack-completo-design.md`, con su plan en `docs/superpowers/plans/2026-10-29-blackjack-completo.md`
+  - Estado del desarrollo (qué queda y qué viene después): `docs/ESTADO.md`
   - README de portfolio: `README.md`
 
 ## Comandos
@@ -71,7 +73,15 @@ npm run deploy                   # build + wrangler deploy (lo hace el usuario)
 - El tiempo y el azar entran como parámetros.
 - `vista(estado, jugador, ahora)` es lo único que sale del servidor. Nunca incluye información oculta: la baraja, la carta tapada de la banca o los pasos futuros de la carrera.
 - La carrera se sortea entera al cerrar las apuestas. Sus pasos los anuncia un temporizador en memoria (`proximoAviso`/`eventosEntre`), sin escrituras.
+- La carrera tiene 6 tramos (`CARRERA.TRAMOS`), en las líneas 1 a 6. La línea 7 se dibuja sin carta: un tramo se gira cuando todos lo han pasado y llegar a la casilla 8 termina la carrera, así que un séptimo casi nunca podría girarse.
 - En el blackjack, la banca juega al cerrarse las decisiones y la ronda queda liquidada en esa escritura (fase `resultado`). La vista enseña la banca durante `BANCA_MS`, después el resultado y, al acabar, la ronda siguiente, todo desde memoria. En la banca, `resumen` devuelve `null` y la sala no se entera.
+- **Casillas y manos del blackjack:**
+  - Hay `BJ.CASILLAS` (7) casillas para `BJ.MAX_JUGADORES` (6) jugadores. Cada jugador ocupa una y puede pedir una segunda (`{ t: "apostar", segunda: true }`); si no queda ninguna, `sin_casilla`. Una mano abandonada ocupa su casilla hasta el fin de la ronda.
+  - `manos` es una lista plana con `casilla` e `indice`, en ese orden. Cada jugador llega como mucho a `BJ.MAX_MANOS_JUGADOR` (4) contando las divisiones.
+  - `pedir`, `plantarse`, `doblar`, `dividir` y `rendirse` actúan sobre `manoActiva(e, jugadorId)`, la primera que sigue jugando.
+  - La liquidación es de una fila por jugador: `apuesta` y `pago` suman sus manos y su seguro.
+  - `opciones` (de `opcionesDe`) dice a quien recibe la vista qué le permiten las reglas, y el cliente no las repite. El reductor no conoce las fichas: la pantalla oculta lo que no te llega y `Jugadores` lo rechaza con `sin_fichas`. `opciones.seguro` es el coste (`null` si no toca), no un booleano.
+  - El ritmo del reparto y de la mirada de la banca (`BJ.ESCALONADO_MS`, `BJ.VUELO_MS`, `BJ.MIRA_MS`) vive en las reglas y el cliente lo lee de ahí, porque el servidor retrasa la banca lo que la pantalla tarda en enseñarlo (`esperaDeLaMirada`). Si cambias esos tiempos, cambian los dos lados.
 
 ### Cliente (`src/client/`)
 
@@ -82,8 +92,14 @@ npm run deploy                   # build + wrangler deploy (lo hace el usuario)
   - `useMesa` y `usePartida`: los sockets con partysocket. Cada mensaje trae `ahora` del servidor y `reloj.ts` corrige el desfase para las cuentas atrás.
   - `useEnvioUnico`: evita el doble envío, atado a la respuesta a *tu* acción.
 - **Pantallas de mesa:** convierten «vista + eventos» en un guion animado. Siempre acaban en la última vista, y al reconectar saltan a ella sin animar ni sonar.
-  - Blackjack: `pantallas/blackjack/guion.ts` y `useGuion` (repartos desde el `Mazo`).
-  - Carrera: `pantallas/carrera/escena.ts` (`planDeLote`, puro), `cola.ts` (una cola ordenada con un solo temporizador) y `useEscena`.
+  - Blackjack (en `pantallas/blackjack/`):
+    - `guion.ts` y `useGuion`: repartos desde el `Mazo`, la mirada de la banca y las divisiones. Cada carta se identifica con `claveCarta(ronda, de, mano, indice)`.
+    - `manos.ts` (puro): la mano activa, el tamaño de las cartas para que tus manos quepan en fila, su sitio en el arco del ordenador y la agrupación de los demás jugadores.
+    - `asientos.tsx`: tus manos (`MisManos`), los asientos de los demás en el ordenador (`AsientoOtro`) y sus pastillas en el móvil (`PastillaOtro`).
+    - `useDeslizar.ts`: al dividir, las cartas se deslizan a su sitio nuevo sin desaparecer en ningún fotograma.
+    - `useEspacio.ts`: mide el hueco real entre los vecinos. Si tus manos no caben ahí, se colocan al fondo del tapete.
+    - `controles.tsx`: los paneles `Apostar`, `Decidir` y `PanelSeguro`, y `textoEstado`.
+  - Carrera: `pantallas/carrera/escena.ts` (`planDeLote`, puro; la carta de cada paso sale `REVELADO_MS` antes de que avance el caballo), `cola.ts` (una cola ordenada con un solo temporizador) y `useEscena`.
 - **Piezas de mesa compartidas** en `componentes/` y `efectos/`:
   - `FichasApuesta` (bandeja con «Todo») y `CasillaApuesta` (la pila en el tapete);
   - `CartelPremio`, `EstadoMesa`, `AvisoMesa`, `FichasVolando`, `BarraMesa` y `SinMesa`;
@@ -106,7 +122,7 @@ npm run deploy                   # build + wrangler deploy (lo hace el usuario)
   - Las lecturas de fichas, perfil y ranking son de coste constante, no recorren el historial.
 - **El libro de fichas tiene que cuadrar siempre**, también con reconexiones, desalojos, reintentos de alarmas y varias pestañas. No muevas fichas fuera de `Jugadores` ni te saltes el cobro en dos fases.
 - **El servidor manda:** el cliente solo envía intenciones. La reconexión a mitad de una ronda tiene que funcionar.
-- **Apuestas:** sin tope; desde 10 fichas hasta todas las tuyas.
+- **Apuestas:** sin tope; desde 10 fichas hasta todas las tuyas. En el blackjack, cada casilla lleva su apuesta, y la segunda casilla, doblar, dividir y el seguro se cobran cada uno con su cobro en dos fases.
 
 ## E2E: mesas simuladas
 

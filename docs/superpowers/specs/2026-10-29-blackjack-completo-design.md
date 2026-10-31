@@ -86,8 +86,7 @@ Fuera de alcance: el póker y la Bomba (cada uno tendrá su propio diseño), las
   - `casilla: number` (0–6);
   - `indice: number` (orden dentro del jugador);
   - `dividida: boolean`;
-  - `rendida: boolean`;
-  - `estado` gana `"rendido"`.
+  - `estado` gana `"rendido"`, que es lo que dice que una mano se ha rendido.
 - Al dividir, la mano nueva se inserta justo después de la que se divide.
 - `EstadoBJ` añade:
   - `fase: "seguro"`;
@@ -112,9 +111,9 @@ Fuera de alcance: el póker y la Bomba (cada uno tendrá su propio diseño), las
 
 ### 4.3 Vista y eventos
 
-- La vista de cada mano añade `casilla`, `indice`, `dividida` y `rendida`.
+- La vista de cada mano añade `casilla`, `indice` y `dividida`.
 - La vista añade, solo para quien la recibe:
-  - `opciones: { pedir; plantarse; doblar; dividir; rendirse; seguro }` (booleanos que calcula el servidor; el cliente no repite reglas);
+  - `opciones: { pedir; plantarse; doblar; dividir; rendirse; seguro }`, que calcula el servidor con las reglas, así que el cliente no las repite. Son booleanos, salvo `seguro`, que es lo que cuesta asegurarse (`null` si no toca);
   - `miSeguro`;
   - `casillasLibres`.
 - La carta tapada de la banca sigue sin salir del servidor hasta que se gira.
@@ -134,7 +133,7 @@ Fuera de alcance: el póker y la Bomba (cada uno tendrá su propio diseño), las
 ### 5.1 Apuestas
 
 - **Segunda mano:**
-  - Junto a tu casilla aparece «+ Segunda mano» si `casillasLibres > 0`.
+  - Antes de apostar la primera, junto a tu casilla aparece «+ Segunda mano» si hay 2 o más casillas libres: con una sola, la segunda daría `sin_casilla` seguro.
   - Al tocarla aparece otra casilla.
   - Tocando una casilla la eliges (aro dorado). Las fichas y «Todo» van a la elegida; «Todo» reparte lo que te queda en ella.
 - **Botón de apostar:** «Apostar 100 + 50». Manda las dos apuestas, cada una con su `cobroId` y su respuesta.
@@ -174,7 +173,7 @@ Fuera de alcance: el póker y la Bomba (cada uno tendrá su propio diseño), las
 
 ## 6. Casos límite
 
-- **Fichas insuficientes:** no se ofrece dividir, doblar ni seguro (el servidor lo calcula en `opciones` y `Jugadores` lo vuelve a comprobar al cobrar).
+- **Fichas insuficientes:** no se ofrece dividir, doblar ni seguro. `opciones` solo sabe de reglas, porque el reductor no conoce las fichas: es la pantalla la que comprueba si te llegan, y `Jugadores` lo vuelve a comprobar al cobrar.
 - **Concurrencia:**
   - Dos pestañas del mismo jugador: la cola de la mesa ordena y la segunda acción recibe error sin cobro.
   - La última casilla pedida a la vez por dos jugadores: `sin_casilla` para el segundo, sin cobro.

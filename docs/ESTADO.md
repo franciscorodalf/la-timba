@@ -20,8 +20,9 @@ Notas para retomar el trabajo en local. Última actualización: 30/10/2026.
 | 7 | Pantalla: apostar con dos manos | hecha y revisada |
 | 8 | Pantalla: varias manos, dividir y rendirse | hecha y revisada |
 | 9 | Pantalla: seguro y la banca mira | hecha y revisada |
-| 10 | README, CLAUDE.md y capturas | **pendiente** |
-| — | Revisión final de toda la rama y PR a `main` | **pendiente** |
+| 10 | README, CLAUDE.md y capturas | hecha |
+| — | Revisión final de toda la rama | hecha |
+| — | PR a `main` | **pendiente** |
 
 ## Cómo seguir en local
 
@@ -39,13 +40,9 @@ npm run e2e                           # sin otro `npm run dev` abierto
 
 ## Lo que falta del plan
 
-1. **Tarea 10** (ver el plan), y además:
-   - el spec viejo (2026-10-17) dice «Pista: 7 tramos» y ahora son 6;
-   - en el spec nuevo §5.1, «+ Segunda mano» aparece antes de apostar solo si hay **2 o más** casillas libres (ver decisiones);
-   - `CLAUDE.md` debe mencionar `manos.ts`, `useDeslizar.ts`, `asientos.tsx`, `claveCarta(ronda, de, mano, indice)` y las constantes de tiempo compartidas en `BJ`;
-   - capturas nuevas para el README.
-2. **Revisión final de toda la rama** (`main..feat/la-timba-v1-830fa7`), que decide cuáles de los detalles menores de abajo hay que arreglar antes de fusionar.
-3. Abrir el PR a `main`.
+Abrir el PR a `main`. La revisión final no encontró nada que impida fusionar: se leyeron enteros los cambios de reglas y servidor, y el guion y la mesa de blackjack en el cliente, con los cinco puntos de «Review Focus» del plan. La hizo la misma sesión que cerró la Tarea 10, así que una revisión independiente aún podría encontrar algo.
+
+Con el código de la rama, en un Mac: tipos correctos, 689 tests y 296 e2e en verde (20 se saltan por ser solo de un dispositivo).
 
 ## Decisiones que tomé por mi cuenta (revísalas)
 
@@ -65,7 +62,14 @@ Decisiones tuyas en esta sesión:
 - El objetivo de presupuesto sigue en el 30 %, sin más optimizaciones.
 - Tras un `sin_fichas`, la mesa rechaza en memoria durante 2 s las jugadas de pago de ese jugador. Así se evita que un cliente trucado agote las escrituras del día. *Coste: un jugador real con el saldo desfasado puede ver «No tienes fichas» otra vez durante esos 2 s.*
 
-## Detalles menores apuntados para la revisión final
+Decisiones de la Tarea 10, ya en local:
+
+- También se rehicieron las capturas de la carrera, aunque el plan solo pedía las del blackjack: aún enseñaban 7 tramos.
+- El spec nuevo se alineó con lo construido donde las decisiones de arriba lo cambiaban: sin campo `rendida`, `opciones.seguro` es el coste, la pantalla comprueba las fichas y «+ Segunda mano» pide 2 casillas libres.
+
+## Detalles menores que la revisión final deja para después
+
+Ninguno bloquea la fusión.
 
 **Reglas y servidor**
 
@@ -105,7 +109,7 @@ Decisiones tuyas en esta sesión:
   - estaría bien avisar «Te desconectaste: sin seguro» al reconectar;
   - los botones de decisión están activos durante la mirada de 0,7 s;
   - una anotación del e2e de 3 navegadores es engañosa;
-  - `useEnvioUnico` se queda esperando si llega el mismo error dos veces en menos de `ERROR_MS` (ya pasaba antes).
+  - `useEnvioUnico` solo se quedaría esperando si llegaran dos errores iguales a un mismo envío: un segundo toque no lo bloquea, porque `enviar` limpia el error (se comprobó con tres `sin_fichas` seguidos).
 - Carrera:
   - `PASO_COMPRIMIDO_MS` está sin uso;
   - un título de e2e es exagerado;

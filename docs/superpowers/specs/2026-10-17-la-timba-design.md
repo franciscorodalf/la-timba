@@ -163,12 +163,12 @@ Mesa → cliente:
 
 ### 6.2 Carrera de caballos
 - Hasta 12 jugadores por mesa.
-- Caballos: los 4 ases. Pista: 7 tramos, cada uno con una carta boca abajo sacada al inicio.
+- Caballos: los 4 ases. Pista: 6 tramos, cada uno con una carta boca abajo sacada al inicio (en las líneas 1 a 6; la línea 7 no lleva carta).
 - **Apuestas**: 20 s; a uno o varios caballos; mínimo 10 y sin máximo por caballo: hasta todas tus fichas («Todo»).
 - **Carrera**: se levanta una carta del mazo cada ~0,8 s; avanza 1 casilla el caballo de su palo.
 - Cuando todos los caballos han superado un tramo, se gira la carta de ese tramo y el caballo de su palo retrocede 1 casilla.
 - Si el mazo se agota, se rebaraja el descarte.
-- Gana el primero en pasar el tramo 7. Pago fijo ×4 (apuesta incluida).
+- Gana el primero en llegar a la meta (la casilla 8, pasada la línea 7). Pago fijo ×4 (apuesta incluida).
 
 ### 6.3 Común
 - Salir a propósito con apuesta en juego → se pierde.
