@@ -94,6 +94,16 @@ describe("botes de póker", () => {
     expect(botes).toEqual([{ cantidad: 120, jugadores: [A] }]);
   });
 
+  it("sin vivos con aportación, las fichas forman un bote de los vivos", () => {
+    const { botes, devuelto } = calcularBotes([vivo(A, 0), muerto(B, 10), vivo(C, 0), muerto(D, 5)]);
+    expect(botes).toEqual([{ cantidad: 15, jugadores: [A, C] }]);
+    expect(devuelto).toBeNull();
+  });
+
+  it("sin aportes no hay botes", () => {
+    expect(calcularBotes([vivo(A, 0), muerto(B, 0)])).toEqual({ botes: [], devuelto: null });
+  });
+
   it("reparte a partes iguales y la ficha impar va al primero", () => {
     expect(repartirBote(101, [A, B])).toEqual([
       { jugadorId: A, cantidad: 51 },

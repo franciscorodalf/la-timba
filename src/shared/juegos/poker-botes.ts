@@ -17,7 +17,7 @@ const mismosJugadores = (a: JugadorId[], b: JugadorId[]): boolean => a.length ==
 
 /**
  * Divide lo aportado en botes paralelos, uno por cada nivel distinto de aportación entre los vivos.
- * Hace falta al menos un jugador vivo con aportación positiva (las ciegas lo garantizan). Si no lo hubiera, no habría a quién dar los botes y saldrían vacíos.
+ * Si ningún vivo ha aportado (la vista solo mira las rondas cerradas, y la ciega grande puede levantarse antes del flop), todo forma un bote de los vivos.
  * Lo repartido más lo devuelto suma siempre lo aportado.
  */
 export function calcularBotes(aportes: Aporte[]): { botes: Bote[]; devuelto: { jugadorId: JugadorId; cantidad: number } | null } {
@@ -47,6 +47,9 @@ export function calcularBotes(aportes: Aporte[]): { botes: Bote[]; devuelto: { j
     if (ultimo && mismosJugadores(ultimo.jugadores, jugadores)) ultimo.cantidad += cantidad;
     else botes.push({ cantidad, jugadores });
   });
+
+  const sinNivel = niveles.length === 0 ? restantes.reduce((suma, a) => suma + a.aportado, 0) : 0;
+  if (sinNivel > 0) botes.push({ cantidad: sinNivel, jugadores: restantes.filter((a) => a.vivo).map((a) => a.jugadorId) });
 
   return { botes, devuelto };
 }
