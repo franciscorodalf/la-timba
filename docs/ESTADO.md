@@ -5,7 +5,7 @@ Notas para retomar el trabajo en local. Última actualización: 31/10/2026.
 ## Dónde está todo
 
 - **`main`** tiene la v1 (PR #1) y el blackjack completo con la carrera de seis tramos (PR #2).
-- **`feat/poker`** tiene la mesa de póker, hecha a falta de la revisión final de toda la rama. Aún no tiene PR. Spec: `docs/superpowers/specs/2026-10-31-poker-design.md`; plan: `docs/superpowers/plans/2026-10-31-poker.md`.
+- **`feat/poker`** tiene la mesa de póker: revisión final hecha; pendiente de fusionar. Aún no tiene PR. Spec: `docs/superpowers/specs/2026-10-31-poker-design.md`; plan: `docs/superpowers/plans/2026-10-31-poker.md`.
 - **Lo siguiente:** el chat de partida (ver «Después de este plan»).
 - **Plan terminado:** `docs/superpowers/plans/2026-10-29-blackjack-completo.md`, con su spec `docs/superpowers/specs/2026-10-29-blackjack-completo-design.md`.
 
@@ -39,7 +39,7 @@ Plan del póker (`feat/poker`):
 | 9 | Pantalla: tabla de jugadas | hecha y revisada |
 | 10 | Pantalla: guion, animaciones y sonido | hecha y revisada |
 | 11 | Mano de verdad, documentación y capturas | hecha |
-| — | Revisión final de toda la rama | pendiente |
+| — | Revisión final de toda la rama | hecha |
 | — | PR a `main` | pendiente |
 
 ## Datos para seguir
@@ -84,7 +84,10 @@ Cada una lleva lo que costaría si me equivoqué.
 - **La sesión es la ronda del libro** (`${codigo}:poker:${sesion}`) y el rescate se bloquea con `apuestas_pendientes` mientras estás sentado. Cada sesión cuenta como una partida.
 - **La mano real destapó:** nada. El e2e de verdad (dos navegadores, una mano a igualar y pasar hasta el showdown y levantarse) pasó a la primera en los dos proyectos.
 - **El e2e de verdad lee las fichas del servidor** (`GET /api/fichas`), no con `fichasDeApi`, que es una maqueta de la API para las mesas simuladas.
-- **La tabla de coste del spec §4.4 (28 filas por mano) quedó vieja:** lo medido son 24,8. El spec no se tocó.
+- **Límite de 10 sesiones por hora y jugador** (`POKER.SESIONES_POR_HORA`, error `demasiadas_sesiones`), añadido en la revisión final. Sentarse y levantarse en bucle no cuesta fichas, pero cada ciclo son unas 13 filas escritas y un script podría agotar las 100.000 diarias y dejar toda La Timba «descansando». Los instantes de las sesiones van en el estado de la mesa, en la misma escritura de `sentarse`, así que no cuestan ninguna fila extra. *Si está mal: 10 puede quedarse corto para una noche de mucho entrar y salir; es un número en `POKER`.*
+- **La mesa de póker ya no pide `/api/fichas` en cada mano:** el saldo no cambia entre manos y los efectos de sentarse, levantarse y añadir ya lo ponen al día. El spec §4.4 se corrigió a 25 filas por mano y 3.700 por noche.
+- **Capturas rehechas** (`poker-*` y `sala-*`): la del póker enseñaba a Pablo all-in con 220 y el botón «Igualar 40»; ahora `opciones.igualar`, las apuestas delante de cada asiento y el bote cuadran. La sala enseña las tres mesas. Mismas medidas que antes y menos de 400 KB.
+- **El texto del rescate** dice ahora «Tienes fichas en juego: espera a que acabe tu ronda o levántate de la mesa de póker», porque sentado en el póker esa ronda no acaba hasta levantarte.
 
 ## Detalles menores del póker que la revisión deja para después
 
@@ -182,7 +185,7 @@ La Playwright del proyecto (1.64.1) pide chromium 1248, y allí solo hay la 1243
 
 ## Después de este plan
 
-1. **Póker** (hecho en `feat/poker`, a falta de la revisión final y del PR): Texas Hold'em sin límite con todas sus reglas, tabla de jugadas y botón para tapar o enseñar tus cartas. Ver su spec.
+1. **Póker** (hecho en `feat/poker`, con la revisión final hecha; pendiente de fusionar): Texas Hold'em sin límite con todas sus reglas, tabla de jugadas y botón para tapar o enseñar tus cartas. Ver su spec.
 2. **Chat de partida** (decidido, lo siguiente): un chat por código de partida, visible en la sala y en todas sus mesas, solo para quien tiene el código.
    - Va por el socket de la sala, que ya está abierto en todas las pantallas.
    - Guarda los últimos 30 mensajes en una sola fila de `Partida`, con una escritura por mensaje. En memoria no bastaría: `Partida` hiberna y lo perdería. Con unos 300 mensajes por noche, sube unos 0,3 puntos las filas escritas.

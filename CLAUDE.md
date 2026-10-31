@@ -13,6 +13,7 @@ La Timba es una web gratuita para jugar a las cartas con amigos. Alguien crea un
   - Plan original: `docs/superpowers/plans/2026-10-17-la-timba.md`
   - Spec del blackjack completo y de la carrera de seis tramos (amplía el anterior y, si chocan, manda): `docs/superpowers/specs/2026-10-29-blackjack-completo-design.md`, con su plan en `docs/superpowers/plans/2026-10-29-blackjack-completo.md`
   - Estado del desarrollo (qué queda y qué viene después): `docs/ESTADO.md`
+  - Spec del póker (amplía los anteriores y, si chocan, manda; incluye el límite de 10 sesiones por hora, `POKER.SESIONES_POR_HORA`, que protege la cuota diaria): `docs/superpowers/specs/2026-10-31-poker-design.md`, con su plan en `docs/superpowers/plans/2026-10-31-poker.md`
   - README de portfolio: `README.md`
 
 ## Comandos

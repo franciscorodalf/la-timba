@@ -38,6 +38,7 @@ export const POKER = {
   CALLE_MS: 900,
   SOLO_MS: 600_000,
   FALTAS_MAX: 2,
+  SESIONES_POR_HORA: 10,
 } as const;
 ```
 
@@ -45,6 +46,7 @@ export const POKER = {
 
 - **Mirar:** entrar en la mesa no te sienta. Ves la partida sin cartas ni fichas en juego, sin límite de personas.
 - **Sentarte:** eliges con cuántas fichas, desde `COMPRA_MIN` hasta todas las tuyas. No hay máximo. Ocupas el asiento libre de número más bajo. Si no queda ninguno, el error es `sin_asiento`.
+- **Límite de sesiones:** cada jugador puede sentarse como mucho `SESIONES_POR_HORA` (10) veces en una hora, contadas desde cada sentada. La 11.ª da `demasiadas_sesiones` antes de cobrar nada. Sentarse y levantarse en bucle no cuesta fichas, pero cada ciclo son unas 13 filas escritas, y un script podría agotar las 100.000 filas diarias y dejar toda La Timba «descansando». El estado de la mesa guarda los instantes de las últimas sesiones por jugador, podados a la última hora, en la misma escritura de `sentarse`.
 - **Entrar a mitad de mano:** esperas a la siguiente, sin poner ninguna ciega de más.
 - **Añadir fichas:** se puede en cualquier momento. Si estás en una mano, las fichas añadidas entran en tu montón al empezar la siguiente: nunca cuentan en la mano en curso.
 - **Levantarte:**
@@ -168,7 +170,7 @@ export interface OpcionesPoker {
 
 - `sentar` no ocupa asiento: solo devuelve la conexión a quien ya estaba sentado.
 - `salir` es lo que manda `useSalirDeMesa`: hace lo mismo que `levantarse`.
-- `CodigoError` añade `sin_asiento`, con el texto «La mesa está completa». Una subida que no cumple las reglas responde `apuesta_invalida`.
+- `CodigoError` añade `sin_asiento`, con el texto «La mesa está completa», y `demasiadas_sesiones`, con el texto «Has entrado y salido demasiadas veces. Espera un rato para volver a sentarte». Una subida que no cumple las reglas responde `apuesta_invalida`.
 
 ### 4.3 Vista e información oculta
 
@@ -184,8 +186,8 @@ Eventos: `mano_empezada`, `ciega`, `carta_repartida`, `accion`, `calle_abierta`,
 
 ### 4.4 Coste
 
-- Cada jugada es una escritura de la mesa más su alarma de turno, que Cloudflare factura como otra fila: unas 28 filas por mano con 4 jugadores.
-- Unas 150 manos en 3 horas son unas 4.200 filas. Quien juega al póker deja de jugar en otra mesa, que gasta más: 11.300 filas la carrera y 15.900 el blackjack.
+- Cada jugada es una escritura de la mesa más su alarma de turno, que Cloudflare factura como otra fila: unas 25 filas por mano con 4 jugadores (medidas: 24,8).
+- Unas 150 manos en 3 horas son unas 3.700 filas. Quien juega al póker deja de jugar en otra mesa, que gasta más: 11.300 filas la carrera y 15.900 el blackjack.
 - `test/server/presupuesto.test.ts` mide una mano con all-in y enseñar, añade `poker` a `TECHO` y comprueba una noche con blackjack y póker (330 rondas y 150 manos). El objetivo sigue en el 30 %.
 
 ## 5. Pantalla
