@@ -165,20 +165,30 @@ function poner(a: AsientoPoker, cantidad: number): void {
   if (a.fichas === 0) a.estado = "allin";
 }
 
+const tieneRivalConFichas = (e: EstadoPoker, a: AsientoPoker) => e.asientos.some((otro) => otro !== a && otro.estado === "juega");
+
+/**
+ * Hasta dónde tiene que llegar `a` para seguir en la mano: la apuesta de la ronda. Sin rivales con fichas, solo lo que puso
+ * el mayor all-in: lo demás (una ciega que no se llegó a poner entera, la apuesta de quien se levantó) no lo disputa nadie.
+ */
+function apuestaAIgualar(e: EstadoPoker, a: AsientoPoker): number {
+  if (tieneRivalConFichas(e, a)) return e.apuesta;
+  return Math.max(0, ...e.asientos.filter((otro) => otro !== a && sigueEnLaMano(otro)).map((otro) => otro.apostado));
+}
+
 /**
  * Tiene que hablar quien juega y no ha igualado, o quien aún no ha hablado si queda alguien que le pueda responder.
  * Sin esa condición, con los demás all-in habría que esperar a que pasara el único que aún tiene fichas.
  */
 function debeHablar(e: EstadoPoker, a: AsientoPoker): boolean {
   if (a.estado !== "juega") return false;
-  return a.apostado < e.apuesta || (!a.actuo && e.asientos.some((otro) => otro !== a && otro.estado === "juega"));
+  return a.apostado < apuestaAIgualar(e, a) || (!a.actuo && tieneRivalConFichas(e, a));
 }
 
 /** Entre qué totales puede subir: hasta todas sus fichas, y desde una subida completa o, si no le llega, solo all-in. */
 function rangoDeSubida(e: EstadoPoker, a: AsientoPoker): OpcionesPoker["subir"] {
   const max = a.apostado + a.fichas;
-  const alguienResponde = e.asientos.some((otro) => otro !== a && otro.estado === "juega");
-  if (!a.puedeSubir || max <= e.apuesta || !alguienResponde) return null;
+  if (!a.puedeSubir || max <= e.apuesta || !tieneRivalConFichas(e, a)) return null;
   return { min: Math.min(e.apuesta + e.subidaMinima, max), max };
 }
 
@@ -187,7 +197,7 @@ export function opcionesDe(e: EstadoPoker, jugadorId: JugadorId): OpcionesPoker 
   const a = asientoDe(e, jugadorId);
   if (a === undefined) return null;
   if (e.fase !== "mano" || e.turno !== a.asiento) return { retirarse: false, pasar: false, igualar: null, subir: null, ensenar: false };
-  const porIgualar = e.apuesta - a.apostado;
+  const porIgualar = apuestaAIgualar(e, a) - a.apostado;
   return {
     retirarse: true,
     pasar: porIgualar === 0,

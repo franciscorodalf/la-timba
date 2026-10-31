@@ -124,6 +124,59 @@ describe("póker: una mano", () => {
     expect(e.mesa).toHaveLength(5);
   });
 
+  it("quien ya cubre todos los all-in no decide: con 2 jugadores, la grande va all-in con 3 y la pequeña puso 5", () => {
+    const e = mesaCon([3, 100], T0, 0);
+    expect(e.boton).toBe(1);
+    expect(asiento(e, 1)).toMatchObject({ estado: "allin", aportado: 3 });
+    expect(asiento(e, 2)).toMatchObject({ estado: "juega", aportado: 5 });
+    expect(e).toMatchObject({ fase: "resultado", turno: null });
+    expect(e.mesa).toHaveLength(5);
+  });
+
+  it("quien ya cubre todos los all-in no decide: tampoco si los demás se retiran hasta él", () => {
+    let e = mesaCon([100, 100, 3, 100]);
+    expect(turno(e)).toBe(4);
+    e = aplicar(e, 4, { t: "retirarse" }).estado;
+    expect(turno(e)).toBe(1);
+    e = aplicar(e, 1, { t: "retirarse" }).estado;
+    expect(e).toMatchObject({ fase: "resultado", turno: null });
+    expect(e.mesa).toHaveLength(5);
+  });
+
+  it("sin nadie más con fichas solo se iguala lo que puso el all-in: la pequeña debe 2, no 5", () => {
+    const e = mesaCon([7, 100], T0, 0);
+    expect(asiento(e, 1)).toMatchObject({ estado: "allin", apostado: 7 });
+    expect(turno(e)).toBe(2);
+    expect(opcionesDe(e, 2)).toEqual({ retirarse: true, pasar: false, igualar: 2, subir: null, ensenar: false });
+    const { estado, eventos } = aplicar(e, 2, { t: "igualar" });
+    expect(eventos[0]).toEqual({ tipo: "accion", jugadorId: 2, accion: "igualar", cantidad: 2 });
+    expect(asiento(estado, 2)).toMatchObject({ fichas: 93, aportado: 7 });
+    expect(estado).toMatchObject({ fase: "resultado", turno: null });
+    expect(estado.mesa).toHaveLength(5);
+  });
+
+  it("con otro rival que aún juega se iguala la apuesta entera, aunque la grande sea corta", () => {
+    const e = aplicar(mesaCon([100, 100, 7, 100]), 4, { t: "igualar" }).estado;
+    expect(turno(e)).toBe(1);
+    expect(opcionesDe(e, 1)?.igualar).toBe(10);
+    const pequena = aplicar(e, 1, { t: "igualar" }).estado;
+    expect(opcionesDe(pequena, 2)?.igualar).toBe(5);
+  });
+
+  it("una apuesta de quien se levantó no se paga si solo queda un all-in por cubrir", () => {
+    let e = mesaCon([500, 500, 7, 500]);
+    e = aplicar(e, 4, { t: "subir", hasta: 40 }).estado;
+    e = aplicar(e, 1, { t: "retirarse" }).estado;
+    expect(turno(e)).toBe(2);
+    expect(opcionesDe(e, 2)?.igualar).toBe(35);
+    const { estado } = aplicar(e, 4, { t: "levantarse" }, T0 + 1);
+    expect(turno(estado)).toBe(2);
+    expect(opcionesDe(estado, 2)).toEqual({ retirarse: true, pasar: false, igualar: 2, subir: null, ensenar: false });
+    const fin = aplicar(estado, 2, { t: "igualar" }).estado;
+    expect(asiento(fin, 2).aportado).toBe(7);
+    expect(fin).toMatchObject({ fase: "resultado", turno: null });
+  });
+
   it("flop, turn y river queman una y abren 3, 1 y 1", () => {
     const baraja = cs("2C 3C 4C 5C 6C 7C 8C 9C");
     let e = conBaraja(mesaCon([100, 100, 100]), baraja);

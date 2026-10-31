@@ -26,16 +26,17 @@ export const error = (p: Paso<EstadoPoker>) => (p.ok ? "ok" : p.error);
  * Una mesa con los jugadores 1, 2, 3… en los asientos 0, 1, 2… y la primera mano ya empezada entre todos: el botón es el
  * jugador 1. Sentados de uno en uno, la mano empezaría con el segundo, así que los primeros se sientan con la mesa en
  * `resultado`, y solo el último, con la mesa en `esperando`. El último tiene que comprar al menos `COMPRA_MIN`; los demás
- * pueden tener menos, para probar las ciegas cortas.
+ * pueden tener menos, para probar las ciegas cortas. Con `botonAnterior`, el botón pasa al siguiente de ese asiento: así el
+ * último también puede ser el botón, y con 2 jugadores la ciega grande es la del asiento 0, que puede ser corta.
  */
-export function mesaCon(fichas: number[], ahora = T0): EstadoPoker {
+export function mesaCon(fichas: number[], ahora = T0, botonAnterior: number | null = null): EstadoPoker {
   const ultimo = fichas.length - 1;
   let e: EstadoPoker = { ...poker.crear(ahora, rng), fase: "resultado" };
   fichas.slice(0, ultimo).forEach((cantidad, i) => {
     e = aplicar(e, i + 1, { t: "sentarse", fichas: Math.max(cantidad, POKER.COMPRA_MIN) }, ahora).estado;
     e = { ...e, asientos: e.asientos.map((a) => (a.asiento === i ? { ...a, fichas: cantidad, comprado: cantidad } : a)) };
   });
-  return aplicar({ ...e, fase: "esperando" }, ultimo + 1, { t: "sentarse", fichas: fichas[ultimo] }, ahora).estado;
+  return aplicar({ ...e, fase: "esperando", boton: botonAnterior }, ultimo + 1, { t: "sentarse", fichas: fichas[ultimo] }, ahora).estado;
 }
 
 /** Fija la baraja: `cartas[0]` es la siguiente que sale. */
