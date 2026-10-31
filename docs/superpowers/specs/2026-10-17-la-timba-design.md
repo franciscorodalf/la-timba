@@ -153,7 +153,7 @@ Mesa → cliente:
 ### 6.1 Blackjack
 - 6 barajas; se rebaraja cuando queda menos del 25 %.
 - Hasta 6 jugadores por mesa.
-- **Apuestas**: 15 s; mínimo 10, máximo 500 (y nunca más de las fichas que tengas). Quien no apuesta mira esa ronda.
+- **Apuestas**: 15 s; mínimo 10 y sin máximo: hasta todas tus fichas («Todo»). Quien no apuesta mira esa ronda.
 - **Reparto**: 2 cartas a cada jugador; banca 1 visible + 1 tapada.
 - **Decisiones simultáneas** durante 15 s: Pedir, Plantarse, Doblar (solo con 2 cartas; dobla la apuesta y recibe exactamente 1 carta).
 - Tiempo agotado o desconexión → plantarse automáticamente.
@@ -163,12 +163,12 @@ Mesa → cliente:
 
 ### 6.2 Carrera de caballos
 - Hasta 12 jugadores por mesa.
-- Caballos: los 4 ases. Pista: 7 tramos, cada uno con una carta boca abajo sacada al inicio.
-- **Apuestas**: 20 s; a uno o varios caballos; mínimo 10, máximo 500 por caballo.
+- Caballos: los 4 ases. Pista: 6 tramos, cada uno con una carta boca abajo sacada al inicio (en las líneas 1 a 6; la línea 7 no lleva carta).
+- **Apuestas**: 20 s; a uno o varios caballos; mínimo 10 y sin máximo por caballo: hasta todas tus fichas («Todo»).
 - **Carrera**: se levanta una carta del mazo cada ~0,8 s; avanza 1 casilla el caballo de su palo.
 - Cuando todos los caballos han superado un tramo, se gira la carta de ese tramo y el caballo de su palo retrocede 1 casilla.
 - Si el mazo se agota, se rebaraja el descarte.
-- Gana el primero en pasar el tramo 7. Pago fijo ×4 (apuesta incluida).
+- Gana el primero en llegar a la meta (la casilla 8, pasada la línea 7). Pago fijo ×4 (apuesta incluida).
 
 ### 6.3 Común
 - Salir a propósito con apuesta en juego → se pierde.

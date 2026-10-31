@@ -1,19 +1,21 @@
-import { useAnimate } from "motion/react";
-import { type CSSProperties, forwardRef, memo, type Ref, useLayoutEffect, useRef } from "react";
+import { AnimatePresence, motion, useAnimate } from "motion/react";
+import { type CSSProperties, forwardRef, memo, type Ref, type RefObject, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Carta, Palo } from "../../../shared/cartas";
 import { CARRERA } from "../../../shared/juegos/carrera";
+import { CasillaApuesta } from "../../componentes/CasillaApuesta";
 import { Destellos } from "../../componentes/Destellos";
 import { Ficha } from "../../componentes/Ficha";
 import { Mazo } from "../../componentes/Mazo";
 import { Naipe } from "../../componentes/Naipe";
 import { useMovimientoReducido } from "../../efectos/movimiento";
 import { miles } from "../../formato";
-import { CABALLOS, type Escena } from "./escena";
+import { BAJADA_MS, CABALLOS, type Escena, REVELADO_MS } from "./escena";
 import { AS_DE, esRojo, NOMBRE_PALO, SIMBOLO_PALO } from "./palos";
 
-// Las piezas de la pista: los cuatro carriles con sus caballos, la franja de los tramos, las cabeceras (donde se apuesta) y
-// el mazo con la última carta. Los caballos se mueven con una transición CSS de `transform` hacia la casilla que se les da:
-// si llega otra casilla mientras se mueven, siguen desde donde van (el navegador reencamina la transición).
+// Las piezas de la pista: los cuatro carriles con sus caballos, la carta de cada paso que se gira en su centro, la franja de los
+// tramos, las cabeceras (donde se apuesta) y el mazo con la pila de descartes. Los caballos se mueven con una transición CSS de
+// `transform` hacia la casilla que se les da: si llega otra casilla mientras se mueven, siguen desde donde van (el navegador
+// reencamina la transición).
 
 const nombreCaballo = (palo: Palo): string => `Caballo de ${NOMBRE_PALO[palo]}`;
 const variable = (nombre: string, valor: string | number): CSSProperties => ({ [nombre]: valor }) as CSSProperties;
@@ -87,10 +89,22 @@ interface PistaProps {
   onElegir(palo: Palo): void;
   /** El ancho de los caballos, o `null` mientras no se ha medido la pista: sin medidas no se pintan (no deben deslizarse hasta su casilla). */
   caballoAncho: number | null;
+  /** La pila de descartes, adonde baja la carta del paso. */
+  descarte: RefObject<HTMLElement | null>;
+  /**
+   * Tus casillas de apuesta, mientras se apuesta (si no, `null`): una en cada carril donde has apostado y otra en el elegido,
+   * con lo que llevas preparado. `ref` es la del elegido, adonde vuelan las fichas.
+   */
+  casillas: { mias: Record<Palo, number>; preparada: number; todo: boolean; ref: RefObject<HTMLDivElement> } | null;
 }
 
-/** Los cuatro carriles con sus caballos, las líneas de cada casilla (se iluminan al girarse su tramo) y la meta a cuadros. */
-export const Pista = forwardRef<HTMLDivElement, PistaProps>(function Pista({ escena, elegido, eligible, onElegir, caballoAncho }, ref) {
+/**
+ * Los cuatro carriles con sus caballos, las líneas de cada casilla y la meta a cuadros. Hay una línea por casilla intermedia
+ * (de la 1 a la `META - 1`); las `TRAMOS` primeras se iluminan al girarse su tramo y la última es solo una línea, sin carta.
+ */
+export const Pista = forwardRef<HTMLDivElement, PistaProps>(function Pista({ escena, elegido, eligible, onElegir, caballoAncho, descarte, casillas }, ref) {
+  const reducido = useMovimientoReducido();
+  const encendidas = Math.min(escena.girados, CARRERA.TRAMOS);
   return (
     <div ref={ref} className="carrera-pista">
       <div className="carrera-pista__marco">
@@ -103,13 +117,26 @@ export const Pista = forwardRef<HTMLDivElement, PistaProps>(function Pista({ esc
               onClick={eligible ? () => onElegir(palo) : undefined}
             >
               {caballoAncho !== null && <Caballo palo={palo} casilla={escena.posiciones[palo]} ganador={escena.ganador} ancho={caballoAncho} />}
+              <AnimatePresence>
+                {casillas !== null && (casillas.mias[palo] > 0 || elegido === palo) && (
+                  <motion.div key="casilla" className="carrera-casilla" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={reducido ? { opacity: 0 } : { opacity: 0, transform: "scale(0.85)" }} transition={{ duration: 0.2 }}>
+                    <CasillaApuesta
+                      compacta
+                      ref={elegido === palo ? casillas.ref : undefined}
+                      apostado={casillas.mias[palo]}
+                      preparado={elegido === palo ? casillas.preparada : 0}
+                      todo={elegido === palo && casillas.todo}
+                    />
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
           ))}
         </div>
         <div key={escena.epoca} className="carrera-lineas" aria-hidden="true">
           <span className="carrera-linea carrera-linea--salida" style={variable("--k", 0)} />
-          {Array.from({ length: CARRERA.TRAMOS }, (_, i) => (
-            <span key={i} className={`carrera-linea${i < escena.girados ? " carrera-linea--encendida" : ""}`} style={variable("--k", i + 1)} />
+          {Array.from({ length: CARRERA.META - 1 }, (_, i) => (
+            <span key={i} className={`carrera-linea${i < encendidas ? " carrera-linea--encendida" : ""}`} style={variable("--k", i + 1)} />
           ))}
           <span className="carrera-meta" />
         </div>
@@ -122,9 +149,87 @@ export const Pista = forwardRef<HTMLDivElement, PistaProps>(function Pista({ esc
           </div>
         ))}
       </div>
+      {/* La carta del paso, por encima del marco: viene del mazo y se va a la pila de descartes, que están fuera de la pista. Es la misma que luego
+          queda en «Última carta», así que los lectores de pantalla no la leen dos veces. */}
+      <div className="carrera-carta-capa" aria-hidden="true" style={{ ...variable("--revelado", `${REVELADO_MS}ms`), ...variable("--bajada", `${BAJADA_MS}ms`) }}>
+        {escena.paso !== null && caballoAncho !== null && (
+          <CartaDelPaso key={`${escena.epoca}:${escena.paso.id}`} paso={escena.paso} origen={escena.origen} descarte={descarte} ancho={Math.round(caballoAncho * CARTA_PASO_POR_CABALLO)} />
+        )}
+      </div>
     </div>
   );
 });
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Carta del paso
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** La carta del paso se ve más grande que un caballo: es lo que se mira un momento antes de que avance. */
+const CARTA_PASO_POR_CABALLO = 1.7;
+/** Sale boca abajo y empieza a girarse a este rato de salir del mazo: llega al centro ya con la cara a la vista. */
+const GIRA_TRAS_MS = 60;
+
+interface CartaDelPasoProps {
+  paso: NonNullable<Escena["paso"]>;
+  /** El mazo en el momento en que salió la carta, o `null` si no se sabe: entonces no hay vuelo. */
+  origen: DOMRect | null;
+  descarte: RefObject<HTMLElement | null>;
+  ancho: number;
+}
+
+/** Cuánto hay que moverse y cambiar de tamaño para ir del centro de `centro` al de `otro`. */
+const vuelo = (centro: DOMRect, otro: DOMRect) => ({
+  x: otro.left + otro.width / 2 - (centro.left + centro.width / 2),
+  y: otro.top + otro.height / 2 - (centro.top + centro.height / 2),
+  escala: otro.width / centro.width,
+});
+
+/** Deja medido el vuelo en las variables que usa la animación CSS (`--sale-*` o `--baja-*`): se hace antes de pintar. */
+function medirVuelo(el: HTMLElement, medido: ReturnType<typeof vuelo>, nombre: "sale" | "baja"): void {
+  el.style.setProperty(`--${nombre}-x`, `${medido.x}px`);
+  el.style.setProperty(`--${nombre}-y`, `${medido.y}px`);
+  el.style.setProperty(`--${nombre}-escala`, `${medido.escala}`);
+}
+
+/**
+ * La carta de un paso. Sale del mazo boca abajo, se agranda hasta el centro de la pista y se gira (con la vuelta de `Naipe`) en los
+ * `REVELADO_MS` que tarda en avanzar el caballo; entonces `baja` y se va a la pila de descartes. Con movimiento reducido no vuela:
+ * aparece boca arriba con un fundido y se desvanece (lo hace el CSS).
+ */
+function CartaDelPaso({ paso, origen, descarte, ancho }: CartaDelPasoProps) {
+  const reducido = useMovimientoReducido();
+  const sitio = useRef<HTMLDivElement>(null);
+  const carta = useRef<HTMLDivElement>(null);
+  const [girada, setGirada] = useState(reducido || origen === null);
+  useEffect(() => {
+    if (girada) return;
+    const espera = setTimeout(() => setGirada(true), GIRA_TRAS_MS);
+    return () => clearTimeout(espera);
+  }, [girada]);
+
+  // Al salir: de dónde viene. Antes de pintar, para que el primer fotograma ya esté en el mazo. Solo al aparecer.
+  useLayoutEffect(() => {
+    const centro = sitio.current?.getBoundingClientRect();
+    if (reducido || origen === null || !carta.current || !centro || centro.width === 0) return;
+    medirVuelo(carta.current, vuelo(centro, origen), "sale");
+  }, []);
+
+  // Al echar a andar el caballo: adónde va.
+  useLayoutEffect(() => {
+    const centro = sitio.current?.getBoundingClientRect();
+    const destino = descarte.current?.getBoundingClientRect();
+    if (!paso.baja || reducido || !carta.current || !centro || !destino || centro.width === 0) return;
+    medirVuelo(carta.current, vuelo(centro, destino), "baja");
+  }, [paso.baja]);
+
+  return (
+    <div ref={sitio} className="carrera-carta-paso__sitio" style={variable("--ancho", `${ancho}px`)}>
+      <div ref={carta} className={`carrera-carta-paso${paso.baja ? " carrera-carta-paso--baja" : ""}`} data-carta={`${paso.carta.valor}${paso.carta.palo}`}>
+        <Naipe carta={girada ? paso.carta : null} ancho={ancho} />
+      </div>
+    </div>
+  );
+}
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Tramos
@@ -162,7 +267,7 @@ interface FranjaProps {
   ancho: number;
 }
 
-/** Los siete tramos, uno por casilla intermedia, alineados con su línea de la pista. Una pista nueva los coloca de uno en uno. */
+/** Los seis tramos, colgados de las líneas 1 a 6 de la pista (la 7 no tiene carta). Una pista nueva los coloca de uno en uno. */
 export function Franja({ escena, tramos, ancho }: FranjaProps) {
   return (
     <div className="carrera-franja" role="group" aria-label="Tramos de la pista">
@@ -243,11 +348,13 @@ interface EsquinaProps {
   escena: Escena;
   mazoAncho: number;
   mazo: Ref<HTMLDivElement>;
+  /** La pila de descartes: la carta del paso baja hasta ella. */
+  descarte: Ref<HTMLDivElement>;
   barajando: boolean;
 }
 
-/** El mazo y, a su lado, la carta que acaba de salir (con la anterior debajo, un poco torcida). */
-export function Esquina({ escena, mazoAncho, mazo, barajando }: EsquinaProps) {
+/** El mazo y, a su lado, la pila de descartes: la última carta del paso, con la anterior debajo, un poco torcida. */
+export function Esquina({ escena, mazoAncho, mazo, descarte, barajando }: EsquinaProps) {
   const reducido = useMovimientoReducido();
   return (
     <div className="carrera-esquina">
@@ -255,10 +362,16 @@ export function Esquina({ escena, mazoAncho, mazo, barajando }: EsquinaProps) {
         <Mazo ref={mazo} ancho={mazoAncho} barajando={barajando && !reducido} />
         {barajando && <span className="carrera-esquina__barajando">Barajando</span>}
       </div>
-      <div className="carrera-ultima" role="group" aria-label="Última carta" style={variable("--ancho", `${mazoAncho}px`)}>
+      <div ref={descarte} className="carrera-ultima" role="group" aria-label="Última carta" style={variable("--ancho", `${mazoAncho}px`)}>
         {escena.cartas.map((c, i) => (
-          <div key={`${escena.epoca}:${c.id}`} className={`carrera-ultima__carta${i === escena.cartas.length - 1 ? "" : " carrera-ultima__carta--vieja"}`}>
-            <Naipe carta={c.carta} ancho={mazoAncho} origen={c.id === escena.n ? escena.origen : null} />
+          <div
+            key={`${escena.epoca}:${c.id}`}
+            className={`carrera-ultima__carta${i === escena.cartas.length - 1 ? "" : " carrera-ultima__carta--vieja"}`}
+            data-carta={`${c.carta.valor}${c.carta.palo}`}
+          >
+            {/* La carta llega ya volando desde el centro de la pista (la mueve `CartaDelPaso`): aquí aparece en su sitio. Solo con movimiento
+                reducido se le da el origen, y `Naipe` se limita a fundirla. */}
+            <Naipe carta={c.carta} ancho={mazoAncho} origen={reducido && c.id === escena.n ? escena.origen : null} />
           </div>
         ))}
       </div>

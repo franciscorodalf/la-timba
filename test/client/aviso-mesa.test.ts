@@ -8,6 +8,10 @@ describe("textoErrorMesa", () => {
     expect(textoErrorMesa("descansando", "apostar")).toBe(MENSAJE_DESCANSANDO);
   });
 
+  it("sin_casilla dice que ya no quedan casillas libres", () => {
+    expect(textoErrorMesa("sin_casilla", "apostar")).toBe("Ya no quedan casillas libres");
+  });
+
   it("no_disponible es una apuesta fallida solo si lo que falló fue una apuesta; si no (decisión, llegada), el texto general", () => {
     expect(textoErrorMesa("no_disponible", "apostar")).toBe("No se pudo hacer la apuesta. Inténtalo de nuevo");
     for (const accion of ["pedir", "plantarse", "doblar", "salir", null]) {

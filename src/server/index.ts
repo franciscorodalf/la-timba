@@ -191,10 +191,21 @@ const RUTAS = new Map<string, Manejador>([
 ]);
 const RUTA_PARTIDA = /^\/api\/partidas\/([^/]+)$/;
 
+/**
+ * Sin un `TOKEN_SECRET` de verdad (falta, o se guardó vacío) no se puede firmar ni comprobar una sesión: se responde 503 antes
+ * de tocar nada (un registro no debe crear el perfil para fallar después) y se dice en el registro de errores qué falta.
+ */
+function sinSecreto(env: Env): boolean {
+  if (typeof env.TOKEN_SECRET === "string" && env.TOKEN_SECRET.trim() !== "") return false;
+  console.error("Falta TOKEN_SECRET (o está vacío): guárdalo con `npx wrangler secret put TOKEN_SECRET`.");
+  return true;
+}
+
 /** Atiende `/api/*`. Cualquier excepción no controlada se registra y responde 503. */
 async function manejarApi(request: Request, env: Env): Promise<Response> {
   const contexto: Contexto = { request, env, url: new URL(request.url) };
   const { pathname } = contexto.url;
+  if (pathname !== "/api/salud" && sinSecreto(env)) return descansando();
   try {
     const manejador = RUTAS.get(`${request.method} ${pathname}`);
     if (manejador !== undefined) return await manejador(contexto);
@@ -244,6 +255,7 @@ async function manejarParties(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   const ruta = RUTA_PARTY.exec(url.pathname);
   if (ruta === null) return error(404, "no_encontrado");
+  if (sinSecreto(env)) return descansando();
 
   // Los códigos son en mayúsculas y el nombre de un Durable Object distingue mayúsculas: se normaliza antes de enrutar.
   url.pathname = `/parties/${ruta[1]}/${ruta[2].toUpperCase()}`;

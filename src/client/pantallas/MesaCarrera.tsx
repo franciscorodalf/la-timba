@@ -42,10 +42,13 @@ export function MesaCarrera({ codigo }: { codigo: string }) {
   const ordenador = useAnchoVentana() >= ORDENADOR_PX;
 
   const mazo = useRef<HTMLDivElement>(null);
+  const descarte = useRef<HTMLDivElement>(null);
   const pista = useRef<HTMLDivElement>(null);
   const refFichas = useRef<HTMLParagraphElement>(null);
   const refDesde = useRef<HTMLElement | null>(null);
   const cabeceras = useRef<Partial<Record<Palo, HTMLButtonElement | null>>>({});
+  // La casilla del carril elegido: adonde vuelan las fichas al prepararlas.
+  const refCasilla = useRef<HTMLDivElement>(null);
 
   const escena = useEscena(lote, vista, mazo);
   // Antes de la primera vista, la pista vacía.
@@ -113,13 +116,14 @@ export function MesaCarrera({ codigo }: { codigo: string }) {
   const faseVisible: FaseCarrera | null = fase === "resultado" && e.ganador === null ? "carrera" : fase;
   const abiertas = fase === "apuestas" || fase === "esperando";
   const puedeElegir = abiertas && conectado && sentado;
-  const yaEn = elegido === null ? 0 : mias[elegido];
-  const tope = elegido === null ? 0 : Math.max(0, Math.min(CARRERA.MAX - yaEn, fichas));
+  // Sin tope por caballo: lo único que limita es lo que tienes.
+  const tope = elegido === null ? 0 : fichas;
+  const preparada = montante <= tope ? montante : 0;
 
   const apostar = () => {
     if (elegido === null || vista === null) return;
     sonidos.reproducir("fichas");
-    enviar({ t: "apostar", caballo: elegido, cantidad: montante });
+    enviar({ t: "apostar", caballo: elegido, cantidad: preparada });
     marcarEnviado();
   };
 
@@ -135,10 +139,10 @@ export function MesaCarrera({ codigo }: { codigo: string }) {
     controles = (
       <PanelApuestas
         elegido={elegido}
-        montante={montante}
+        montante={preparada}
         tope={tope}
-        alMaximo={elegido !== null && yaEn >= CARRERA.MAX}
         activo={puedeElegir && !esperando}
+        destino={refCasilla}
         esperando={esperando}
         onCambiar={setMontante}
         onApostar={apostar}
@@ -157,10 +161,19 @@ export function MesaCarrera({ codigo }: { codigo: string }) {
       <BarraMesa titulo="Carrera" onVolver={salida.alVolver} refFichas={refFichas} />
 
       <div className={`carrera-mesa aparece${ajustando ? " carrera-mesa--ajustando" : ""}`} style={estiloMesa}>
-        <Pista ref={pista} escena={e} elegido={elegido} eligible={puedeElegir} onElegir={setElegido} caballoAncho={escena !== null && g !== null ? g.caballoAncho : null} />
+        <Pista
+          ref={pista}
+          escena={e}
+          elegido={elegido}
+          eligible={puedeElegir}
+          onElegir={setElegido}
+          caballoAncho={escena !== null && g !== null ? g.caballoAncho : null}
+          descarte={descarte}
+          casillas={abiertas && vista !== null ? { mias, preparada, todo: preparada > 0 && preparada === fichas, ref: refCasilla } : null}
+        />
         <Franja escena={e} tramos={vista?.tramos ?? SIN_TRAMOS} ancho={medidas.tramoAncho} />
         <Cabeceras elegido={elegido} activo={puedeElegir} ganador={e.ganador} mias={mias} mesa={vista?.totalesPorCaballo ?? SIN_CASILLAS} onElegir={setElegido} refs={cabeceras} />
-        <Esquina escena={e} mazoAncho={medidas.mazoAncho} mazo={mazo} barajando={barajando} />
+        <Esquina escena={e} mazoAncho={medidas.mazoAncho} mazo={mazo} descarte={descarte} barajando={barajando} />
       </div>
 
       <section className="carrera-panel" aria-label="Tu jugada">

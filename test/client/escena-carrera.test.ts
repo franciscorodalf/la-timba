@@ -1,22 +1,26 @@
 import { describe, expect, it } from "vitest";
 import {
   aplicarMarco,
+  BAJADA_MS,
   type Escena,
   escenaDeVista,
   GANADOR_MS,
   GIRO_TRAMO_MS,
+  type Marco,
   PASO_COMPRIMIDO_MS,
+  type Plan,
   planDeLote,
   RETROCESO_MS,
+  REVELADO_MS,
 } from "../../src/client/pantallas/carrera/escena";
 import type { Carta, Palo } from "../../src/shared/cartas";
-import type { VistaCarrera } from "../../src/shared/juegos/carrera";
+import { CARRERA, type VistaCarrera } from "../../src/shared/juegos/carrera";
 
 const c = (texto: string): Carta => ({ palo: texto.at(-1) as Palo, valor: texto.slice(0, -1) as Carta["valor"] });
 const pos = (H: number, D: number, C: number, S: number): Record<Palo, number> => ({ H, D, C, S });
 
-/** Las siete cartas de los tramos, todas giradas (`n` = cuántas se ven). */
-const tramosDe = (n: number): VistaCarrera["tramos"] => Array.from({ length: 7 }, (_, i) => (i < n ? c("5H") : null));
+/** Las seis cartas de los tramos (`n` = cuántas se ven giradas). */
+const tramosDe = (n: number): VistaCarrera["tramos"] => Array.from({ length: 6 }, (_, i) => (i < n ? c("5H") : null));
 
 function vista(resto: Partial<VistaCarrera> = {}): VistaCarrera {
   return {
@@ -24,7 +28,7 @@ function vista(resto: Partial<VistaCarrera> = {}): VistaCarrera {
     fase: "carrera",
     finFase: 0,
     posiciones: pos(0, 0, 0, 0),
-    tramos: Array.from({ length: 7 }, () => null),
+    tramos: Array.from({ length: 6 }, () => null),
     ultimaCarta: null,
     misApuestas: [],
     totalesPorCaballo: pos(0, 0, 0, 0),
@@ -34,10 +38,20 @@ function vista(resto: Partial<VistaCarrera> = {}): VistaCarrera {
   };
 }
 
+/** Los tres marcos de la carta de un paso: sale del mazo (se enseña en el centro), avanza el caballo y baja, y llega a la pila de descartes. */
+const delPaso = (plan: Plan): { carta: Marco; avance: Marco; descarte: Marco } => ({
+  carta: plan.marcos.find((m) => m.parche.paso?.baja === false)!,
+  avance: plan.marcos.find((m) => m.parche.paso?.baja === true)!,
+  descarte: plan.marcos.find((m) => m.parche.paso === null && m.parche.cartas !== undefined)!,
+});
+
+/** El último instante de un guion. */
+const ultimo = (plan: Plan): number => Math.max(...plan.marcos.map((m) => m.en));
+
 describe("escenaDeVista", () => {
   it("la foto de una vista: casillas, tramos girados, última carta y ganador; sin pagos ni festejo", () => {
-    const e = escenaDeVista(vista({ posiciones: pos(3, 2, 4, 1), tramos: [c("5H"), c("KD"), null, null, null, null, null], ultimaCarta: c("2S"), ganador: null }));
-    expect(e).toMatchObject({ ronda: 4, posiciones: pos(3, 2, 4, 1), girados: 2, ganador: null, festejo: 0, festejoDe: null, reparto: true, pagos: null, epoca: 0, origen: null });
+    const e = escenaDeVista(vista({ posiciones: pos(3, 2, 4, 1), tramos: [c("5H"), c("KD"), null, null, null, null], ultimaCarta: c("2S"), ganador: null }));
+    expect(e).toMatchObject({ ronda: 4, posiciones: pos(3, 2, 4, 1), girados: 2, ganador: null, festejo: 0, festejoDe: null, reparto: true, pagos: null, epoca: 0, origen: null, paso: null });
     expect(e.cartas).toEqual([{ id: e.n, carta: c("2S") }]);
   });
 
@@ -56,25 +70,68 @@ describe("planDeLote", () => {
     expect(plan.sonidos).toEqual([]);
   });
 
-  it("un paso sin giros: el caballo avanza al llegar el mensaje, la carta sale junto al mazo y suena una vez", () => {
+  it("un paso sin giros: la carta sale primero, después avanza el caballo y la carta baja a la pila; suena una vez, al salir la carta", () => {
     const previa = escenaDeVista(vista({ posiciones: pos(1, 1, 1, 0) }));
     const v = vista({ posiciones: pos(1, 1, 1, 1), ultimaCarta: c("9S") });
     const plan = planDeLote(previa, [{ tipo: "caballo_avanza", palo: "S", carta: c("9S") }], v);
-    expect(plan.marcos).toHaveLength(1);
-    const [m] = plan.marcos;
-    expect(m.en).toBe(0);
-    const despues = aplicarMarco(previa, m);
-    expect(despues.posiciones).toEqual(pos(1, 1, 1, 1));
-    expect(despues.n).toBe(previa.n + 1);
-    expect(despues.cartas.at(-1)).toEqual({ id: previa.n + 1, carta: c("9S") });
+    expect(plan.marcos.map((m) => m.en)).toEqual([0, REVELADO_MS, REVELADO_MS + BAJADA_MS]);
+    const { carta, avance, descarte } = delPaso(plan);
+    const id = previa.n + 1;
+
+    // La carta se ve en el centro y aún no baja; el caballo no se ha movido y la pila sigue como estaba.
+    const saliendo = aplicarMarco(previa, carta);
+    expect(saliendo.paso).toEqual({ id, carta: c("9S"), baja: false });
+    expect(saliendo.n).toBe(id);
+    expect(saliendo.posiciones).toEqual(previa.posiciones);
+    expect(saliendo.cartas).toEqual(previa.cartas);
+
+    // Echa a andar el caballo y la carta empieza a bajar.
+    const avanzando = aplicarMarco(saliendo, avance);
+    expect(avanzando.posiciones).toEqual(pos(1, 1, 1, 1));
+    expect(avanzando.paso).toEqual({ id, carta: c("9S"), baja: true });
+    expect(avanzando.cartas).toEqual(previa.cartas);
+
+    // Llega a la pila de descartes y deja el centro libre.
+    const despues = aplicarMarco(avanzando, descarte);
+    expect(despues.paso).toBeNull();
+    expect(despues.cartas.at(-1)).toEqual({ id, carta: c("9S") });
     expect(plan.sonidos).toEqual([0]);
+  });
+
+  it("el guion de un paso: la carta a 0 ms, el avance a 300, el giro a 550, el retroceso a 780 y el ganador a 820", () => {
+    expect(REVELADO_MS).toBe(300);
+    expect([GIRO_TRAMO_MS, RETROCESO_MS, GANADOR_MS]).toEqual([550, 780, 820]);
+  });
+
+  it("la carta del paso se enseña antes de que avance el caballo", () => {
+    const previa = escenaDeVista(vista({ posiciones: pos(1, 1, 1, 0) }));
+    const plan = planDeLote(previa, [{ tipo: "caballo_avanza", palo: "S", carta: c("9S") }], vista({ posiciones: pos(1, 1, 1, 1), ultimaCarta: c("9S") }));
+    const { carta, avance } = delPaso(plan);
+    expect(carta.en).toBe(0);
+    expect(avance.en).toBe(REVELADO_MS);
+    // En el instante de salir la carta no se mueve ningún caballo.
+    expect(carta.parche.posiciones).toBeUndefined();
+    expect(avance.parche.posiciones).toEqual(pos(1, 1, 1, 1));
+  });
+
+  it("en un paso que no es el último, ningún marco pasa de PASO_MS (si no, la pantalla se atrasaría un poco más en cada paso)", () => {
+    // Sin giro.
+    const sinGiro = planDeLote(escenaDeVista(vista({ posiciones: pos(1, 1, 1, 0) })), [{ tipo: "caballo_avanza", palo: "S", carta: c("9S") }], vista({ posiciones: pos(1, 1, 1, 1), ultimaCarta: c("9S") }));
+    // Con giro: el tramo se gira y el caballo vuelve (es el paso que más dura).
+    const conGiro = planDeLote(
+      escenaDeVista(vista({ posiciones: pos(0, 1, 1, 1) })),
+      [{ tipo: "caballo_avanza", palo: "H", carta: c("7H") }, { tipo: "tramo_girado", indice: 0, palo: "H" }],
+      vista({ posiciones: pos(0, 1, 1, 1), tramos: [c("5H"), null, null, null, null, null], ultimaCarta: c("7H") }),
+    );
+    for (const plan of [sinGiro, conGiro]) expect(ultimo(plan)).toBeLessThan(CARRERA.PASO_MS);
+    expect(ultimo(conGiro)).toBe(RETROCESO_MS);
   });
 
   it("de la carta de antes solo queda una debajo de la nueva", () => {
     let e = escenaDeVista(vista({ ultimaCarta: c("2S") }));
     for (const carta of ["3H", "4D"].map(c)) {
       const plan = planDeLote(e, [{ tipo: "caballo_avanza", palo: carta.palo, carta }], vista({ posiciones: { ...e.posiciones, [carta.palo]: e.posiciones[carta.palo] + 1 }, ultimaCarta: carta }));
-      e = aplicarMarco(e, plan.marcos[0]);
+      for (const m of plan.marcos) e = aplicarMarco(e, m);
     }
     expect(e.cartas.map((x) => x.carta)).toEqual([c("3H"), c("4D")]);
   });
@@ -82,31 +139,36 @@ describe("planDeLote", () => {
   it("un paso con giro del mismo palo: avanza, después se gira el tramo y, ya visto, el caballo retrocede", () => {
     const previa = escenaDeVista(vista({ posiciones: pos(0, 1, 1, 1) }));
     // Sale un corazón: todos están en la casilla 1, se gira el tramo 0 (un corazón) y ese caballo vuelve a la 0.
-    const v = vista({ posiciones: pos(0, 1, 1, 1), tramos: [c("5H"), null, null, null, null, null, null], ultimaCarta: c("7H") });
+    const v = vista({ posiciones: pos(0, 1, 1, 1), tramos: [c("5H"), null, null, null, null, null], ultimaCarta: c("7H") });
     const plan = planDeLote(previa, [{ tipo: "caballo_avanza", palo: "H", carta: c("7H") }, { tipo: "tramo_girado", indice: 0, palo: "H" }], v);
-    expect(plan.marcos.map((m) => m.en)).toEqual([0, GIRO_TRAMO_MS, RETROCESO_MS]);
+    // La carta sale a 0, el caballo avanza a REVELADO_MS, la carta llega a la pila y, ya entonces, se gira el tramo y retrocede el caballo.
+    expect(plan.marcos.map((m) => m.en)).toEqual([0, REVELADO_MS, REVELADO_MS + BAJADA_MS, GIRO_TRAMO_MS, RETROCESO_MS]);
+    expect(REVELADO_MS).toBeLessThan(GIRO_TRAMO_MS);
     expect(GIRO_TRAMO_MS).toBeLessThan(RETROCESO_MS);
-    const [avanza, gira, retrocede] = plan.marcos;
-    let e = aplicarMarco(previa, avanza);
+    const [carta, avanza, llega, gira, retrocede] = plan.marcos;
+    let e = aplicarMarco(previa, carta);
+    expect(e.posiciones).toEqual(pos(0, 1, 1, 1));
+    e = aplicarMarco(e, avanza);
     expect(e.posiciones).toEqual(pos(1, 1, 1, 1));
     expect(e.girados).toBe(0);
+    e = aplicarMarco(e, llega);
     e = aplicarMarco(e, gira);
     expect(e.girados).toBe(1);
     expect(e.posiciones.H).toBe(1);
     e = aplicarMarco(e, retrocede);
     expect(e.posiciones).toEqual(pos(0, 1, 1, 1));
-    // Una vez al llegar el mensaje, una al girarse el tramo.
+    // Una vez al salir la carta, una al girarse el tramo.
     expect(plan.sonidos).toEqual([0, GIRO_TRAMO_MS]);
   });
 
   it("un giro de otro palo: el caballo que retrocede no es el que avanzó", () => {
     const previa = escenaDeVista(vista({ posiciones: pos(1, 1, 0, 1) }));
-    const v = vista({ posiciones: pos(0, 1, 1, 1), tramos: [c("5H"), null, null, null, null, null, null], ultimaCarta: c("4C") });
+    const v = vista({ posiciones: pos(0, 1, 1, 1), tramos: [c("5H"), null, null, null, null, null], ultimaCarta: c("4C") });
     const plan = planDeLote(previa, [{ tipo: "caballo_avanza", palo: "C", carta: c("4C") }, { tipo: "tramo_girado", indice: 0, palo: "H" }], v);
     let e = previa;
     for (const m of plan.marcos) e = aplicarMarco(e, m);
     expect(e.posiciones).toEqual(pos(0, 1, 1, 1));
-    expect(plan.marcos).toHaveLength(3);
+    expect(plan.marcos).toHaveLength(5);
   });
 
   it("varios giros en un paso se escalonan y cada uno devuelve a su caballo", () => {
@@ -131,7 +193,8 @@ describe("planDeLote", () => {
       e = aplicarMarco(e, m);
       girados.push(e.girados);
     }
-    expect(girados).toEqual([0, 1, 1, 2, 2]);
+    // La carta, el avance y su llegada a la pila no giran nada; después, cada giro con su retroceso.
+    expect(girados).toEqual([0, 0, 0, 1, 1, 2, 2]);
     const tiempos = plan.marcos.map((m) => m.en);
     expect([...tiempos].sort((a, b) => a - b)).toEqual(tiempos);
     expect(e.posiciones).toEqual(pos(1, 1, 2, 2));
@@ -234,8 +297,11 @@ describe("planDeLote", () => {
       ],
       v,
     );
-    expect(plan.marcos.map((m) => m.en)).toEqual([0, PASO_COMPRIMIDO_MS]);
-    expect(plan.sonidos).toEqual([0, PASO_COMPRIMIDO_MS]);
+    // El segundo paso sale cuando el primero ya ha terminado de moverse (la carta ha llegado a la pila), no antes.
+    const salePrimero = REVELADO_MS + BAJADA_MS;
+    const saleSegundo = Math.max(PASO_COMPRIMIDO_MS, salePrimero + 20);
+    expect(plan.marcos.map((m) => m.en)).toEqual([0, REVELADO_MS, salePrimero, saleSegundo, saleSegundo + REVELADO_MS, saleSegundo + salePrimero]);
+    expect(plan.sonidos).toEqual([0, saleSegundo]);
     let e = previa;
     for (const m of plan.marcos) e = aplicarMarco(e, m);
     expect(e.posiciones).toEqual(pos(1, 0, 0, 1));

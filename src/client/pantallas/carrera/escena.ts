@@ -3,22 +3,28 @@ import type { VistaCarrera } from "../../../shared/juegos/carrera";
 import type { Evento, JugadorId } from "../../../shared/juegos/tipos";
 
 // La «escena» de la carrera: lo que se ve en la pista en cada momento. El servidor manda cada paso entero en un solo mensaje
-// (el caballo avanza, se gira un tramo y otro caballo retrocede, todo a la vez), pero en la pista eso se cuenta en orden:
-// primero avanza el caballo, después se gira el tramo y, ya visto, retrocede el que toca. Aquí se calcula ese guion (puro,
-// sin DOM ni reloj): `planDeLote` devuelve los cambios de la escena con el instante en que toca cada uno.
+// (sale una carta, el caballo de su palo avanza, se gira un tramo y otro caballo retrocede, todo a la vez), pero en la pista eso
+// se cuenta en orden: primero sale la carta del mazo y se gira en el centro, después avanza el caballo mientras la carta baja a la
+// pila, después se gira el tramo y, ya visto, retrocede el que toca. Aquí se calcula ese guion (puro, sin DOM ni reloj):
+// `planDeLote` devuelve los cambios de la escena con el instante en que toca cada uno.
 
 /** Los cuatro caballos, en el orden de la mesa. */
 export const CABALLOS: readonly Palo[] = ["H", "D", "C", "S"];
 
-// Instantes de un paso, en milisegundos desde que llega su mensaje (el servidor manda uno cada 800 ms).
-/** El tramo empieza a girarse cuando el caballo está llegando a su casilla. */
-export const GIRO_TRAMO_MS = 250;
-/** El caballo empieza a retroceder cuando el tramo ya enseña su carta (la mitad del giro). */
-export const RETROCESO_MS = 480;
+// Instantes de un paso, en milisegundos desde que llega su mensaje (el servidor manda uno cada 800 ms). Todos los de un paso
+// normal caben en esos 800 ms: la cola de la pista es una sola y, si uno se pasara, la pantalla se atrasaría más en cada paso.
+/** La carta sale del mazo, se agranda hasta el centro de la pista y se gira; el caballo de su palo avanza cuando ya se ha visto. */
+export const REVELADO_MS = 300;
+/** Lo que tarda la carta en bajar del centro a la pila de descartes, desde que el caballo echa a andar. */
+export const BAJADA_MS = 250;
+/** El tramo empieza a girarse cuando el caballo está llegando a su casilla: 250 ms después de echar a andar, a los 550 ms del paso. */
+export const GIRO_TRAMO_MS = REVELADO_MS + 250;
+/** El caballo empieza a retroceder cuando el tramo ya enseña su carta (la mitad del giro): a los 780 ms del paso. */
+export const RETROCESO_MS = REVELADO_MS + 480;
 /** Entre un giro y el siguiente, si un paso gira varios tramos. */
 export const SEPARACION_GIROS_MS = 240;
-/** El ganador se anuncia cuando ha terminado de llegar a la meta (el avance dura 400 ms: queda un respiro por si el pintado se retrasa). */
-export const GANADOR_MS = 520;
+/** El ganador se anuncia cuando ha terminado de llegar a la meta, a los 820 ms del paso (el avance dura 400 ms: queda un respiro por si el pintado se retrasa). */
+export const GANADOR_MS = REVELADO_MS + 520;
 /** Los pagos se enseñan un momento después de anunciar al ganador. */
 export const PAGOS_TRAS_GANADOR_MS = 420;
 /** Los pagos de una mesa que se cierra sin carrera (alguien deja la mesa) se enseñan tras este respiro. */
@@ -32,10 +38,12 @@ export interface Escena {
   posiciones: Record<Palo, number>;
   /** Cuántos tramos se ven ya girados. */
   girados: number;
-  /** Las últimas cartas sacadas junto al mazo: como mucho dos, la más reciente al final. `id` no se repite. */
+  /** La pila de descartes junto al mazo: como mucho dos cartas, la más reciente al final. `id` no se repite. Una carta llega aquí al acabar de bajar. */
   cartas: { id: number; carta: Carta }[];
   /** Cuántas cartas han salido: el `id` de la última. */
   n: number;
+  /** La carta del paso, desde que sale del mazo hasta que llega a la pila de descartes; `baja` cuando el caballo ya ha echado a andar y la carta se va del centro. */
+  paso: { id: number; carta: Carta; baja: boolean } | null;
   /** El ganador, desde que se anuncia. */
   ganador: Palo | null;
   /** Cuántas victorias se han festejado: cambia en el instante de festejar (destellos). */
@@ -50,7 +58,7 @@ export interface Escena {
   npagos: number;
   /** Sube cada vez que la pista salta de golpe a otra situación (primera vista, reconexión): se vuelve a montar sin animar. */
   epoca: number;
-  /** De dónde sale la carta nueva (el mazo, en el momento en que llegó). Lo pone quien anima; solo cuenta para la carta `n`. */
+  /** De dónde sale la carta nueva (el mazo, en el momento en que salió). Lo pone quien anima; solo cuenta para la carta `n`. */
   origen: DOMRect | null;
 }
 
@@ -78,6 +86,7 @@ export const ESCENA_VACIA: Escena = {
   girados: 0,
   cartas: [],
   n: 0,
+  paso: null,
   ganador: null,
   festejo: 0,
   festejoDe: null,
@@ -103,6 +112,7 @@ export function escenaDeVista(vista: VistaCarrera, previa?: Escena): Escena {
     girados: tramosGirados(vista),
     cartas: vista.ultimaCarta ? [{ id: n, carta: vista.ultimaCarta }] : [],
     n,
+    paso: null,
     ganador: vista.ganador,
     festejo: previa?.festejo ?? 0,
     festejoDe: null,
@@ -131,8 +141,9 @@ const mueveLaPista = (evento: Evento): boolean => evento.tipo === "caballo_avanz
  * - Primera vista, o una vista que no cuadra con lo que se ve y llega sin eventos que lo expliquen (se volvió de una
  *   desconexión): la pista salta de golpe a la vista, sin repetir la carrera.
  * - Ronda nueva en la salida: los caballos vuelven a su casilla 0 y se recogen las cartas y el ganador.
- * - Pasos de la carrera: cada `caballo_avanza` es un paso; sus giros salen detrás y cada uno devuelve a su caballo. Si algo
- *   no cuadra al final con la vista (se perdió un paso), las casillas acaban siendo las de la vista.
+ * - Pasos de la carrera: cada `caballo_avanza` es un paso: sale la carta (a 0), avanza el caballo (a `REVELADO_MS`) y la carta
+ *   llega a la pila de descartes; sus giros salen detrás y cada uno devuelve a su caballo. Si algo no cuadra al final con la
+ *   vista (se perdió un paso), las casillas acaban siendo las de la vista.
  * - `pago`: se enseñan tras el ganador (o, sin carrera, tras un respiro).
  */
 export function planDeLote(previa: Escena | null, lote: Evento[], vista: VistaCarrera): Plan {
@@ -172,13 +183,14 @@ export function planDeLote(previa: Escena | null, lote: Evento[], vista: VistaCa
         pasos += 1;
         girosDelPaso = 0;
         const palo = e.palo as Palo;
+        const carta = e.carta as Carta;
         const n = sim.n + 1;
-        poner(base, {
-          posiciones: { ...sim.posiciones, [palo]: sim.posiciones[palo] + 1 },
-          n,
-          cartas: [...sim.cartas.slice(-1), { id: n, carta: e.carta as Carta }],
-        });
+        // La carta sale del mazo y se gira en el centro de la pista (suena al salir)…
+        poner(base, { n, paso: { id: n, carta, baja: false } });
         sonidos.push(base);
+        // …y, ya vista, avanza el caballo de su palo mientras ella baja a la pila de descartes, donde queda encima de la anterior.
+        poner(base + REVELADO_MS, { posiciones: { ...sim.posiciones, [palo]: sim.posiciones[palo] + 1 }, paso: { id: n, carta, baja: true } });
+        poner(base + REVELADO_MS + BAJADA_MS, { cartas: [...sim.cartas.slice(-1), { id: n, carta }], paso: null });
       } else if (e.tipo === "tramo_girado") {
         const palo = e.palo as Palo;
         const j = girosDelPaso++;

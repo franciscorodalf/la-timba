@@ -77,6 +77,101 @@
   margin-left: calc(var(--ancho) * var(--solape));
 }
 
+/* ---------- Varias manos en fila ---------- */
+
+/* La fila de manos de un jugador. Al cambiar de ronda, la anterior y la nueva ocupan el mismo hueco (como las cartas de una mano). */
+.bj-manos {
+  display: grid;
+  justify-items: center;
+}
+
+.bj-fila {
+  grid-area: 1 / 1;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 8px;
+  max-width: 100%;
+}
+
+.bj-col {
+  position: relative;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* La mano que no juega ahora se apaga un poco; la que juega lleva una raya dorada debajo de las cartas. */
+.bj-col--atenuada {
+  opacity: 0.6;
+}
+
+.bj-fila--varias .bj-col {
+  transition: opacity 0.2s;
+}
+
+.bj-col__subrayado {
+  align-self: stretch;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--oro-claro);
+  box-shadow: 0 0 8px rgba(245, 215, 110, 0.6);
+  opacity: 0;
+}
+
+.bj-fila--varias .bj-col__subrayado {
+  transition: opacity 0.2s;
+}
+
+.bj-col--activa .bj-col__subrayado {
+  opacity: 1;
+}
+
+/* Lo de debajo de cada mano: su total y su apuesta. */
+.bj-col__pie {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 4px 6px;
+}
+
+/* Con tres o cuatro manos cada columna es estrecha: el total encima de la apuesta. */
+.bj-fila--manos-3 .bj-col__pie,
+.bj-fila--manos-4 .bj-col__pie {
+  flex-direction: column;
+  gap: 3px;
+}
+
+.bj-col__pie .bj-total {
+  min-width: 30px;
+  height: 24px;
+  padding: 0 7px;
+  font-size: 0.8125rem;
+}
+
+/* Una mano rendida: se recupera la mitad de la apuesta. */
+.bj-rendida {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font: 700 0.6875rem/1.4 var(--fuente-ui);
+  letter-spacing: 0.02em;
+  text-transform: none;
+  color: var(--crema);
+  background: rgba(243, 231, 196, 0.1);
+  box-shadow: inset 0 0 0 1px rgba(243, 231, 196, 0.3);
+}
+
+/* «Mano 2 de 3»: en la línea de tu nombre, en el color de la raya de la mano que juegas. */
+.bj-etiqueta__mano {
+  color: var(--oro-claro);
+}
+
 .bj-etiqueta {
   display: flex;
   align-items: center;
@@ -158,6 +253,70 @@
   top: 0;
 }
 
+/* Tu apuesta durante la mano, junto a tu total: más grande y en oro, que se vea de un vistazo. */
+.bj-yo .bj-apuesta,
+.bj-asiento--yo .bj-apuesta {
+  gap: 9px;
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--oro-claro);
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.4);
+}
+
+.bj-yo .bj-apuesta__pila,
+.bj-asiento--yo .bj-apuesta__pila {
+  width: 26px;
+  height: 34px;
+}
+
+.bj-yo .bj-apuesta__pila .ficha,
+.bj-asiento--yo .bj-apuesta__pila .ficha {
+  width: 24px;
+  height: 24px;
+}
+
+.bj-yo .bj-apuesta__pila .ficha:nth-child(1),
+.bj-asiento--yo .bj-apuesta__pila .ficha:nth-child(1) {
+  top: 10px;
+}
+
+.bj-yo .bj-apuesta__pila .ficha:nth-child(2),
+.bj-asiento--yo .bj-apuesta__pila .ficha:nth-child(2) {
+  top: 5px;
+}
+
+/* La apuesta de una mano entre varias: solo la cantidad, sin pila de fichas ni empujón a la derecha. Más específico que lo de tu apuesta. */
+.bj-apuesta.bj-apuesta--corta,
+.bj-yo .bj-apuesta.bj-apuesta--corta,
+.bj-asiento--yo .bj-apuesta.bj-apuesta--corta {
+  margin-left: 0;
+  gap: 4px;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--oro-claro);
+  text-shadow: none;
+}
+
+.bj-apuesta--corta .bj-apuesta__pila,
+.bj-yo .bj-apuesta--corta .bj-apuesta__pila,
+.bj-asiento--yo .bj-apuesta--corta .bj-apuesta__pila {
+  width: 14px;
+  height: 14px;
+}
+
+.bj-apuesta--corta .bj-apuesta__pila .ficha,
+.bj-yo .bj-apuesta--corta .bj-apuesta__pila .ficha,
+.bj-asiento--yo .bj-apuesta--corta .bj-apuesta__pila .ficha {
+  width: 14px;
+  height: 14px;
+  left: 0;
+  top: 0;
+}
+
+.bj-apuesta--corta .bj-apuesta__pila .ficha:nth-child(n + 2) {
+  display: none;
+}
+
 /* ---------- El resto de jugadores (móvil) ---------- */
 
 .bj-otros {
@@ -211,13 +370,20 @@
   font-weight: 700;
 }
 
-.bj-pastilla--mira {
-  opacity: 0.55;
-}
-
-.bj-pastilla--pasado .bj-pastilla__total {
+/* Cada mano se pinta con su total; la que se pasa, tachada, y la rendida, apagada. */
+.bj-pastilla__pasado {
   color: var(--fallo);
   text-decoration: line-through;
+}
+
+.bj-pastilla__rendida {
+  color: var(--crema-tenue);
+  font-style: italic;
+  font-weight: 600;
+}
+
+.bj-pastilla--mira {
+  opacity: 0.55;
 }
 
 /* ---------- Leyenda del tapete ---------- */
@@ -277,6 +443,128 @@
   gap: 8px;
 }
 
+/* Tu mano y, mientras se apuesta, tu casilla encima, en el centro del tapete. */
+.bj-yo__juego {
+  position: relative;
+  display: grid;
+  /* Lo mismo con una mano que con cuatro: con varias, el total y la apuesta pasan debajo de cada una y la mesa no salta al dividir. */
+  min-height: calc(var(--sitio) + 14px);
+  align-content: start;
+}
+
+.bj-casilla {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+
+/* Con la casilla puesta, el hueco de la carta no se dibuja: en ese sitio está tu apuesta. Y lo de debajo de cada mano (su total y su
+   apuesta) espera al reparto: la apuesta ya se ve en su casilla. */
+.bj-yo__juego:has(.bj-casilla) .bj-mano::before {
+  opacity: 0;
+}
+
+.bj-yo__juego:has(.bj-casilla) .bj-col__pie {
+  visibility: hidden;
+}
+
+/* ---------- Apostar con dos manos ---------- */
+
+/* «+ Segunda mano», en la línea de tu nombre, justo encima de tu casilla. Mide 44 px pero no estira la línea (28 px): sobresale
+   por arriba y por abajo, así al pedirla, al apostar y al repartir la mesa no se mueve. */
+.bj-segunda {
+  min-height: 44px;
+  margin: -8px 0 -8px auto;
+  padding: 0 14px;
+  font-size: 0.8125rem;
+  letter-spacing: 0.02em;
+  text-transform: none;
+}
+
+/* En el ordenador la línea de tu nombre queda debajo de la casilla: el botón sobresale hacia abajo, donde hay tapete libre. */
+.bj-asiento .bj-segunda {
+  margin: 0 0 -16px 6px;
+}
+
+/* Con dos casillas van una junto a otra y la cantidad pasa debajo del aro: cada una cabe en media pantalla. */
+.bj-casilla--doble {
+  /* El aro cabe en el hueco de tu mano (`--sitio`) con su cantidad debajo, y dos aros caben a lo ancho. */
+  --aro: min(96px, 24vw, calc(var(--sitio) - 46px));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(12px, 5vw, 28px);
+}
+
+.bj-casilla__sitio {
+  position: relative;
+  transition: opacity 0.2s;
+}
+
+.bj-casilla--doble .casilla {
+  flex-direction: column;
+  gap: 4px;
+}
+
+.bj-casilla--doble .casilla__aro {
+  width: var(--aro);
+  height: var(--aro);
+}
+
+/* La pila de fichas se encoge con el aro: sigue cabiendo entera aunque tenga diez fichas. */
+.bj-casilla--doble .casilla__pila {
+  scale: 0.78;
+}
+
+.bj-casilla--doble .casilla__texto {
+  align-items: center;
+  min-width: 0;
+}
+
+.bj-casilla--doble .casilla__cantidad {
+  font-size: 1.75rem;
+  transform-origin: 50% 60%;
+}
+
+.bj-casilla--doble .casilla__mas {
+  display: none;
+}
+
+/* Elegir casilla: un botón transparente encima; la elegida lleva el aro dorado y la otra se apaga un poco. */
+.bj-casilla__elegir {
+  position: absolute;
+  inset: -4px;
+  padding: 0;
+  border: 0;
+  border-radius: 20px;
+  background: none;
+  cursor: pointer;
+  pointer-events: auto;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.bj-casilla__elegir:focus-visible {
+  outline: 2px solid var(--oro-claro);
+  outline-offset: 2px;
+}
+
+.bj-casilla__sitio--otra {
+  opacity: 0.7;
+}
+
+.bj-casilla__sitio--elegida .casilla__aro {
+  border-color: var(--oro-claro);
+  box-shadow:
+    0 0 0 3px var(--oro),
+    0 0 20px rgba(245, 215, 110, 0.55);
+  transition:
+    border-color 0.2s,
+    box-shadow 0.2s;
+}
+
 /* ---------- Panel: estado, temporizador y botones ---------- */
 
 /* Reserva siempre el alto del panel más alto (el de apostar: 164 px) aunque la fase solo traiga una línea de estado: si el panel
@@ -299,6 +587,23 @@
 
 .bj-decidir .boton {
   padding: 0 8px;
+}
+
+/* Dividir y Rendirse, debajo. La fila reserva su alto aunque no haya ninguno, y cada uno tiene su sitio (Dividir a la izquierda). */
+.bj-decidir__mas {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  min-height: 48px;
+}
+
+.bj-decidir__dividir {
+  grid-column: 1;
+}
+
+.bj-decidir__rendirse {
+  grid-column: 2;
 }
 
 /* ---------- Ordenador: la mesa entera con los asientos en semicírculo ---------- */
@@ -348,7 +653,7 @@
 
 .bj--ordenador .bj-leyenda {
   width: 420px;
-  margin: 4px auto 0;
+  margin: -6px auto 0;
 }
 
 .bj-asientos {
@@ -384,8 +689,87 @@
   flex-direction: column-reverse;
 }
 
+/* Tus manos acopladas: cuando no caben en fila entre los asientos de al lado, bajan al borde del tapete, por debajo del fondo de esos
+   asientos (el 81 % del alto), donde no hay nadie y el ancho no importa. Lo que cabe lo manda el alto del tapete (`anchoAcoplado`): las
+   cartas y debajo, en una línea, el total y la apuesta de cada mano. Tu nombre y «Mano N de M» pasan a la izquierda de la fila. */
+.bj-asiento--yo-acoplado {
+  top: calc(100% - 4px - var(--sube, 0px));
+}
+
+.bj-asiento--yo-acoplado .bj-yo__juego {
+  min-height: 0;
+}
+
+.bj-asiento--yo-acoplado .bj-col {
+  gap: 4px;
+}
+
+/* La raya de la mano activa, sin ocupar alto: una sombra recta bajo sus cartas. */
+.bj-asiento--yo-acoplado .bj-col__subrayado {
+  display: none;
+}
+
+.bj-asiento--yo-acoplado .bj-col--activa .bj-mano {
+  box-shadow: 0 3px 0 var(--oro-claro);
+}
+
+.bj-asiento--yo-acoplado .bj-col__pie {
+  flex-direction: row;
+  flex-wrap: nowrap;
+  height: 20px;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.bj-asiento--yo-acoplado .bj-col__pie .bj-total {
+  min-width: 24px;
+  height: 20px;
+  padding: 0 6px;
+  font-size: 0.75rem;
+}
+
+.bj-asiento--yo-acoplado .bj-apuesta.bj-apuesta--corta {
+  gap: 0;
+  font-size: 0.8125rem;
+}
+
+.bj-asiento--yo-acoplado .bj-apuesta--corta .bj-apuesta__pila {
+  display: none;
+}
+
+/* A la altura de las cartas (no de la línea de abajo): ahí el tapete aún es ancho y el nombre no se sale de él. */
+.bj-asiento--yo-acoplado .bj-etiqueta {
+  position: absolute;
+  right: calc(100% + 12px);
+  top: 0;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  min-height: 0;
+  font-size: 0.6875rem;
+  letter-spacing: 0.1em;
+  white-space: nowrap;
+}
+
+/* Tu nombre queda debajo de tus manos: lo que sobra de la altura reservada va arriba, no entre las cartas y tu nombre. */
+.bj-asiento--yo .bj-yo__juego {
+  align-content: end;
+}
+
 .bj-asiento--mira {
   opacity: 0.55;
+}
+
+/* Quien juega varias manos: sus totales debajo de cada una y, si pasa de dos, los demás junto a su nombre. */
+.bj-asiento--varias .bj-fila {
+  gap: 6px;
+}
+
+.bj-asiento__mas {
+  color: var(--crema-tenue);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: none;
 }
 
 .bj-asiento__apodo {
@@ -397,7 +781,84 @@
   letter-spacing: 0.06em;
 }
 
+/* Tu casilla en el ordenador: el aro centrado en tu sitio, entre la leyenda y tu nombre; la cantidad, a su derecha. */
+.bj--ordenador .bj-casilla {
+  place-items: end center;
+}
+
+.bj--ordenador .bj-casilla .casilla {
+  position: relative;
+  transform: scale(0.74);
+  transform-origin: 50% 100%;
+}
+
+.bj--ordenador .bj-casilla .casilla__texto {
+  position: absolute;
+  left: calc(100% + 14px);
+  top: 50%;
+  translate: 0 -50%;
+}
+
+/* Con dos casillas en el ordenador, la cantidad va debajo de cada aro, como en el móvil: a la derecha pisaría a la otra casilla. */
+.bj--ordenador .bj-casilla.bj-casilla--doble .casilla {
+  position: static;
+  transform: none;
+}
+
+.bj--ordenador .bj-casilla.bj-casilla--doble .casilla__texto {
+  position: static;
+  translate: none;
+}
+
+/* Y más compacta, para no subir sobre la leyenda del tapete. */
+.bj--ordenador .bj-casilla--doble {
+  --aro: min(96px, calc(var(--sitio) - 42px));
+}
+
+.bj--ordenador .bj-casilla--doble .casilla {
+  gap: 2px;
+}
+
+.bj--ordenador .bj-casilla--doble .casilla__cantidad {
+  font-size: 1.5rem;
+}
+
+/* Y la leyenda del tapete, que quedaría justo detrás de las dos casillas, se aparta mientras se apuesta. */
+.bj--ordenador.bj--dos-casillas .bj-leyenda {
+  opacity: 0;
+}
+
 .bj--ordenador .bj-panel {
   width: min(560px, 100%);
   margin: 26px auto 0;
+}
+
+/* Movimiento reducido: elegir casilla y cambiar de mano activa cambian de aspecto sin fundidos. */
+@media (prefers-reduced-motion: reduce) {
+  .bj-casilla__sitio,
+  .bj-casilla__sitio--elegida .casilla__aro,
+  .bj-fila--varias .bj-col,
+  .bj-fila--varias .bj-col__subrayado {
+    transition: none;
+  }
+}
+
+/* ---------- Seguro: «No» y «Sí, seguro (N)» (la pregunta va en el texto de estado) ---------- */
+
+.bj-seguro {
+  display: grid;
+  grid-template-columns: 1fr 1.5fr;
+  gap: 8px;
+}
+
+.bj-seguro .boton {
+  padding: 0 8px;
+}
+
+.bj-seguro__nota {
+  grid-column: 1 / -1;
+  margin: 0;
+  text-align: center;
+  font-size: 0.8125rem;
+  color: var(--crema-tenue);
 }

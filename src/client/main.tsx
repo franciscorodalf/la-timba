@@ -23,6 +23,7 @@ import "./tema/marco-mesa.css";
 import "./tema/girar-movil.css";
 import "./tema/estado-mesa.css";
 import "./tema/fichas-apuesta.css";
+import "./tema/casilla-apuesta.css";
 import "./tema/fichas-volando.css";
 import "./tema/cartel-premio.css";
 import "./tema/aviso-mesa.css";
@@ -30,6 +31,7 @@ import "./tema/resultado.css";
 import "./tema/mesa-blackjack.css";
 import "./tema/mesa-carrera.css";
 import "./tema/mesa-carrera-caballos.css";
+import "./tema/mesa-carrera-carta.css";
 import "./tema/mesa-carrera-apuestas.css";
 import "./tema/mesa-carrera-ordenador.css";
 

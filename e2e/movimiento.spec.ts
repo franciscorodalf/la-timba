@@ -57,6 +57,9 @@ async function seguirCartas(pagina: Page): Promise<void> {
     const vistaEn = new WeakMap<Element, number>();
     const fotograma = (ahora: number) => {
       for (const el of document.querySelectorAll(".bj-mano [role=img]")) {
+        // Una carta de la ronda anterior que se retira (la mesa la marca `aria-hidden`) ya no cuenta: al empezar la ronda siguiente la mesa
+        // se recoloca y la que se va se mueve con ella. Con blackjack de la banca la ronda dura apenas 4 s desde el reparto.
+        if (el.closest("[aria-hidden=true]") !== null) continue;
         const previo = vistas.get(el);
         if (previo === undefined) {
           if (Number(getComputedStyle(el).opacity) <= 0) continue;
@@ -100,7 +103,13 @@ test.describe("con movimiento reducido", () => {
     // El reparto llega al cerrarse la ventana de apuestas (15 s); si hay decisión, se planta.
     await expect(tuMano(page)).toHaveCount(2, { timeout: 30_000 });
     const plantarse = page.getByRole("button", { name: "Plantarse" });
-    await expect(plantarse.or(resultado(page))).toBeVisible({ timeout: 30_000 });
+    // Con un as de la banca (~8 %) antes de decidir hay un seguro: se dice que no.
+    const no = page.getByRole("button", { name: "No", exact: true });
+    await expect(plantarse.or(resultado(page)).or(no)).toBeVisible({ timeout: 30_000 });
+    if (await no.isVisible()) {
+      await no.click();
+      await expect(plantarse.or(resultado(page))).toBeVisible();
+    }
     // Se espera a que cada carta del reparto cumpla sus 300 ms antes de actuar: al plantarse llegan las cartas de la banca y su mano
     // se vuelve a centrar, un movimiento lateral legítimo que no debe caer dentro de la ventana de ninguna carta ya medida.
     await expect
@@ -254,6 +263,9 @@ test.describe("botones de al menos 44 px en el móvil", () => {
       manos: [],
       sentados: [sesion.jugador.apodo],
       yo,
+      opciones: null,
+      miSeguro: null,
+      casillasLibres: 7,
       ...resto,
     });
     mesa.alConectar(mensajeEstado<VistaBJ>(vista()));
@@ -261,13 +273,19 @@ test.describe("botones de al menos 44 px en el móvil", () => {
     await expect(page.getByRole("button", { name: "Añadir 50", exact: true })).toBeVisible();
     await comprobar(page, "Blackjack (apuestas)");
 
+    // Con la segunda casilla: los botones para elegir casilla y «Quitar» también miden 44 px.
+    await page.getByRole("button", { name: "+ Segunda mano", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Quitar segunda mano" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Casilla de la segunda mano" })).toBeVisible();
+    await comprobar(page, "Blackjack (apuestas con dos casillas)");
+
     mesa.enviar(
       mensajeEstado<VistaBJ>(
         vista({
           fase: "decisiones",
           banca: [c("6S"), null],
           totalBanca: 6,
-          manos: [{ jugadorId: yo, apodo: sesion.jugador.apodo, apuesta: 50, cartas: [c("5H"), c("6C")], estado: "jugando", doblada: false, total: 11 }],
+          manos: [{ jugadorId: yo, apodo: sesion.jugador.apodo, casilla: 0, indice: 0, apuesta: 50, cartas: [c("5H"), c("6C")], estado: "jugando", doblada: false, dividida: false, total: 11 }],
         }),
         [
           { tipo: "carta_repartida", a: yo, oculta: false, carta: c("5H") },
@@ -293,7 +311,7 @@ test.describe("botones de al menos 44 px en el móvil", () => {
       fase: "apuestas",
       finFase: Date.now() + 20_000,
       posiciones: { H: 0, D: 0, C: 0, S: 0 },
-      tramos: Array(7).fill(null),
+      tramos: Array(6).fill(null),
       ultimaCarta: null,
       misApuestas: [],
       totalesPorCaballo: { H: 0, D: 0, C: 0, S: 0 },

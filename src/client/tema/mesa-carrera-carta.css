@@ -1,0 +1,78 @@
+/* Mesa de la carrera (3 de 5): la carta de cada paso. Sale del mazo boca abajo, se agranda hasta el centro de la pista y se gira;
+   cuando el caballo echa a andar, baja a la pila de descartes. Va en una capa sobre la pista (como los destellos del ganador)
+   porque el mazo y la pila están fuera de ella y el marco de la pista recorta lo que se sale. Los vuelos los miden los componentes
+   en píxeles (--sale-* desde el mazo, --baja-* hasta la pila) y las duraciones (--revelado y --bajada) salen de escena.ts, para que
+   la carta y los fotogramas de la pista vayan siempre a la par. Solo se anima `transform` y `opacity`. */
+
+.carrera-carta-capa {
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+  pointer-events: none;
+}
+
+/* Un hueco del tamaño de la carta, justo en el centro de la pista: la carta se mueve respecto a él y de él se miden los vuelos. */
+.carrera-carta-paso__sitio {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: var(--ancho);
+  height: calc(var(--ancho) * 1.4);
+  translate: -50% -50%;
+}
+
+.carrera-carta-paso {
+  animation: carrera-carta-sale var(--revelado) var(--curva) both;
+  will-change: transform, opacity;
+}
+
+/* El caballo ha echado a andar: la carta se va del centro hacia la pila, despacio al salir y suave al llegar. */
+.carrera-carta-paso--baja {
+  animation: carrera-carta-baja var(--bajada) cubic-bezier(0.5, 0, 0.25, 1) both;
+}
+
+/* Del mazo (pequeña, ladeada) al centro. Si no se sabe dónde está el mazo, crece desde el centro. */
+@keyframes carrera-carta-sale {
+  from {
+    opacity: 0;
+    transform: translate(var(--sale-x, 0px), var(--sale-y, 0px)) rotate(-20deg) scale(var(--sale-escala, 0.4));
+  }
+  12% {
+    opacity: 1;
+  }
+  to {
+    opacity: 1;
+    transform: translate(0px, 0px) rotate(0deg) scale(1);
+  }
+}
+
+/* Del centro a la pila de descartes, con el tamaño y el ángulo con que se verá allí (los de `.carrera-ultima__carta`). */
+@keyframes carrera-carta-baja {
+  from {
+    transform: translate(0px, 0px) rotate(0deg) scale(1);
+  }
+  to {
+    transform: translate(var(--baja-x, 0px), var(--baja-y, 0px)) rotate(2deg) scale(var(--baja-escala, 0.4));
+  }
+}
+
+@keyframes carrera-desaparece {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+/* Movimiento reducido: no hay vuelo. La carta aparece en el centro con un fundido y se desvanece al echar a andar el caballo. */
+@media (prefers-reduced-motion: reduce) {
+  .carrera-carta-paso {
+    animation: carrera-aparece 0.25s ease-out both;
+    will-change: auto;
+  }
+
+  .carrera-carta-paso--baja {
+    animation: carrera-desaparece var(--bajada) ease-in both;
+  }
+}

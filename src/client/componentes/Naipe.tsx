@@ -100,13 +100,19 @@ interface Props {
   retardo?: number;
   /** Dónde está el mazo: si viene, la carta aparece volando desde ahí. Sin él, aparece ya en su sitio. Solo cuenta al aparecer. */
   origen?: DOMRect | null;
+  /** Cómo la llama la mesa (`data-clave`): así se la encuentra en el DOM, por ejemplo para deslizarla de una mano a otra. */
+  clave?: string;
+  /** Una carta tapada que se levanta un poco y vuelve a bajar (la banca que mira) cada vez que pasa a verdadero. Con movimiento reducido no se mueve. */
+  espiando?: boolean;
+  /** Lo que dura esa subida y bajada, en milisegundos (la mesa pasa el de la mirada de su guion); sin él, no se anima. */
+  espiadaMs?: number;
 }
 
 /**
  * Una carta de la mesa. Al aparecer con `origen`, sale del mazo girada y pequeña y llega a su sitio en 480 ms; al pasar de
  * boca abajo a boca arriba, da la vuelta en 3D (550 ms). Con movimiento reducido, en ambos casos solo se funde.
  */
-export function Naipe({ carta, ancho, retardo = 0, origen = null }: Props) {
+export function Naipe({ carta, ancho, retardo = 0, origen = null, clave, espiando = false, espiadaMs }: Props) {
   const reducido = useMovimientoReducido();
   const caras = useBaraja();
   const [caja, animar] = useAnimate<HTMLDivElement>();
@@ -133,6 +139,9 @@ export function Naipe({ carta, ancho, retardo = 0, origen = null }: Props) {
     el.style.opacity = "0";
     if (reducido) return detener(animar(el, { opacity: [0, 1] }, { duration: FUNDIDO_S, delay, ease: "easeOut" }));
 
+    // Se mide sin ningún desplazamiento: si el efecto se repite (el modo estricto de React en desarrollo lo monta dos veces), la
+    // animación anterior, al pararse, deja puesto su primer fotograma y la carta se mediría ya junto al mazo.
+    el.style.transform = "";
     const r = el.getBoundingClientRect();
     const dx = entrada.origen.left + entrada.origen.width / 2 - (r.left + r.width / 2);
     const dy = entrada.origen.top + entrada.origen.height / 2 - (r.top + r.height / 2);
@@ -157,12 +166,23 @@ export function Naipe({ carta, ancho, retardo = 0, origen = null }: Props) {
     }
   }, [tapada, reducido, animar]);
 
+  // La tapada sube unos píxeles y baja. Se deja terminar sola: al acabar la mirada el valor vuelve a falso y pararla ahí la dejaría torcida.
+  useLayoutEffect(() => {
+    const el = caja.current;
+    if (!espiando || espiadaMs === undefined || reducido || el === null) return;
+    const subida = Math.round(ancho * 0.18);
+    const abajo = "translate(0px, 0px) rotate(0deg) scale(1)";
+    animar(el, { transform: [abajo, `translate(0px, ${-subida}px) rotate(-3deg) scale(1.05)`, abajo] }, { duration: espiadaMs / 1000, ease: "easeInOut", times: [0, 0.4, 1] });
+    // Solo al empezar a espiar: el ancho es el de ese momento.
+  }, [espiando]);
+
   const Cara = carta !== null && caras !== null ? caras[codigoCarta(carta)] : undefined;
   return (
     <div
       ref={caja}
       className={`naipe${tapada ? " naipe--tapada" : ""}`}
       style={{ "--ancho": `${ancho}px` } as CSSProperties}
+      data-clave={clave}
       role="img"
       aria-label={carta === null ? "Carta boca abajo" : nombreCarta(carta)}
     >

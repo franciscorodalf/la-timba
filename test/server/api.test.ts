@@ -589,6 +589,27 @@ describe("excepciones inesperadas", () => {
     expect(log).toHaveBeenCalledOnce();
   });
 
+  it("con TOKEN_SECRET vacío o en blanco: 503 descansando antes de tocar nada (el registro no crea el perfil) y se dice por qué", async () => {
+    for (const secreto of ["", "   "]) {
+      const apodo = unico();
+      const log = silenciar();
+      const res = await worker.fetch(
+        new Request("http://x/api/registro", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ apodo, pin: "1234" }) }),
+        entorno({ TOKEN_SECRET: secreto }),
+      );
+      expect(res.status).toBe(503);
+      expect(await res.json()).toEqual({ error: "descansando" });
+      expect(log).toHaveBeenCalledWith(expect.stringContaining("TOKEN_SECRET"));
+      log.mockRestore();
+      // Con el secreto bien puesto, ese apodo sigue libre: no se creó a medias.
+      const entrada = await worker.fetch(
+        new Request("http://x/api/entrar", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ apodo, pin: "1234" }) }),
+        env,
+      );
+      expect(await entrada.json()).toEqual({ error: "no_existe" });
+    }
+  });
+
   it("503 descansando (y se registra el error) si falla un Durable Object", async () => {
     const { token } = await registrar(unico());
     const log = silenciar();

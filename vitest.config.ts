@@ -8,5 +8,6 @@ export default defineConfig({
       miniflare: { bindings: { TOKEN_SECRET: "secreto-de-pruebas" } },
     }),
   ],
-  test: { include: ["test/**/*.test.ts"] },
+  // Mayor que `ESPERA_MS` de `test/ayudas.ts`: una espera de mensaje colgada falla con su propio error, no con el tiempo agotado.
+  test: { include: ["test/**/*.test.ts"], testTimeout: 20_000 },
 });

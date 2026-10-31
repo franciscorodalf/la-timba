@@ -5,7 +5,7 @@ import type { MensajeSala } from "../../src/shared/api";
 import type { ResumenMesa } from "../../src/shared/juegos/tipos";
 import { firmarToken } from "../../src/server/auth";
 import worker, { type Env } from "../../src/server/index";
-import { conectar, crearPartida, intentarConectar, registrar } from "../ayudas";
+import { conectar, crearPartida, hasta, intentarConectar, registrar } from "../ayudas";
 
 const MIN_30 = 30 * 60_000;
 const ALFABETO = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
@@ -475,7 +475,7 @@ describe("Partida: sala", () => {
     expect((await segunda.recibir("sala")).rankingNoche).toEqual([{ apodo: jugador.apodo, neto: 25 }]);
   });
 
-  it("cada aviso de una mesa es una sola escritura en la sala, aunque traiga rondas", async () => {
+  it("un aviso de una mesa solo escribe si cambia el ranking: con rondas nuevas, una sola escritura; sin ellas, ninguna", async () => {
     const { token, jugador, codigo } = await nuevaPartida();
     const conexion = await abrir(codigo, token);
     await conexion.recibir("sala");
@@ -490,9 +490,16 @@ describe("Partida: sala", () => {
         };
       }
     });
-    await sala(codigo).actualizarMesa("blackjack", { jugadores: [jugador.apodo], fase: "resultado", finFase: 9 }, [ronda([jugador.apodo, 50])]);
+    const pagada = ronda([jugador.apodo, 50]);
+    await sala(codigo).actualizarMesa("blackjack", { jugadores: [jugador.apodo], fase: "resultado", finFase: 9 }, [pagada]);
+    expect(escrituras).toEqual(["put:sala"]);
+    // El resumen de las mesas vive en memoria: cambiarlo no escribe nada, y una ronda ya sumada tampoco.
     await sala(codigo).actualizarMesa("carrera", { jugadores: [jugador.apodo], fase: "apuestas", finFase: 9 });
-    expect(escrituras).toEqual(["put:sala", "put:sala"]);
+    await sala(codigo).actualizarMesa("blackjack", { jugadores: [jugador.apodo], fase: "apuestas", finFase: 19 }, [pagada]);
+    expect(escrituras).toEqual(["put:sala"]);
+    const ultima = await hasta<MensajeSala>(conexion, (m) => m.mesas.blackjack.finFase === 19, "sala");
+    expect(ultima.mesas.carrera).toEqual({ jugadores: [jugador.apodo], fase: "apuestas", finFase: 9 });
+    expect(ultima.rankingNoche).toEqual([{ apodo: jugador.apodo, neto: 50 }]);
   });
 
   it("ignora lo que envía el cliente: ni responde ni se cae", async () => {
@@ -512,28 +519,93 @@ describe("Partida: sala", () => {
     expect(conexion.ws.readyState).toBe(WebSocket.OPEN);
   });
 
-  it("tras hibernar (el Durable Object sale de memoria) conserva conectados, mesas y ranking", async () => {
+  it("tras hibernar (el Durable Object sale de memoria) conserva conectados y ranking, y le pregunta a cada mesa su resumen", async () => {
     const a = await registrar(unico());
     const b = await registrar(unico());
     const codigo = await crearPartida(a.token);
     const conexionA = await abrir(codigo, a.token);
     await conexionA.recibir("sala");
-    const resumen: ResumenMesa = { jugadores: [a.jugador.apodo], fase: "apuestas", finFase: 99 };
-    await sala(codigo).actualizarMesa("carrera", resumen, [ronda([a.jugador.apodo, 50])]);
+    // Ana se sienta en la carrera de verdad: la mesa avisa a la sala y ya no lo repetirá mientras su resumen no cambie.
+    await abrir(codigo, a.token, { sala: "mesa-carrera" });
+    const sentada = await hasta<MensajeSala>(conexionA, (m) => m.mesas.carrera.jugadores.length === 1, "sala");
+    expect(sentada.mesas.carrera).toMatchObject({ jugadores: [a.jugador.apodo], fase: "apuestas" });
+    await sala(codigo).actualizarMesa("blackjack", MESA_VACIA, [ronda([a.jugador.apodo, 50])]);
     await conexionA.recibir("sala");
 
     await evictDurableObject(sala(codigo));
 
+    // La sala ha perdido los resúmenes (viven en memoria): se los pregunta a las mesas antes de enseñar nada.
     const conexionB = await abrir(codigo, b.token);
     const entrante = await conexionB.recibir("sala");
     expect(entrante.conectados).toEqual([a.jugador.apodo, b.jugador.apodo]);
-    expect(entrante.mesas).toEqual({ blackjack: MESA_VACIA, carrera: resumen });
+    expect(entrante.mesas).toEqual({ blackjack: MESA_VACIA, carrera: sentada.mesas.carrera });
     expect(entrante.rankingNoche).toEqual([{ apodo: a.jugador.apodo, neto: 50 }]);
     expect((await conexionA.recibir("sala")).conectados).toEqual([a.jugador.apodo, b.jugador.apodo]);
 
     await evictDurableObject(sala(codigo));
     conexionB.cerrar();
     expect((await conexionA.recibir("sala")).conectados).toEqual([a.jugador.apodo]);
+  });
+});
+
+describe("Partida: los resúmenes de las mesas, en memoria", () => {
+  it("si una mesa no contesta al preguntarle, se enseña como desconocida y se le vuelve a preguntar en el siguiente aviso", async () => {
+    const { token, jugador, codigo } = await nuevaPartida();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    // Solo esta instancia ve una carrera que no contesta (se cambia su `env`, no el compartido).
+    const real = await runInDurableObject(sala(codigo), (partida) => {
+      const instancia = partida as unknown as { env: Env };
+      const original = instancia.env;
+      const caida = { idFromName: (nombre: string) => original.MesaCarrera.idFromName(nombre), get: () => ({ resumenSala: () => Promise.reject(new Error("mesa caída")) }) };
+      instancia.env = Object.assign(Object.create(original), { MesaCarrera: caida });
+      return original;
+    });
+    const conexion = await abrir(codigo, token);
+    expect((await conexion.recibir("sala")).mesas).toEqual({ blackjack: MESA_VACIA, carrera: { jugadores: [], fase: "desconocida", finFase: null } });
+
+    await runInDurableObject(sala(codigo), (partida) => {
+      (partida as unknown as { env: Env }).env = real;
+    });
+    await sala(codigo).actualizarMesa("blackjack", { jugadores: [jugador.apodo], fase: "apuestas", finFase: 5 });
+    expect((await conexion.recibir("sala")).mesas).toEqual({ blackjack: { jugadores: [jugador.apodo], fase: "apuestas", finFase: 5 }, carrera: MESA_VACIA });
+  });
+
+  it("lo que manda una mesa no lo pisa la respuesta, más vieja, a lo que la sala le preguntó; y el ranking sale al día", async () => {
+    const { token, jugador, codigo } = await nuevaPartida();
+    // La carrera tarda en contestar y entretanto avisa con su resumen nuevo: se queda el aviso.
+    // (La respuesta se resuelve con temporizadores de la propia sala: una promesa no se puede resolver desde otro contexto.)
+    let preguntada = false;
+    let contestar = false;
+    const responder = (): Promise<ResumenMesa> => {
+      preguntada = true;
+      return new Promise((resolver) => {
+        const mirar = () => (contestar ? resolver({ jugadores: [], fase: "esperando", finFase: null }) : setTimeout(mirar, 5));
+        mirar();
+      });
+    };
+    const real = await runInDurableObject(sala(codigo), (partida) => {
+      const instancia = partida as unknown as { env: Env };
+      const original = instancia.env;
+      const lenta = { idFromName: (nombre: string) => original.MesaCarrera.idFromName(nombre), get: () => ({ resumenSala: responder }) };
+      instancia.env = Object.assign(Object.create(original), { MesaCarrera: lenta });
+      return original;
+    });
+    // La conexión se acepta después de enseñarle la sala (`onConnect`), así que no se espera a ella todavía.
+    const conectando = abrir(codigo, token);
+    const nuevo: ResumenMesa = { jugadores: ["beto"], fase: "carrera", finFase: null };
+    await esperar(() => preguntada, "la sala pregunta a la carrera");
+    await sala(codigo).actualizarMesa("carrera", nuevo, [ronda([jugador.apodo, 30])]);
+    contestar = true;
+    const conexion = await conectando;
+    // Los dos mensajes (el del aviso y el de la conexión, que sale después) llevan lo último: el resumen y el ranking.
+    for (let i = 0; i < 2; i++) {
+      const mensaje: MensajeSala = await conexion.recibir("sala");
+      expect(mensaje.mesas.carrera).toEqual(nuevo);
+      expect(mensaje.rankingNoche).toEqual([{ apodo: jugador.apodo, neto: 30 }]);
+    }
+    await runInDurableObject(sala(codigo), (partida) => {
+      (partida as unknown as { env: Env }).env = real;
+    });
   });
 });
 

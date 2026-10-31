@@ -5,7 +5,7 @@ import type { Mesa } from "../../src/server/mesa-base";
 import type { Rng } from "../../src/shared/cartas";
 import { blackjack, puntuacion, type AccionBJ, type VistaBJ } from "../../src/shared/juegos/blackjack";
 import { carrera, type AccionCarrera, type VistaCarrera } from "../../src/shared/juegos/carrera";
-import { abrir, ayudasMesa, cerrarAbiertas, enviar, hasta, jugadores, T, type Conexion, type EstadoMesa } from "../ayudas";
+import { abrir, ayudasMesa, cerrarAbiertas, cs, enviar, hasta, jugadores, T, type Conexion, type EstadoMesa } from "../ayudas";
 
 // ---------------------------------------------------------------------------
 // Presupuesto de una noche típica en el plan gratuito de Cloudflare.
@@ -29,14 +29,16 @@ const MENSAJES_POR_PETICION = 20;
 const RONDAS_MEDIDAS = 3;
 
 /**
- * Lo que puede gastar cada ronda medida, como mucho. Las filas escritas son las de hoy: cinco por apuesta (la intención y
- * la jugada en la mesa; la apuesta pendiente, las fichas y su borrado en Jugadores), dos por jugador al liquidar (sus
- * fichas y estadísticas, y su resultado), la de la ronda liquidada, una por cada otro cambio de la mesa y por cada
- * alarma nueva, y una por aviso a la sala.
+ * Lo que puede gastar cada ronda medida (la media de las tres), como mucho. Las filas escritas son las de hoy: cinco por
+ * cada cobro (apuesta, segunda casilla, seguro, dividir, doblar: la intención y la jugada en la mesa; la apuesta
+ * pendiente, las fichas y su borrado en Jugadores), dos por jugador al liquidar (sus fichas y estadísticas, y su
+ * resultado), la de la ronda liquidada, una por cada otra jugada que cambie la mesa y por cada alarma nueva, y una en la
+ * sala por ronda (su ranking). Lo que trae el reloj sin decisiones (la banca, la ronda siguiente, los pasos de la carrera)
+ * no escribe, y los resúmenes de las mesas viven en la memoria de la sala.
  */
 const TECHO = {
-  blackjack: { escritas: 47, leidas: 50, peticionesDO: 25, peticionesWorker: 12 },
-  carrera: { escritas: 49, leidas: 60, peticionesDO: 28, peticionesWorker: 14 },
+  blackjack: { escritas: 49, leidas: 38, peticionesDO: 25, peticionesWorker: 13 },
+  carrera: { escritas: 47, leidas: 42, peticionesDO: 28, peticionesWorker: 14 },
 } as const;
 
 interface Gasto {
@@ -50,8 +52,10 @@ interface Gasto {
   mensajes: number;
   /** `deleteAlarm` que hace la propia prueba al disparar una alarma (`runDurableObjectAlarm`): no es de la mesa y no cuenta. */
   borradosDeLaPrueba: number;
+  /** Filas escritas y peticiones a Durable Objects de cada ronda medida, por separado. */
+  rondas: { escritas: number; peticionesDO: number }[];
 }
-const gastoVacio = (): Gasto => ({ porObjeto: {}, escritas: 0, leidas: 0, peticionesDO: 0, peticionesWorker: 0, alarmas: 0, mensajes: 0, borradosDeLaPrueba: 0 });
+const gastoVacio = (): Gasto => ({ porObjeto: {}, escritas: 0, leidas: 0, peticionesDO: 0, peticionesWorker: 0, alarmas: 0, mensajes: 0, borradosDeLaPrueba: 0, rondas: [] });
 
 /** Generador determinista (mulberry32): las rondas medidas son siempre las mismas. */
 function rngSemilla(semilla: number): Rng {
@@ -130,8 +134,18 @@ async function contarRpcDe(stub: DurableObjectStub, gasto: Gasto) {
 }
 
 type Jugador = { id: number; token: string; conexion: Conexion };
+/** Un aviso del reloj que la mesa ha dejado programado (`temporizar`): la prueba lo dispara a su hora. */
+type AvisoPendiente = { cuando: number; tarea: () => void };
 /** Lo de una mesa que la prueba toca por dentro (también su cola, para esperar a que acabe lo que tenga en marcha). */
-type MesaPorDentro = { rng: Rng; ahora: () => number; estado: { ronda: number }; cola: Promise<void> };
+type MesaPorDentro = {
+  rng: Rng;
+  ahora: () => number;
+  estado: { ronda: number };
+  cola: Promise<void>;
+  juego: { vista(e: unknown, jugador: null, ahora: number): unknown };
+  temporizar: (tarea: () => void, ms: number) => () => void;
+  avisoPendiente: AvisoPendiente | null;
+};
 const porDentro = (m: unknown) => m as MesaPorDentro;
 
 /** Lo que usa la medición de las ayudas de una mesa (`ayudasMesa`). */
@@ -145,7 +159,17 @@ async function preparar<V>(ayudas: AyudasMesa, estado: unknown, semilla: number)
   const { codigo, js } = await ayudas.nuevaMesa(4, estado as never);
   const mesa = ayudas.mesa(codigo);
   await runInDurableObject(mesa, (m) => {
-    porDentro(m).rng = rngSemilla(semilla);
+    const i = porDentro(m);
+    i.rng = rngSemilla(semilla);
+    // El reloj de la mesa no corre solo: los avisos que programe los dispara la prueba a su hora (`avanzar`).
+    i.avisoPendiente = null;
+    i.temporizar = (tarea, ms) => {
+      const aviso: AvisoPendiente = { cuando: i.ahora() + ms, tarea };
+      i.avisoPendiente = aviso;
+      return () => {
+        if (i.avisoPendiente === aviso) i.avisoPendiente = null;
+      };
+    };
   });
   const salas: Conexion[] = [];
   for (const j of js) salas.push(await abrir(`/parties/partida/${codigo}`, j.token));
@@ -166,13 +190,20 @@ async function preparar<V>(ayudas: AyudasMesa, estado: unknown, semilla: number)
    * Suma las filas del SQL y devuelve lo gastado; después cierra las conexiones y espera a que la mesa y la sala hayan
    * atendido los cierres (lo que hagan ya no cuenta): la prueba no acaba con trabajo suyo a medias.
    */
+  /** Apunta lo que ha gastado la ronda que acaba (las filas del SQL, de los cursores ya recorridos). */
+  const finDeRonda = () => {
+    const escritas = gasto.escritas + cursores.reduce((suma, [, c]) => suma + c.rowsWritten, 0);
+    const peticiones = gasto.peticionesDO + gasto.mensajes / MENSAJES_POR_PETICION;
+    const antes = gasto.rondas.reduce((suma, r) => ({ escritas: suma.escritas + r.escritas, peticionesDO: suma.peticionesDO + r.peticionesDO }), { escritas: 0, peticionesDO: 0 });
+    gasto.rondas.push({ escritas: escritas - antes.escritas, peticionesDO: peticiones - antes.peticionesDO });
+  };
   const cerrar = async (): Promise<Gasto> => {
     for (const [objeto, c] of cursores) {
       gasto.escritas += c.rowsWritten;
       gasto.leidas += c.rowsRead;
       gasto.porObjeto[objeto] = (gasto.porObjeto[objeto] ?? 0) + c.rowsWritten;
     }
-    const total = { ...gasto, porObjeto: { ...gasto.porObjeto } };
+    const total = { ...gasto, porObjeto: { ...gasto.porObjeto }, rondas: [...gasto.rondas] };
     for (const conexion of [...jugadoresMesa.map((j) => j.conexion), ...salas]) conexion.cerrar();
     await vi.waitFor(async () => {
       expect(await runInDurableObject(mesa, (m) => [...(m as unknown as Mesa<any, any>).getConnections()].length)).toBe(0);
@@ -205,8 +236,24 @@ async function preparar<V>(ayudas: AyudasMesa, estado: unknown, semilla: number)
     gasto.borradosDeLaPrueba += 1;
     expect(await runDurableObjectAlarm(mesa)).toBe(true);
   };
+  /** Lo siguiente que trae el reloj: el aviso que la mesa tenga programado en memoria, a su hora, o si no, su alarma. */
+  const avanzar = async () => {
+    const hayAviso = await runInDurableObject(mesa, async (m) => {
+      const i = porDentro(m);
+      const aviso = i.avisoPendiente;
+      if (aviso === null) return false;
+      i.avisoPendiente = null;
+      i.ahora = () => aviso.cuando;
+      aviso.tarea();
+      await i.cola;
+      return true;
+    });
+    if (!hayAviso) await alarma();
+  };
   const ronda = () => runInDurableObject(mesa, (m) => porDentro(m).estado.ronda);
-  return { js: jugadoresMesa, refrescar, mandar, alarma, cerrar, ronda };
+  /** La ronda que enseña la mesa a su hora (puede ir por delante del estado guardado). */
+  const rondaVisible = () => runInDurableObject(mesa, (m) => (porDentro(m).juego.vista(porDentro(m).estado, null, porDentro(m).ahora()) as { ronda: number }).ronda);
+  return { js: jugadoresMesa, refrescar, mandar, alarma, avanzar, finDeRonda, cerrar, ronda, rondaVisible };
 }
 
 afterEach(cerrarAbiertas);
@@ -214,36 +261,71 @@ afterEach(cerrarAbiertas);
 type EstadoBJ = EstadoMesa<VistaBJ>;
 type EstadoCarrera = EstadoMesa<VistaCarrera>;
 
-/** Rondas de blackjack: cada uno apuesta y pide hasta 17; refresca sus fichas al apostar, al cobrar y al cambiar de ronda. */
+/**
+ * La ronda con las jugadas nuevas: el primer jugador apuesta en dos casillas, la banca enseña un as (todos contestan al
+ * seguro y él lo coge) y divide su pareja de ochos. Zapato: una carta a cada casilla (0 y 1 del primero, 2, 3 y 4), la
+ * banca (as), otra vuelta y la tapada (7, sin blackjack); después, las cartas de la división.
+ */
+const RONDA_ESPECIAL = 1;
+const ZAPATO_ESPECIAL = "8S 10S 9C 10D 10H AS 8H 6H 7C 5D 9H 7D 3C 2C";
+
+/** Lo que cambia de un jugador cuando actúa: la fase, su seguro y sus manos. */
+const firmaDe = (v: VistaBJ, id: number) => JSON.stringify([v.ronda, v.fase, v.miSeguro, v.manos.filter((x) => x.jugadorId === id).map((x) => [x.cartas.length, x.estado, x.apuesta])]);
+
+/**
+ * Rondas de blackjack: cada uno apuesta y pide hasta 17 en cada mano (y en la ronda especial, dos casillas, seguro y una
+ * división); refresca sus fichas al apostar o pagar algo, al cobrar y al cambiar de ronda.
+ */
 async function medirBlackjack(): Promise<Gasto> {
-  const m = await preparar<VistaBJ>(ayudasMesa(env.MesaBlackjack, "mesa-blackjack") as unknown as AyudasMesa, blackjack.crear(T, rngSemilla(7)), 11);
+  const inicial = blackjack.crear(T, rngSemilla(7));
+  const m = await preparar<VistaBJ>(
+    ayudasMesa(env.MesaBlackjack, "mesa-blackjack") as unknown as AyudasMesa,
+    { ...inicial, zapato: [...cs(ZAPATO_ESPECIAL), ...inicial.zapato] },
+    11,
+  );
   for (let ronda = 1; ronda <= RONDAS_MEDIDAS; ronda++) {
-    for (const j of m.js) {
+    const especial = ronda === RONDA_ESPECIAL;
+    for (const [i, j] of m.js.entries()) {
       m.mandar(j, { t: "apostar", cantidad: 50 } satisfies AccionBJ);
       await hasta<EstadoBJ>(j.conexion, (e) => e.vista.ronda === ronda && e.vista.manos.some((mano) => mano.jugadorId === j.id));
       await m.refrescar(j);
-    }
-    await m.alarma(); // reparto
-    for (const j of m.js) {
-      let vista = (await hasta<EstadoBJ>(j.conexion, (e) => e.vista.ronda === ronda && e.vista.fase !== "apuestas")).vista;
-      for (;;) {
-        const mia = vista.manos.find((mano) => mano.jugadorId === j.id)!;
-        if (vista.fase !== "decisiones" || mia.estado !== "jugando") break;
-        const antes = mia.cartas.length;
-        m.mandar(j, { t: puntuacion(mia.cartas).total < 17 ? "pedir" : "plantarse" } satisfies AccionBJ);
-        vista = (
-          await hasta<EstadoBJ>(j.conexion, (e) => {
-            const nueva = e.vista.manos.find((mano) => mano.jugadorId === j.id);
-            if (e.vista.ronda !== ronda || nueva === undefined) return false;
-            return nueva.estado !== "jugando" || nueva.cartas.length !== antes;
-          })
-        ).vista;
+      if (especial && i === 0) {
+        m.mandar(j, { t: "apostar", cantidad: 50, segunda: true } satisfies AccionBJ);
+        await hasta<EstadoBJ>(j.conexion, (e) => e.vista.manos.filter((mano) => mano.jugadorId === j.id).length === 2);
+        await m.refrescar(j);
       }
     }
-    // La banca, el resultado y la ronda siguiente.
-    while ((await m.ronda()) === ronda) await m.alarma();
+    await m.alarma(); // reparto
+    // Lo último que ha visto cada uno tras el reparto.
+    const vistas = new Map<number, VistaBJ>();
+    for (const j of m.js) vistas.set(j.id, (await hasta<EstadoBJ>(j.conexion, (e) => e.vista.ronda === ronda && e.vista.fase !== "apuestas")).vista);
+    // Con un as de la banca, todos contestan al seguro (en la ronda especial, el primero lo coge).
+    for (const [i, j] of m.js.entries()) {
+      const vista = vistas.get(j.id)!;
+      if (vista.fase !== "seguro" || vista.opciones?.seguro == null) continue;
+      const tomar = especial && i === 0;
+      m.mandar(j, { t: "seguro", tomar } satisfies AccionBJ);
+      vistas.set(j.id, (await hasta<EstadoBJ>(j.conexion, (e) => e.vista.fase !== "seguro" || e.vista.opciones?.seguro === null)).vista);
+      if (tomar) await m.refrescar(j);
+    }
+    for (const [i, j] of m.js.entries()) {
+      let vista = vistas.get(j.id)!;
+      if (vista.fase === "seguro") vista = (await hasta<EstadoBJ>(j.conexion, (e) => e.vista.fase !== "seguro")).vista;
+      for (;;) {
+        const activa = vista.manos.find((mano) => mano.jugadorId === j.id && mano.estado === "jugando");
+        if (vista.fase !== "decisiones" || activa === undefined) break;
+        const dividir = especial && i === 0 && vista.opciones?.dividir === true;
+        const antes = firmaDe(vista, j.id);
+        m.mandar(j, { t: dividir ? "dividir" : puntuacion(activa.cartas).total < 17 ? "pedir" : "plantarse" } satisfies AccionBJ);
+        vista = (await hasta<EstadoBJ>(j.conexion, (e) => firmaDe(e.vista, j.id) !== antes)).vista;
+        if (dividir) await m.refrescar(j);
+      }
+    }
+    // La banca, el resultado y la ronda siguiente: lo que trae el reloj.
+    while ((await m.rondaVisible()) === ronda) await m.avanzar();
     for (const j of m.js) await m.refrescar(j); // cobro
     for (const j of m.js) await m.refrescar(j); // ronda nueva
+    m.finDeRonda();
   }
   return await m.cerrar();
 }
@@ -272,11 +354,12 @@ async function medirCarrera(): Promise<Gasto> {
     while ((await m.ronda()) === ronda) await m.alarma();
     for (const j of m.js) await m.refrescar(j); // cobro
     for (const j of m.js) await m.refrescar(j); // ronda nueva
+    m.finDeRonda();
   }
   return await m.cerrar();
 }
 
-type Cantidad = Exclude<keyof Gasto, "porObjeto">;
+type Cantidad = Exclude<keyof Gasto, "porObjeto" | "rondas">;
 const porRonda = (g: Gasto, campo: Cantidad) => g[campo] / RONDAS_MEDIDAS;
 const pct = (valor: number, limite: number) => `${((100 * valor) / limite).toFixed(1)} %`;
 
@@ -294,7 +377,8 @@ it("una ronda de cada juego no pasa de su techo, y la noche típica extrapolada 
     `${peticionesDO(g).toFixed(1)} peticiones DO, ${porRonda(g, "peticionesWorker").toFixed(1)} al Worker, ${porRonda(g, "alarmas").toFixed(1)} alarmas ` +
     `(escritas: ${Object.entries(g.porObjeto)
       .map(([objeto, n]) => `${objeto} ${(n / RONDAS_MEDIDAS).toFixed(1)}`)
-      .join(", ")}; ${(g.mensajes / RONDAS_MEDIDAS).toFixed(1)} mensajes)`;
+      .join(", ")}; ${(g.mensajes / RONDAS_MEDIDAS).toFixed(1)} mensajes; ` +
+    `ronda a ronda: ${g.rondas.map((r) => `${r.escritas} escritas y ${r.peticionesDO.toFixed(1)} peticiones DO`).join(" / ")})`;
   console.log(
     [
       "Presupuesto por ronda:",

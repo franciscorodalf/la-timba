@@ -1,0 +1,187 @@
+/* Tu casilla de apuesta en el tapete: el aro con la pila de fichas y, al lado, lo que apuestas en grande.
+   Punteado mientras lo preparas; dorado y con un destello cuando ya está apostado. */
+
+.casilla {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  pointer-events: none;
+}
+
+.casilla__aro {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 118px;
+  height: 118px;
+  border: 2px dashed rgba(212, 175, 55, 0.5);
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(0, 0, 0, 0.22), rgba(0, 0, 0, 0.06) 72%);
+  transition: border-color 0.2s;
+}
+
+/* El destello al apostar: un anillo dorado que crece y se apaga. */
+.casilla__aro::after {
+  content: "";
+  position: absolute;
+  inset: -6px;
+  border-radius: 50%;
+  box-shadow:
+    0 0 0 2px var(--oro),
+    0 0 22px rgba(245, 215, 110, 0.75);
+  opacity: 0;
+}
+
+.casilla--preparada .casilla__aro {
+  border-color: var(--oro-claro);
+}
+
+.casilla--apostada .casilla__aro {
+  border-style: solid;
+  border-color: var(--oro);
+}
+
+.casilla--apostada .casilla__aro::after {
+  animation: casilla-destello 0.7s var(--curva) both;
+}
+
+@keyframes casilla-destello {
+  0% {
+    opacity: 0.9;
+    transform: scale(0.92);
+  }
+
+  100% {
+    opacity: 0;
+    transform: scale(1.18);
+  }
+}
+
+/* La pila: cada ficha un poco más arriba que la anterior, y la pila entera centrada en el aro. Cabe con `MAX_PILA` fichas. */
+.casilla__pila {
+  --sube: 5px;
+  position: relative;
+  width: var(--ficha);
+  height: calc(var(--ficha) + (var(--n) - 1) * var(--sube));
+}
+
+.casilla__ficha {
+  position: absolute;
+  left: 0;
+  bottom: calc(var(--i) * var(--sube));
+  line-height: 0;
+}
+
+.casilla__ficha .ficha {
+  filter: drop-shadow(0 2px 0 rgba(0, 0, 0, 0.45));
+}
+
+.casilla__texto {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 96px;
+}
+
+.casilla__estado {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--oro);
+}
+
+.casilla--vacia .casilla__estado {
+  opacity: 0.6;
+}
+
+.casilla--todo .casilla__estado {
+  color: var(--oro-claro);
+  font-size: 0.8125rem;
+}
+
+.casilla__cantidad {
+  display: inline-block;
+  font: 700 2.375rem/1 var(--fuente-titulo);
+  font-variant-numeric: tabular-nums lining-nums;
+  color: var(--oro-claro);
+  text-shadow:
+    0 2px 0 rgba(0, 0, 0, 0.45),
+    0 0 18px rgba(212, 175, 55, 0.35);
+  transform-origin: 0 60%;
+}
+
+.casilla--apostada .casilla__cantidad {
+  color: var(--oro);
+}
+
+.casilla__mas {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--crema);
+}
+
+/* ---------- Compacta: la de un carril de la carrera ---------- */
+
+.casilla--compacta {
+  flex-direction: column;
+  gap: 4px;
+}
+
+.casilla--compacta .casilla__aro {
+  width: 62px;
+  height: 62px;
+  border-width: 1.5px;
+}
+
+.casilla--compacta .casilla__pila {
+  --sube: 3px;
+}
+
+.casilla--compacta .casilla__texto {
+  align-items: center;
+  min-width: 0;
+}
+
+.casilla--compacta .casilla__estado {
+  display: none;
+}
+
+.casilla--compacta.casilla--todo .casilla__estado {
+  display: block;
+  font-size: 0.625rem;
+  letter-spacing: 0.08em;
+}
+
+.casilla--compacta .casilla__cantidad {
+  font-size: 1.3125rem;
+  transform-origin: 50% 60%;
+}
+
+.casilla--compacta .casilla__mas {
+  font-size: 0.625rem;
+  white-space: nowrap;
+}
+
+/* ---------- Las fichas que vuelan de la bandeja a la casilla ---------- */
+
+.vuelos-ficha {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  pointer-events: none;
+}
+
+.vuelos-ficha__ficha {
+  position: absolute;
+  line-height: 0;
+  will-change: transform, opacity;
+}
+
+/* Movimiento reducido: sin destello (las fichas ya no vuelan: aparecen en la pila). */
+@media (prefers-reduced-motion: reduce) {
+  .casilla--apostada .casilla__aro::after {
+    animation: none;
+  }
+}

@@ -1,4 +1,4 @@
-/* Mesa de la carrera (4 de 4): la vista de ordenador (desde 900 px): la pista horizontal en su tapete con canto de madera. Solo
+/* Mesa de la carrera (5 de 5): la vista de ordenador (desde 900 px): la pista horizontal en su tapete con canto de madera. Solo
    recoloca (ejes, tamaños, rejilla); lo que se mueve sigue siendo `transform` y `opacity`, con las mismas reglas de movimiento
    reducido de los otros archivos. */
 
@@ -103,6 +103,22 @@
   border-radius: 40% 0 0 40%;
   background: linear-gradient(270deg, rgba(245, 215, 110, 0.55), rgba(245, 215, 110, 0));
   transform-origin: 100% 50%;
+}
+
+.carrera--ordenador .carrera-casilla {
+  left: calc(var(--salida) + var(--cab-largo) + var(--paso) * 0.35);
+  bottom: auto;
+  top: 50%;
+  translate: 0 -50%;
+}
+
+.carrera--ordenador .casilla--compacta {
+  flex-direction: row;
+  gap: 10px;
+}
+
+.carrera--ordenador .casilla--compacta .casilla__texto {
+  align-items: flex-start;
 }
 
 .carrera--ordenador .carrera-caballo {

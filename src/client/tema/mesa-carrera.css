@@ -1,9 +1,9 @@
-/* Mesa de la carrera (1 de 4): la rejilla de la mesa y la pista. En móvil, la pista vertical: cuatro carriles de abajo (salida)
-   arriba (meta), la columna de los siete tramos a su lado y, debajo, las cabeceras donde se apuesta con el mazo en la esquina.
+/* Mesa de la carrera (1 de 5): la rejilla de la mesa y la pista. En móvil, la pista vertical: cuatro carriles de abajo (salida)
+   arriba (meta), la columna de los seis tramos a su lado y, debajo, las cabeceras donde se apuesta con el mazo en la esquina.
    Las medidas (paso, tamaño de caballos y tramos) las pone la pantalla en píxeles como variables: --paso, --cab-ancho,
    --cab-alto, --cab-largo, --salida, --meta, --tramo-ancho, --tramo-alto, --mazo-ancho y --franja. Todo lo que se mueve usa
-   solo `transform` y `opacity`. Las otras partes: mesa-carrera-caballos.css (caballos, tramos, mazo), mesa-carrera-apuestas.css
-   (cabeceras y panel) y mesa-carrera-ordenador.css (la vista de ordenador). */
+   solo `transform` y `opacity`. Las otras partes: mesa-carrera-caballos.css (caballos, tramos, mazo), mesa-carrera-carta.css (la
+   carta de cada paso), mesa-carrera-apuestas.css (cabeceras y panel) y mesa-carrera-ordenador.css (la vista de ordenador). */
 
 .carrera {
   --avance: 400ms;
@@ -60,6 +60,15 @@
 
 .carrera-carril > .carrera-caballo {
   z-index: 1;
+}
+
+/* Tu casilla de apuesta en el carril: justo delante del caballo, en la salida. No se toca (el carril entero elige). */
+.carrera-casilla {
+  position: absolute;
+  left: 50%;
+  bottom: calc(var(--salida) + var(--cab-largo) + var(--paso) * 0.35);
+  translate: -50% 0;
+  pointer-events: none;
 }
 
 .carrera-carril + .carrera-carril {
@@ -122,7 +131,7 @@
   opacity: 1;
 }
 
-/* Las líneas de cada casilla: la salida, una por tramo (se enciende en oro al girarse su tramo) y la meta a cuadros. */
+/* Las líneas de cada casilla: la salida, una por casilla intermedia (las de los tramos se encienden en oro al girarse; la última no tiene carta) y la meta a cuadros. */
 .carrera-lineas {
   position: absolute;
   inset: 0;

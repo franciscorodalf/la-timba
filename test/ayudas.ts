@@ -55,12 +55,17 @@ export function intentarConectar(ruta: string, token?: string, cabeceras: Record
   return exports.default.fetch(url, { headers: { ...cabeceras, Upgrade: "websocket" } });
 }
 
-const ESPERA_MENSAJE_MS = 2000;
+/**
+ * Lo que se espera a un mensaje de una mesa o a un cambio en el servidor antes de dar la prueba por colgada. Con toda la
+ * batería corriendo en paralelo, un Durable Object frío puede tardar más de 2 s en contestar; una prueba sana nunca
+ * llega a este límite, solo una colgada (y `testTimeout` en `vitest.config.ts` es mayor para que lo alcance primero).
+ */
+export const ESPERA_MS = 8000;
 
 /**
  * Abre un WebSocket contra el Worker (`ruta` sin `?token=`; se añade si se pasa `token`). Lanza si no se acepta.
  * `recibir(t)` devuelve el siguiente mensaje JSON cuyo `t` coincida, descartando los anteriores; sin `t`, el siguiente.
- * Falla si en 2 s no llega ninguno, para que una prueba no se cuelgue.
+ * Falla si en `ESPERA_MS` no llega ninguno, para que una prueba no se cuelgue.
  */
 export async function conectar(
   ruta: string,
@@ -80,14 +85,14 @@ export async function conectar(
   ws.accept();
 
   async function recibir(t?: string): Promise<any> {
-    const limite = Date.now() + ESPERA_MENSAJE_MS;
+    const limite = Date.now() + ESPERA_MS;
     for (;;) {
       while (cola.length > 0) {
         const mensaje = cola.shift();
         if (t === undefined || mensaje.t === t) return mensaje;
       }
       const restante = limite - Date.now();
-      if (restante <= 0) throw new Error(`No llegó ningún mensaje${t === undefined ? "" : ` "${t}"`} en ${ESPERA_MENSAJE_MS} ms`);
+      if (restante <= 0) throw new Error(`No llegó ningún mensaje${t === undefined ? "" : ` "${t}"`} en ${ESPERA_MS} ms`);
       await new Promise<void>((resolver) => {
         despertar = resolver;
         setTimeout(resolver, restante);
@@ -158,6 +163,9 @@ export async function hasta<M = EstadoMesa<unknown>>(conexion: Conexion, cumple:
   }
 }
 
+/** Lo que una prueba toca de una mesa para dirigir sus avisos del reloj (`avisosManuales`). */
+type MesaConAvisos = { avisoPendiente: { cuando: number; tarea: () => void } | null; cola: Promise<void> };
+
 /**
  * Lo común a probar una mesa (subclase de `Mesa`): `ns` es su espacio de nombres y `ruta` el nombre de su party
  * (`mesa-blackjack`). Todas las funciones se refieren a la mesa de la partida con ese código.
@@ -166,6 +174,40 @@ export function ayudasMesa<M extends Mesa<any, any>>(ns: DurableObjectNamespace<
   const mesa = (codigo: string) => ns.get(ns.idFromName(codigo));
   const estadoMesa = (codigo: string) => runInDurableObject(mesa(codigo), (m) => m.estado as M["estado"]);
   const alarmaDe = (codigo: string) => runInDurableObject(mesa(codigo), (_m, state) => state.storage.getAlarm());
+
+  /**
+   * Los avisos del reloj de la mesa (`Mesa.temporizar`) dejan de saltar solos: se guardan y los dispara `avisar`. Así, con
+   * el reloj quieto, una prueba ve a su hora y en orden lo que la mesa anuncia desde memoria. Vive en memoria: tras
+   * `evictDurableObject` hay que volver a llamarlo.
+   */
+  const avisosManuales = (codigo: string) =>
+    runInDurableObject(mesa(codigo), (m) => {
+      const i = m as unknown as MesaConAvisos;
+      i.avisoPendiente = null;
+      m.temporizar = (tarea, ms) => {
+        const aviso = { cuando: m.ahora() + ms, tarea };
+        i.avisoPendiente = aviso;
+        return () => {
+          if (i.avisoPendiente === aviso) i.avisoPendiente = null;
+        };
+      };
+    });
+
+  /** El instante del aviso que la mesa tiene programado (con `avisosManuales`), o `null` si no hay ninguno. */
+  const avisoProgramado = (codigo: string) => runInDurableObject(mesa(codigo), (m) => (m as unknown as MesaConAvisos).avisoPendiente?.cuando ?? null);
+
+  /** Lleva el reloj de la mesa a su aviso programado, lo dispara y espera a que la mesa lo atienda. Devuelve su instante. */
+  const avisar = (codigo: string) =>
+    runInDurableObject(mesa(codigo), async (m) => {
+      const i = m as unknown as MesaConAvisos;
+      const aviso = i.avisoPendiente;
+      if (aviso === null) throw new Error("la mesa no tiene ningún aviso programado");
+      i.avisoPendiente = null;
+      m.ahora = () => aviso.cuando;
+      aviso.tarea();
+      await i.cola;
+      return aviso.cuando;
+    });
 
   /** Fija el reloj de la mesa. Vive en memoria: tras `evictDurableObject` hay que volver a fijarlo. */
   const reloj = (codigo: string, ahora: number) =>
@@ -229,5 +271,5 @@ export function ayudasMesa<M extends Mesa<any, any>>(ns: DurableObjectNamespace<
 
   const sentarse = (codigo: string, token: string) => abrir(`/parties/${ruta}/${codigo}`, token);
 
-  return { mesa, estadoMesa, guardado, alarmaDe, reloj, vencer, preparar, nuevaMesa, sentarse, vigilarEscrituras };
+  return { mesa, estadoMesa, guardado, alarmaDe, reloj, vencer, preparar, nuevaMesa, sentarse, vigilarEscrituras, avisosManuales, avisoProgramado, avisar };
 }

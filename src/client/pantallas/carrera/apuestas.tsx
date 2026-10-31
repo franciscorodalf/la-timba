@@ -1,3 +1,4 @@
+import type { RefObject } from "react";
 import type { Palo } from "../../../shared/cartas";
 import { CARRERA, type FaseCarrera } from "../../../shared/juegos/carrera";
 import { Boton } from "../../componentes/Boton";
@@ -11,25 +12,24 @@ interface PanelApuestasProps {
   elegido: Palo | null;
   /** Lo que llevas preparado para este caballo. */
   montante: number;
-  /** Lo máximo que puede sumar `montante`: el tope por caballo (500 acumulado) o tus fichas, el menor. */
+  /** Lo máximo que puede sumar `montante`: tus fichas (no hay tope por caballo). */
   tope: number;
-  /** Ya has llegado al máximo en este caballo. */
-  alMaximo: boolean;
   activo: boolean;
   /** Esperando a que la mesa confirme tu última apuesta. */
   esperando: boolean;
   onCambiar(montante: number): void;
   onApostar(): void;
+  /** La casilla del carril elegido, adonde vuelan las fichas. */
+  destino: RefObject<HTMLElement | null>;
 }
 
-/** Las fichas de 10 a 500 y «Apostar N a corazones»: se suman al caballo elegido, de 500 como mucho entre todas. */
-export function PanelApuestas({ elegido, montante, tope, alMaximo, activo, esperando, onCambiar, onApostar }: PanelApuestasProps) {
+/** Las fichas (y «Todo») y «Apostar N a corazones»: se suman al caballo elegido, sin más tope que tus fichas. */
+export function PanelApuestas({ elegido, montante, tope, activo, esperando, onCambiar, onApostar, destino }: PanelApuestasProps) {
   const cantidad = montante <= tope ? montante : 0;
-  const etiqueta =
-    elegido === null ? "Elige un caballo" : cantidad > 0 ? `Apostar ${miles(cantidad)} a ${NOMBRE_PALO[elegido]}` : alMaximo ? `Máximo en ${NOMBRE_PALO[elegido]}` : "Elige tu apuesta";
+  const etiqueta = elegido === null ? "Elige un caballo" : cantidad > 0 ? `Apostar ${miles(cantidad)} a ${NOMBRE_PALO[elegido]}` : "Elige tu apuesta";
   return (
     <div className="panel-apuesta">
-      <FichasApuesta montante={cantidad} tope={tope} activo={activo && elegido !== null} onCambiar={onCambiar} />
+      <FichasApuesta montante={cantidad} tope={tope} minimo={CARRERA.MIN} activo={activo && elegido !== null} onCambiar={onCambiar} destino={destino} />
       <div className="panel-apuesta__fila">
         <Boton variante="secundario" className="panel-apuesta__borrar" aria-label="Borrar apuesta" disabled={cantidad === 0} onClick={() => onCambiar(0)}>
           Borrar

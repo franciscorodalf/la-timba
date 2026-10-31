@@ -30,8 +30,8 @@ const hasta = <M = Estado>(conexion: Conexion, cumple: (m: M) => boolean, t = "e
 
 afterEach(cerrarAbiertas);
 
-/** Las siete cartas de la pista: ningún caballo se queda atrás de ellas en estas pruebas, así que no se gira ninguna. */
-const TRAMOS = "10C JC QC KC 10D JD QD";
+/** Las seis cartas de la pista: ningún caballo se queda atrás de ellas en estas pruebas, así que no se gira ninguna. */
+const TRAMOS = "10C JC QC KC 10D JD";
 /**
  * Mazo de una carrera de 11 pasos: H avanza ocho veces y gana en la última carta; S y D se quedan atrás y C no sale, así
  * que el caballo más rezagado nunca pasa del primer tramo.
@@ -207,7 +207,7 @@ describe("MesaCarrera: carrera y fichas", () => {
     expect(await pendientesDe(codigo)).toBe(1); // solo la de la ronda 2: la 1 ya se liquidó
   });
 
-  it("el máximo por caballo es acumulado: pasarse → apuesta_invalida sin cobrar; otro caballo sí entra", async () => {
+  it("sin tope por caballo: se acumula hasta todas tus fichas; pasarse de tus fichas → sin_fichas sin cobrar", async () => {
     const {
       codigo,
       js: [ana],
@@ -217,21 +217,15 @@ describe("MesaCarrera: carrera y fichas", () => {
 
     enviar(conexion, apostar("H", 300));
     await conexion.recibir();
-    enviar(conexion, apostar("H", 300)); // 600 > 500
-    expect(await conexion.recibir()).toEqual({ t: "error", codigo: "apuesta_invalida" });
-    expect(await fichas(ana.id)).toBe(700);
-    expect(await pendientesDe(codigo)).toBe(1);
+    enviar(conexion, apostar("H", 300)); // 600: más de los 500 de antes, ya sin tope
+    expect(((await conexion.recibir()) as Estado).vista.misApuestas).toEqual([{ caballo: "H", cantidad: 600 }]);
+    enviar(conexion, apostar("H", 400)); // todo lo que le quedaba
+    expect(((await conexion.recibir()) as Estado).vista.misApuestas).toEqual([{ caballo: "H", cantidad: 1000 }]);
+    expect(await fichas(ana.id)).toBe(0);
 
-    enviar(conexion, apostar("H", 200)); // 500: justo el máximo
-    expect(((await conexion.recibir()) as Estado).vista.misApuestas).toEqual([{ caballo: "H", cantidad: 500 }]);
-    enviar(conexion, apostar("H", 10));
-    expect(await conexion.recibir()).toEqual({ t: "error", codigo: "apuesta_invalida" });
-    enviar(conexion, apostar("S", 10));
-    expect(((await conexion.recibir()) as Estado).vista.misApuestas).toEqual([
-      { caballo: "H", cantidad: 500 },
-      { caballo: "S", cantidad: 10 },
-    ]);
-    expect(await fichas(ana.id)).toBe(490);
+    enviar(conexion, apostar("S", 10)); // ya no tiene fichas
+    expect(await conexion.recibir()).toEqual({ t: "error", codigo: "sin_fichas" });
+    expect(await fichas(ana.id)).toBe(0);
     expect(await pendientesDe(codigo)).toBe(3);
   });
 });

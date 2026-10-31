@@ -18,7 +18,7 @@ function estado(parcial: Partial<EstadoCarrera> = {}): EstadoCarrera {
     finFase: null,
     mazo: [],
     descartes: [],
-    tramos: cs("2H 2D 2C 2S 3H 3D 3C"),
+    tramos: cs("2H 2D 2C 2S 3H 3D"),
     tramosGirados: 0,
     posiciones: POS0(),
     plan: [],
@@ -61,7 +61,7 @@ const enCarrera = (parcial: Partial<EstadoCarrera> = {}, rngSorteo = rng) =>
         finFase: T0,
         asientos: [asiento(1, "ana"), asiento(2, "beto")],
         apuestas: [ap(1, "H", 50), ap(2, "S", 50)],
-        tramos: cs("7D 9H 2C 4S 6D 8C KH"),
+        tramos: cs("7D 9H 2C 4S 6D 8C"),
         mazo: mazo("5H 3S 9D"),
         ...parcial,
       }),
@@ -69,10 +69,10 @@ const enCarrera = (parcial: Partial<EstadoCarrera> = {}, rngSorteo = rng) =>
       rngSorteo,
     ),
   ).estado;
-/** Las 41 cartas que no son tramos de `enCarrera`, barajadas con `semilla`: un mazo como el de una carrera de verdad. */
+/** Las 42 cartas que no son tramos de `enCarrera`, barajadas con `semilla`: un mazo como el de una carrera de verdad. */
 const mazoAlAzar = (semilla: number) =>
   barajar(
-    SIN_ASES.filter((carta) => !cs("7D 9H 2C 4S 6D 8C KH").some((tramo) => clave(tramo) === clave(carta))),
+    SIN_ASES.filter((carta) => !cs("7D 9H 2C 4S 6D 8C").some((tramo) => clave(tramo) === clave(carta))),
     rngFijo(semilla, 0.37, 0.73),
   );
 /** El instante del paso `n` (desde 1) de una carrera que sale en T0. */
@@ -97,19 +97,18 @@ describe("crear, sentar y apuestas", () => {
     expect(carrera.id).toBe("carrera");
     expect(carrera.maxJugadores).toBe(12);
     expect(CARRERA).toEqual({
-      TRAMOS: 7,
+      TRAMOS: 6,
       META: 8,
       PASO_MS: 800,
       APUESTAS_MS: 20_000,
       RESULTADO_MS: 5_000,
       MIN: 10,
-      MAX: 500,
       PAGO: 4,
       MAX_JUGADORES: 12,
     });
   });
 
-  it("crear deja la mesa en espera con una pista nueva: 7 tramos y el resto de una baraja sin ases en el mazo", () => {
+  it("crear deja la mesa en espera con una pista nueva: 6 tramos y el resto de una baraja sin ases en el mazo", () => {
     const e = carrera.crear(T0, rngFijo(0.3));
     expect(e).toMatchObject({
       ronda: 1,
@@ -124,16 +123,23 @@ describe("crear, sentar y apuestas", () => {
       ganador: null,
       ventanasVacias: 0,
     });
-    expect(e.tramos).toHaveLength(7);
-    expect(e.mazo).toHaveLength(41);
+    expect(e.tramos).toHaveLength(6);
+    expect(e.mazo).toHaveLength(42);
     const todas = [...e.tramos, ...e.mazo];
     expect(todas.some((carta) => carta.valor === "A")).toBe(false);
     expect(new Set(todas.map(clave)).size).toBe(48);
     expect(todas).not.toEqual(SIN_ASES); // barajada
-    // determinista con el mismo rng, y los tramos son las 7 primeras cartas
+    // determinista con el mismo rng, y los tramos son las 6 primeras cartas
     const igual = carrera.crear(T0, rngFijo(0.3));
     expect(igual).toEqual(e);
     expect(todas).toEqual(barajar(SIN_ASES, rngFijo(0.3)));
+  });
+
+  it("hay 6 tramos, en las líneas 1 a 6: la línea 7 no tiene carta", () => {
+    expect(CARRERA.TRAMOS).toBe(6);
+    const e = carrera.crear(T0, rng);
+    expect(e.tramos).toHaveLength(6);
+    expect((carrera.vista(e, null, T0) as VistaCarrera).tramos).toHaveLength(6);
   });
 
   it("sentarse en mesa vacía abre apuestas 20 s", () => {
@@ -185,7 +191,7 @@ describe("crear, sentar y apuestas", () => {
 
   it("las cantidades raras son apuesta_invalida y no crean apuesta", () => {
     const e = exito(carrera.sentar(carrera.crear(T0, rng), 1, "ana", T0)).estado;
-    for (const cantidad of [0, -10, 9, 501, 50.5, NaN, Infinity, "50", null, undefined]) {
+    for (const cantidad of [0, -10, 9, 50.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1, "50", null, undefined]) {
       const accion = { t: "apostar", caballo: "H", cantidad } as unknown as AccionCarrera;
       expect(error(carrera.aplicar(e, 1, accion, T0, rng))).toBe("apuesta_invalida");
     }
@@ -201,40 +207,31 @@ describe("crear, sentar y apuestas", () => {
     expect(e.apuestas).toEqual([]);
   });
 
-  it("apostar crea una apuesta con el mínimo y el máximo permitidos", () => {
+  it("apostar crea una apuesta con el mínimo, y no hay tope: se puede apostar todo", () => {
     const e = exito(carrera.sentar(carrera.crear(T0, rng), 1, "ana", T0)).estado;
     const p = exito(carrera.aplicar(e, 1, apostar("D", 10), T0, rng));
     expect(p.estado.apuestas).toEqual([ap(1, "D", 10)]);
     expect(p.estado.fase).toBe("apuestas");
     expect(p.eventos).toEqual([]);
     expect(exito(carrera.aplicar(e, 1, apostar("S", 500), T0, rng)).estado.apuestas).toEqual([ap(1, "S", 500)]);
+    expect(exito(carrera.aplicar(e, 1, apostar("S", 12_345), T0, rng)).estado.apuestas).toEqual([ap(1, "S", 12_345)]);
   });
 
-  it("apostar a varios caballos y acumular hasta 500 por caballo", () => {
+  it("apostar a varios caballos y acumular en uno sin tope", () => {
     let e = exito(carrera.sentar(carrera.crear(T0, rng), 1, "ana", T0)).estado;
     e = exito(carrera.aplicar(e, 1, apostar("H", 300), T0, rng)).estado;
-    e = exito(carrera.aplicar(e, 1, apostar("H", 200), T0, rng)).estado; // 500 en H: justo el tope
-    expect(e.apuestas).toEqual([ap(1, "H", 500)]);
-    expect(error(carrera.aplicar(e, 1, apostar("H", 10), T0, rng))).toBe("apuesta_invalida");
-    // el tope es por caballo: otros caballos siguen abiertos
+    e = exito(carrera.aplicar(e, 1, apostar("H", 200), T0, rng)).estado;
+    e = exito(carrera.aplicar(e, 1, apostar("H", 1_000), T0, rng)).estado; // pasar de 500 ya no es un problema
+    expect(e.apuestas).toEqual([ap(1, "H", 1_500)]);
     e = exito(carrera.aplicar(e, 1, apostar("D", 500), T0, rng)).estado;
     e = exito(carrera.aplicar(e, 1, apostar("S", 10), T0, rng)).estado;
-    expect(e.apuestas).toEqual([ap(1, "H", 500), ap(1, "D", 500), ap(1, "S", 10)]);
-    // y el rechazo no tocó nada
-    expect(error(carrera.aplicar(e, 1, apostar("D", 10), T0, rng))).toBe("apuesta_invalida");
-    expect(e.apuestas).toEqual([ap(1, "H", 500), ap(1, "D", 500), ap(1, "S", 10)]);
+    expect(e.apuestas).toEqual([ap(1, "H", 1_500), ap(1, "D", 500), ap(1, "S", 10)]);
   });
 
-  it("una apuesta que pasaría de 500 en ese caballo se rechaza entera, aunque sea válida sola", () => {
-    const e = enApuestas({ apuestas: [ap(1, "H", 300)] });
-    expect(error(carrera.aplicar(e, 1, apostar("H", 201), T0, rng))).toBe("apuesta_invalida");
-    expect(exito(carrera.aplicar(e, 1, apostar("H", 200), T0, rng)).estado.apuestas).toEqual([ap(1, "H", 500)]);
-  });
-
-  it("el tope por caballo es de cada jugador, no de la mesa", () => {
-    const e = enApuestas({ apuestas: [ap(1, "H", 500)] });
-    const p = exito(carrera.aplicar(e, 2, apostar("H", 500), T0, rng));
-    expect(p.estado.apuestas).toEqual([ap(1, "H", 500), ap(2, "H", 500)]);
+  it("lo acumulado en un caballo no puede pasar de un entero seguro", () => {
+    const e = enApuestas({ apuestas: [ap(1, "H", Number.MAX_SAFE_INTEGER - 5)] });
+    expect(error(carrera.aplicar(e, 1, apostar("H", 10), T0, rng))).toBe("apuesta_invalida");
+    expect(exito(carrera.aplicar(e, 1, apostar("D", 10), T0, rng)).estado.apuestas).toEqual([ap(1, "H", Number.MAX_SAFE_INTEGER - 5), ap(1, "D", 10)]);
   });
 
   it("actuar sin estar sentado → no_sentado", () => {
@@ -371,7 +368,7 @@ describe("mesa ociosa", () => {
 
   it("en una mesa dormida apostar sigue con las mismas reglas de siempre", () => {
     const dormida = estado({ asientos: [asiento(1, "ana")], ventanasVacias: 3 });
-    expect(error(carrera.aplicar(dormida, 1, apostar("H", 501), T0, rng))).toBe("apuesta_invalida");
+    expect(error(carrera.aplicar(dormida, 1, apostar("H", 9), T0, rng))).toBe("apuesta_invalida");
     expect(error(carrera.aplicar(dormida, 2, apostar("H", 50), T0, rng))).toBe("no_sentado");
     // una apuesta inválida no despierta la mesa
     expect(dormida.fase).toBe("esperando");
@@ -472,7 +469,7 @@ describe("la carrera", () => {
     ]);
     expect(primero.tramosGirados).toBe(1);
     expect(primero.posiciones).toEqual({ H: 1, D: 0, C: 1, S: 1 });
-    expect(e.tramos).toEqual(cs("7D 9H 2C 4S 6D 8C KH")); // los tramos no se tocan, solo se giran
+    expect(e.tramos).toEqual(cs("7D 9H 2C 4S 6D 8C")); // los tramos no se tocan, solo se giran
     expect(e.tramosGirados).toBe(0); // y la pista del estado sigue como al salir
   });
 
@@ -494,11 +491,23 @@ describe("la carrera", () => {
     expect(primero.posiciones).toEqual({ H: 2, D: 2, C: 3, S: 3 });
   });
 
-  it("nunca se giran más de 7 tramos", () => {
-    const [primero] = enCarrera({ tramosGirados: 7, posiciones: { H: 7, D: 7, C: 7, S: 6 }, mazo: mazo("2S") }).plan;
+  it("nunca se giran más de 6 tramos: con todos en la casilla 7 y los 6 girados no hay séptimo", () => {
+    const [primero] = enCarrera({ tramosGirados: 6, posiciones: { H: 7, D: 7, C: 7, S: 6 }, mazo: mazo("2S") }).plan;
     expect(primero.posiciones).toEqual({ H: 7, D: 7, C: 7, S: 7 });
-    expect(primero.tramosGirados).toBe(7);
+    expect(primero.tramosGirados).toBe(6);
     expect(primero.eventos.map((ev) => ev.tipo)).toEqual(["caballo_avanza"]);
+  });
+
+  it("con todos los caballos en la casilla 6 o más se gira el tramo 6 y no hay séptimo", () => {
+    // Con los cuatro primeros tramos ya girados, el 5 y el 6 se giran en el mismo paso; al volver C a la casilla 6 no queda más que girar.
+    const [primero] = enCarrera({ tramosGirados: 4, posiciones: { H: 7, D: 7, C: 7, S: 6 }, mazo: mazo("2S") }).plan;
+    expect(primero.eventos).toEqual([
+      { tipo: "caballo_avanza", palo: "S", carta: c("2S") },
+      { tipo: "tramo_girado", indice: 4, palo: "D" }, // tramos[4] = 6♦
+      { tipo: "tramo_girado", indice: 5, palo: "C" }, // tramos[5] = 8♣
+    ]);
+    expect(primero.tramosGirados).toBe(6);
+    expect(primero.posiciones).toEqual({ H: 7, D: 6, C: 6, S: 7 });
   });
 
   it("el primero en llegar a 8 gana: el tick de la meta da ganador, resultado y finFase de 5 s", () => {
@@ -647,12 +656,12 @@ describe("la carrera se ve con el reloj", () => {
     const e = enCarrera({ posiciones: { H: 1, D: 1, C: 1, S: 0 }, mazo: mazo("2S 3D 4C") });
     const salida = carrera.vista(e, 1, T0) as VistaCarrera;
     expect(salida).toMatchObject({ fase: "carrera", posiciones: { H: 1, D: 1, C: 1, S: 0 }, ultimaCarta: null, finFase: paso(1), ganador: null });
-    expect(salida.tramos).toEqual(Array(7).fill(null));
+    expect(salida.tramos).toEqual(Array(6).fill(null));
 
     for (const ahora of [paso(1), paso(1) + 500]) {
       const v = carrera.vista(e, 1, ahora) as VistaCarrera;
       expect(v).toMatchObject({ posiciones: { H: 1, D: 0, C: 1, S: 1 }, ultimaCarta: c("2S"), finFase: paso(2) });
-      expect(v.tramos).toEqual([c("7D"), null, null, null, null, null, null]);
+      expect(v.tramos).toEqual([c("7D"), null, null, null, null, null]);
     }
     expect(carrera.vista(e, 1, paso(2))).toMatchObject({ posiciones: { H: 1, D: 1, C: 1, S: 1 }, ultimaCarta: c("3D"), finFase: paso(3) });
   });
@@ -801,8 +810,8 @@ describe("salir y desconectar", () => {
       ganador: null,
       ventanasVacias: 0,
     });
-    expect(p.estado.tramos).toHaveLength(7);
-    expect(p.estado.mazo).toHaveLength(41);
+    expect(p.estado.tramos).toHaveLength(6);
+    expect(p.estado.mazo).toHaveLength(42);
     expect(carrera.proximaAlarma(p.estado)).toBeNull();
   });
 
@@ -918,7 +927,7 @@ describe("resultado y nueva ronda", () => {
     expect(p.estado.asientos).toEqual([asiento(1, "ana")]);
     expect(p.estado.tramos).toEqual(nueva.tramos);
     expect(p.estado.mazo).toEqual(nueva.mazo);
-    expect(p.estado.mazo).toHaveLength(41);
+    expect(p.estado.mazo).toHaveLength(42);
     expect(p.eventos).toEqual([]);
     expect(p.liquidacion).toBeUndefined();
   });
@@ -989,7 +998,7 @@ describe("costo, alarma y resumen", () => {
 
   it("costo nunca devuelve una cantidad inválida", () => {
     const e = enApuestas();
-    for (const cantidad of [0, -10, 9, 501, 50.5, NaN, Infinity, "50", null, undefined]) {
+    for (const cantidad of [0, -10, 9, 50.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1, "50", null, undefined]) {
       expect(carrera.costo(e, 1, { t: "apostar", caballo: "H", cantidad } as unknown as AccionCarrera)).toBe(0);
     }
     expect(carrera.costo(e, 1, { t: "apostar", caballo: "X", cantidad: 50 } as unknown as AccionCarrera)).toBe(0);
@@ -1012,10 +1021,10 @@ describe("costo, alarma y resumen", () => {
   });
 
   it("resumen lista los apodos sentados, la fase y el fin de fase", () => {
-    expect(carrera.resumen(enApuestas())).toEqual({ jugadores: ["ana", "beto"], fase: "apuestas", finFase: T0 + CARRERA.APUESTAS_MS });
+    expect(carrera.resumen(enApuestas(), T0)).toEqual({ jugadores: ["ana", "beto"], fase: "apuestas", finFase: T0 + CARRERA.APUESTAS_MS });
     // en plena carrera, sin cuenta atrás: el resumen no cambia hasta la meta
-    expect(carrera.resumen(enCarrera())).toEqual({ jugadores: ["ana", "beto"], fase: "carrera", finFase: null });
-    expect(carrera.resumen(estado())).toEqual({ jugadores: [], fase: "esperando", finFase: null });
+    expect(carrera.resumen(enCarrera(), T0)).toEqual({ jugadores: ["ana", "beto"], fase: "carrera", finFase: null });
+    expect(carrera.resumen(estado(), T0)).toEqual({ jugadores: [], fase: "esperando", finFase: null });
   });
 });
 
@@ -1027,7 +1036,7 @@ describe("vista", () => {
       finFase: T0 + CARRERA.RESULTADO_MS,
       ganador: "S",
       asientos: [asiento(1, "ana"), asiento(2, "beto")],
-      tramos: cs("7D 9H 2C 4S 6D 8C KH"),
+      tramos: cs("7D 9H 2C 4S 6D 8C"),
       mazo: mazo(""),
       tramosGirados: 2,
       posiciones: { H: 3, D: 3, C: 3, S: 8 },
@@ -1038,7 +1047,7 @@ describe("vista", () => {
   it("la vista no revela tramos no girados ni el mazo", () => {
     const e = conGirados();
     const v = carrera.vista(e, 1, T0) as VistaCarrera;
-    expect(v.tramos).toEqual([c("7D"), c("9H"), null, null, null, null, null]);
+    expect(v.tramos).toEqual([c("7D"), c("9H"), null, null, null, null]);
     expect(Object.keys(v).sort()).toEqual(
       ["ronda", "fase", "finFase", "posiciones", "tramos", "ultimaCarta", "misApuestas", "totalesPorCaballo", "sentados", "ganador"].sort(),
     );
@@ -1050,7 +1059,7 @@ describe("vista", () => {
 
   it("sin tramos girados todos van tapados", () => {
     const v = carrera.vista(enCarrera(), 1, T0) as VistaCarrera;
-    expect(v.tramos).toEqual(Array(7).fill(null));
+    expect(v.tramos).toEqual(Array(6).fill(null));
   });
 
   it("incluye fase, posiciones, sentados y ganador", () => {
@@ -1165,7 +1174,7 @@ describe("estado puro y serializable", () => {
     expect(() => carrera.vista(congelar(enCarrera()), 1, T0 + CARRERA.PASO_MS)).not.toThrow();
     expect(() => carrera.proximoAviso!(congelar(enCarrera()), T0)).not.toThrow();
     expect(() => carrera.eventosEntre!(congelar(enCarrera()), T0, T0 + 10 ** 6)).not.toThrow();
-    expect(() => carrera.resumen(congelar(enCarrera()))).not.toThrow();
+    expect(() => carrera.resumen(congelar(enCarrera()), T0)).not.toThrow();
     expect(() => carrera.costo(congelar(enCarrera()), 1, apostar("H", 50))).not.toThrow();
   });
 

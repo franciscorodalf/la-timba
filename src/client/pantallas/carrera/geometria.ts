@@ -3,7 +3,7 @@ import { CARRERA } from "../../../shared/juegos/carrera";
 // Las medidas de la pista. La carrera va a lo largo de un eje (de abajo arriba en móvil, de izquierda a derecha en
 // ordenador) y los cuatro carriles se reparten a lo ancho. En píxeles, para que los caballos se desplacen con `transform`
 // sin que el navegador tenga que recalcular nada. La casilla `k` (0 a `META`) es el punto de la pista donde la punta del
-// caballo toca la línea `k`: en la 0 está la salida, en la `META` la meta, y en las intermedias cuelgan los tramos.
+// caballo toca la línea `k`: en la 0 está la salida, en la `META` la meta, y en las intermedias hay una línea por casilla: de las `TRAMOS` primeras cuelgan los tramos.
 
 /** Lo que se ve de la pista detrás del caballo antes de la salida. */
 const SALIDA = 10;
