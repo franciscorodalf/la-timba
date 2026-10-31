@@ -1,8 +1,8 @@
-import { expect, type Page, test } from "@playwright/test";
+import { type APIRequestContext, type Browser, type BrowserContext, expect, type Page, test } from "@playwright/test";
 import type { RespuestaSesion } from "../src/shared/api";
 import { type AsientoVista, type OpcionesPoker, POKER, type VistaPoker } from "../src/shared/juegos/poker";
 import type { Evento } from "../src/shared/juegos/tipos";
-import { carta, entrarSimulada as baseEntrarSimulada, fichasDeApi, mensajeEstado, sinDesplazamientoHorizontal } from "./ayudas";
+import { abrirPartida, apodoUnico, carta, conSesion, entrarSimulada as baseEntrarSimulada, fichasDeApi, mensajeEstado, registrar, sinDesplazamientoHorizontal } from "./ayudas";
 
 // La mesa anima sin parar: las capturas continuas de la traza saturan la máquina con varios trabajadores (ver blackjack.spec.ts).
 test.use({ trace: { mode: "retain-on-failure", screenshots: false, snapshots: true, sources: true } });
@@ -55,6 +55,93 @@ const SIN_OPCIONES: OpcionesPoker = { retirarse: false, pasar: false, igualar: n
 const contador = (pagina: Page) => pagina.getByText(/^Tienes [\d.]+ fichas$/);
 const sentarme = (pagina: Page) => pagina.getByRole("button", { name: /^Sentarme/ });
 const asientosDeLaMesa = (pagina: Page) => pagina.getByRole("list", { name: "Asientos" }).getByRole("listitem");
+
+// ---------------------------------------------------------------------------------------------------------------------
+// De verdad: dos navegadores, el servidor local y los Durable Objects reales, sin mesa simulada.
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** Otro contexto con el mismo dispositivo que el proyecto (en `movil`, también un móvil). */
+async function otroContexto(browser: Browser): Promise<BrowserContext> {
+  const { viewport, userAgent, deviceScaleFactor, isMobile, hasTouch, locale, baseURL } = test.info().project.use;
+  return browser.newContext({ viewport, userAgent, deviceScaleFactor, isMobile, hasTouch, locale, baseURL });
+}
+
+/** Las fichas que tiene de verdad el jugador según el servidor (no las que enseña la pantalla). */
+async function fichasEnServidor(request: APIRequestContext, { token }: RespuestaSesion): Promise<number> {
+  const respuesta = await request.get("/api/fichas", { headers: { Authorization: `Bearer ${token}` } });
+  expect(respuesta.status()).toBe(200);
+  return (await respuesta.json()).fichas;
+}
+
+test("dos navegadores se sientan, juegan una mano y se levantan con las fichas cuadradas", async ({ page, browser, request }) => {
+  const sesiones = [await registrar(request, apodoUnico(), "1234"), await registrar(request, apodoUnico(), "1234")];
+  const codigo = await abrirPartida(request, sesiones[0]);
+  await conSesion(page, sesiones[0]);
+  const contexto = await otroContexto(browser);
+  try {
+    const paginas = [page, await contexto.newPage()];
+    await conSesion(paginas[1], sesiones[1]);
+
+    // Entran por la sala, como un jugador de verdad: la tarjeta de la mesa lleva al póker.
+    for (const p of paginas) {
+      await p.goto(`/p/${codigo}`);
+      await p.getByRole("link", { name: "Entrar en Póker" }).click();
+      await expect(p).toHaveURL(new RegExp(`/p/${codigo}/poker$`, "i"));
+      await expect(contador(p)).toHaveText("Tienes 1.000 fichas");
+    }
+
+    // Se sienta uno solo: la mesa espera rivales. Al sentarse el segundo, la mano empieza en el acto.
+    const sentarseCon = async (p: Page, cantidad: number) => {
+      for (let sumado = 0; sumado < cantidad; sumado += 50) await p.getByRole("button", { name: "Añadir 50", exact: true }).click();
+      await p.getByRole("button", { name: `Sentarme con ${cantidad}` }).click();
+      await expect(contador(p)).toHaveText(`Tienes ${1000 - cantidad} fichas`);
+    };
+    await sentarseCon(paginas[0], 100);
+    await expect(paginas[0].getByText("Esperando rivales")).toBeVisible();
+    await sentarseCon(paginas[1], 100);
+
+    // Con la mano en marcha, cada uno ve a su rival sentado y sus dos cartas.
+    for (const [i, p] of paginas.entries()) {
+      await expect(p.getByRole("group", { name: "Tus cartas" })).toBeVisible();
+      await expect(asientosDeLaMesa(p).filter({ hasText: sesiones[1 - i].jugador.apodo })).toHaveCount(1);
+    }
+
+    // Todos igualan o pasan hasta el resultado: una mano completa, con sus cuatro rondas de apuestas y el showdown. Se actúa dentro
+    // del `poll`, que reintenta cada 200 ms: quien tiene el turno ve «Pasar» o «Igualar N» y el otro, nada que pulsar.
+    const decide = (p: Page) => p.getByRole("button", { name: /^(Igualar [\d.]+|Pasar)$/ });
+    const hayResultado = (p: Page) => p.getByText("Nueva mano en");
+    await expect
+      .poll(
+        async () => {
+          for (const p of paginas) {
+            if ((await decide(p).isVisible()) && (await decide(p).isEnabled())) await decide(p).click({ timeout: 2_000 }).catch(() => undefined);
+          }
+          return (await hayResultado(paginas[0]).isVisible()) && (await hayResultado(paginas[1]).isVisible());
+        },
+        { timeout: 90_000, intervals: [200] },
+      )
+      .toBe(true);
+
+    // Quien aún no ha enseñado puede hacerlo en el resultado (el que ganó sin enseñar, por ejemplo): se pulsa si está.
+    for (const p of paginas) {
+      const ensenar = p.getByRole("button", { name: "Enseñar mis cartas" });
+      if (await ensenar.isVisible()) await ensenar.click({ timeout: 2_000 }).catch(() => undefined);
+    }
+
+    // Fuera de una mano en juego, levantarse no pregunta nada. Cada uno vuelve a mirar, con «Sentarme» a la vista.
+    for (const p of paginas) await p.getByRole("button", { name: "Levantarme" }).click();
+    for (const p of paginas) await expect(sentarme(p)).toBeVisible();
+
+    // Las fichas cuadran: la mano la jugaron dos a igualar (10 cada uno), así que uno gana 10 y el otro los pierde, o se reparten.
+    // Lo que dice el servidor, lo que dice la pantalla y el total de las dos cuentas.
+    const reales = await Promise.all(sesiones.map((s) => fichasEnServidor(request, s)));
+    expect(reales[0] + reales[1]).toBe(2000);
+    for (const f of reales) expect([990, 1000, 1010]).toContain(f);
+    for (const [i, p] of paginas.entries()) await expect(contador(p)).toHaveText(`Tienes ${String(reales[i]).replace(/\B(?=(\d{3})+(?!\d))/g, ".")} fichas`);
+  } finally {
+    await contexto.close();
+  }
+});
 
 test.describe("mesa simulada", () => {
   test("quien mira ve la mesa y Sentarme, y manda sentarse con lo elegido", async ({ page, request }) => {
