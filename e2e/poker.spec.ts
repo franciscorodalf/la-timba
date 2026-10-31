@@ -1391,6 +1391,8 @@ test.describe("guion", () => {
       requestAnimationFrame(fotograma);
     });
 
+    const muestrasDeVuelo = () => page.evaluate(() => (window as unknown as { __vuelos: unknown[] }).__vuelos);
+
     // Una apuesta, el barrido al bote y un bote que va a un rival: todos los vuelos que hay en el tapete.
     const flop = [carta("2C"), carta("7D"), carta("9S")];
     const abierta = { ...mano, calle: "flop" as const, mesa: flop, botes: [{ cantidad: 180, jugadores: [] }], asientos: mano.asientos.map((a) => ({ ...a, apostado: 0, fichas: 980 })) };
@@ -1399,12 +1401,14 @@ test.describe("guion", () => {
     await expect(page.locator(".pk-vuelo")).toHaveCount(0);
     for (const ganador of [9001, 9003, 9008]) {
       const pago = { ...abierta, fase: "resultado" as const, turno: null, finFase: Date.now() + 6_000, asientos: abierta.asientos.map((a) => (a.jugadorId === ganador ? { ...a, fichas: 1160 } : a)) };
+      const vistos = (await muestrasDeVuelo()).length;
       mesa.enviar(estado(pago, [{ tipo: "bote_ganado", jugadorId: ganador, cantidad: 180, indiceBote: 0 }]));
-      await expect(page.locator(".pk-vuelo").first()).toBeVisible();
+      // El vuelo dura menos de medio segundo y, con la máquina cargada, el sondeo de `expect` puede no coincidir con él: se espera a que lo haya visto el muestreador.
+      await expect.poll(async () => (await muestrasDeVuelo()).length, { message: "el muestreador ve volar las fichas del bote" }).toBeGreaterThan(vistos);
       await expect(page.locator(".pk-vuelo")).toHaveCount(0);
     }
 
-    const muestras = await page.evaluate(() => (window as unknown as { __vuelos: { ancho: number; alto: number; ventana: number; cortadas: number }[] }).__vuelos);
+    const muestras = (await muestrasDeVuelo()) as { ancho: number; alto: number; ventana: number; cortadas: number }[];
     expect(muestras.length, "se ha visto volar alguna ficha").toBeGreaterThan(0);
     for (const { ancho, alto, ventana, cortadas } of muestras) {
       expect(ancho, "la página no se ensancha").toBeLessThanOrEqual(ventana);
