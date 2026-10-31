@@ -4,7 +4,6 @@ import { type AccionPoker, type OpcionesPoker, POKER, type VistaPoker } from "..
 import { Aviso } from "../../componentes/Aviso";
 import { Boton } from "../../componentes/Boton";
 import { FichasApuesta } from "../../componentes/FichasApuesta";
-import { sonidos } from "../../efectos/sonidos";
 import { miles } from "../../formato";
 import { leerCantidad, type LimitesSubida, pasoDeSubida } from "./subir";
 
@@ -111,11 +110,6 @@ export function Decidir({ opciones, tuTurno, activo, cuenta, hoja, onActuar }: P
     if (abierto !== null && panel === null) setAbierto(null);
   }, [abierto, panel]);
 
-  const actuar = (accion: AccionPoker) => {
-    sonidos.reproducir("fichas");
-    onActuar(accion);
-  };
-
   if (opciones?.ensenar) {
     return (
       <div className="pk-acciones">
@@ -132,7 +126,7 @@ export function Decidir({ opciones, tuTurno, activo, cuenta, hoja, onActuar }: P
       // La fila sigue ahí, vacía: la mesa no salta al abrir la hoja.
       <div className="pk-acciones">
         <Hoja hoja={hoja}>
-          <PanelSubir limites={panel} activo={activo} cuenta={cuenta} onSubir={(hasta) => actuar({ t: "subir", hasta })} onCancelar={() => setAbierto(null)} />
+          <PanelSubir limites={panel} activo={activo} cuenta={cuenta} onSubir={(hasta) => onActuar({ t: "subir", hasta })} onCancelar={() => setAbierto(null)} />
         </Hoja>
       </div>
     );
@@ -146,7 +140,7 @@ export function Decidir({ opciones, tuTurno, activo, cuenta, hoja, onActuar }: P
           Retirarse
         </Boton>
         {opciones.igualar !== null ? (
-          <Boton disabled={!activo} onClick={() => actuar({ t: "igualar" })}>
+          <Boton disabled={!activo} onClick={() => onActuar({ t: "igualar" })}>
             Igualar {miles(opciones.igualar)}
           </Boton>
         ) : (
@@ -157,7 +151,7 @@ export function Decidir({ opciones, tuTurno, activo, cuenta, hoja, onActuar }: P
         {subir === null ? (
           <span aria-hidden="true" />
         ) : todoSolo ? (
-          <Boton variante="secundario" disabled={!activo} onClick={() => actuar({ t: "subir", hasta: subir.max })}>
+          <Boton variante="secundario" disabled={!activo} onClick={() => onActuar({ t: "subir", hasta: subir.max })}>
             All-in {miles(subir.max)}
           </Boton>
         ) : (

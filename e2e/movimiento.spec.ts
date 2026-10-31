@@ -1,6 +1,7 @@
 import { expect, type Locator, type Page, test } from "@playwright/test";
 import type { VistaBJ } from "../src/shared/juegos/blackjack";
 import type { VistaCarrera } from "../src/shared/juegos/carrera";
+import type { VistaPoker } from "../src/shared/juegos/poker";
 import { abrirPartida, apodoUnico, carta as c, conSesion, entrarSimulada, fichasDeApi, mensajeEstado, registrar } from "./ayudas";
 
 // La mesa anima sin parar: las capturas continuas de la traza saturan la máquina con varios trabajadores (ver blackjack.spec.ts).
@@ -36,8 +37,8 @@ interface Seguimiento {
  * fotograma en que se ve (opacidad > 0) y otra vez 300 ms más tarde. Una carta que sale volando desde el mazo se mediría
  * lejos de su sitio al aparecer; una que ya está en su sitio, no.
  */
-async function seguirCartas(pagina: Page): Promise<void> {
-  await pagina.addInitScript(() => {
+async function seguirCartas(pagina: Page, cartas = ".bj-mano [role=img]"): Promise<void> {
+  await pagina.addInitScript((selector) => {
     const w = window as unknown as { __seguimientos: Seguimiento[] };
     w.__seguimientos = [];
     const vistas = new WeakMap<Element, Seguimiento>();
@@ -56,7 +57,7 @@ async function seguirCartas(pagina: Page): Promise<void> {
     };
     const vistaEn = new WeakMap<Element, number>();
     const fotograma = (ahora: number) => {
-      for (const el of document.querySelectorAll(".bj-mano [role=img]")) {
+      for (const el of document.querySelectorAll(selector)) {
         // Una carta de la ronda anterior que se retira (la mesa la marca `aria-hidden`) ya no cuenta: al empezar la ronda siguiente la mesa
         // se recoloca y la que se va se mueve con ella. Con blackjack de la banca la ronda dura apenas 4 s desde el reparto.
         if (el.closest("[aria-hidden=true]") !== null) continue;
@@ -78,7 +79,7 @@ async function seguirCartas(pagina: Page): Promise<void> {
       requestAnimationFrame(fotograma);
     };
     requestAnimationFrame(fotograma);
-  });
+  }, cartas);
 }
 
 const contador = (pagina: Page): Locator => pagina.getByText(/^Tienes [\d.]+ fichas$/);
@@ -139,6 +140,79 @@ test.describe("con movimiento reducido", () => {
       expect(yMax - yMin, `«${nombre}» (${alAparecer.mano}) se movió ${(yMax - yMin).toFixed(1)} px en vertical durante la ronda`).toBeLessThanOrEqual(1);
     }
   });
+
+  test("con movimiento reducido las cartas del póker aparecen en su sitio", async ({ page, request }) => {
+    await seguirCartas(page, ".pk-tapete [role=img], .pk-mias [role=img]");
+    const { sesion, codigo, mesa } = await entrarSimulada<VistaPoker>(page, request, "mesa-poker");
+    const yo = sesion.jugador.id;
+    const asiento = (jugadorId: number, numero: number, apodo: string, resto: Partial<VistaPoker["asientos"][number]> = {}): VistaPoker["asientos"][number] => ({
+      asiento: numero,
+      jugadorId,
+      apodo,
+      fichas: 1000,
+      apostado: 0,
+      estado: "juega",
+      conectado: true,
+      boton: false,
+      tieneCartas: true,
+      cartas: null,
+      ...resto,
+    });
+    const base: VistaPoker = {
+      ronda: 1,
+      fase: "mano",
+      calle: "preflop",
+      finFase: Date.now() + 20_000,
+      mesa: [],
+      botes: [],
+      turno: null,
+      asientos: [asiento(9001, 0, "Ana", { tieneCartas: false, estado: "fuera" }), asiento(yo, 1, sesion.jugador.apodo, { tieneCartas: false, estado: "fuera" })],
+      asientosLibres: 6,
+      yo,
+      misCartas: null,
+      opciones: null,
+      porEntrar: 0,
+    };
+    mesa.alConectar(mensajeEstado<VistaPoker>({ ...base, ronda: 0, fase: "esperando", calle: null, finFase: null }));
+    await page.goto(`/p/${codigo}/poker`);
+    await expect(page.getByRole("list", { name: "Asientos" }).getByRole("listitem")).toHaveCount(2);
+
+    // Se reparte: dos cartas para cada uno, una detrás de otra.
+    const repartida: VistaPoker = { ...base, asientos: [asiento(9001, 0, "Ana", { fichas: 990, apostado: 10 }), asiento(yo, 1, sesion.jugador.apodo, { fichas: 995, apostado: 5 })], misCartas: [c("KS"), c("KD")], turno: yo };
+    mesa.enviar(
+      mensajeEstado<VistaPoker>(repartida, [
+        { tipo: "mano_empezada", ronda: 1, boton: 1 },
+        { tipo: "ciega", jugadorId: yo, cantidad: 5 },
+        { tipo: "ciega", jugadorId: 9001, cantidad: 10 },
+        ...[9001, yo, 9001, yo].map((a) => ({ tipo: "carta_repartida", a })),
+      ]),
+    );
+    await expect(page.getByText("Pareja de reyes")).toBeVisible();
+
+    // Y se abre el flop.
+    const flop: VistaPoker = {
+      ...repartida,
+      calle: "flop",
+      mesa: [c("2C"), c("7D"), c("9S")],
+      botes: [{ cantidad: 20, jugadores: [9001, yo] }],
+      asientos: [asiento(9001, 0, "Ana", { fichas: 990 }), asiento(yo, 1, sesion.jugador.apodo, { fichas: 990 })],
+    };
+    mesa.enviar(mensajeEstado<VistaPoker>(flop, [{ tipo: "accion", jugadorId: yo, accion: "igualar", cantidad: 5 }, { tipo: "calle_abierta", calle: "flop", cartas: flop.mesa }]));
+    await expect(page.locator(".pk-mesa-cartas [role=img]")).toHaveCount(3);
+
+    const leer = () => page.evaluate(() => (window as unknown as { __seguimientos: Seguimiento[] }).__seguimientos);
+    await expect.poll(async () => (await leer()).every((s) => s.despues !== null), { timeout: 10_000 }).toBe(true);
+    const seguimientos = await leer();
+    // Dos boca abajo de Ana, tus dos y las tres de la mesa.
+    expect(seguimientos.length).toBeGreaterThanOrEqual(7);
+    for (const { nombre, alAparecer, despues } of seguimientos) {
+      for (const lado of ["x", "y", "ancho", "alto"] as const) {
+        expect(Math.abs(despues![lado] - alAparecer[lado]), `«${nombre}» (${alAparecer.mano}): ${lado} al aparecer ${alAparecer[lado]} (${alAparecer.transform}) y después ${despues![lado]}`).toBeLessThanOrEqual(1);
+      }
+    }
+    // Ninguna ficha vuela.
+    await expect(page.locator(".pk-vuelo")).toHaveCount(0);
+  });
 });
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -148,9 +222,9 @@ test.describe("con movimiento reducido", () => {
 test.describe("letras grandes del premio", () => {
   // Sin esto el navegador descarga ese peso al ganar, a media animación: con la red lenta el cartel sale en la fuente de reserva y
   // cambia de letra de golpe, y la primera vez que se pinta cuesta una tarea larga justo en el momento más cargado de la mesa.
-  for (const [mesa, party] of [["blackjack", "mesa-blackjack"], ["carrera", "mesa-carrera"]] as const) {
+  for (const [mesa, party] of [["blackjack", "mesa-blackjack"], ["carrera", "mesa-carrera"], ["poker", "mesa-poker"]] as const) {
     test(`la mesa de ${mesa} descarga Playfair Display 800 al abrirse, sin esperar a que haya un premio`, async ({ page, request }) => {
-      const { codigo, mesa: simulada } = await entrarSimulada<VistaBJ | VistaCarrera>(page, request, party);
+      const { codigo, mesa: simulada } = await entrarSimulada<VistaBJ | VistaCarrera | VistaPoker>(page, request, party);
       await fichasDeApi(page, 1000);
       simulada.alConectar(null); // la mesa no contesta: no hay ronda, ni premio, ni ganador
       const pedidas: string[] = [];
@@ -301,6 +375,48 @@ test.describe("botones de al menos 44 px en el móvil", () => {
     await page.getByRole("button", { name: "Volver a la sala" }).click();
     await expect(page.getByRole("dialog")).toBeVisible();
     await comprobar(page, "Blackjack (confirmar salida)");
+  });
+
+  test("mesa de póker: sentarse, decidir, subir, tapar, enseñar y el premio", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrarSimulada<VistaPoker>(page, request, "mesa-poker");
+    await fichasDeApi(page, 1000);
+    const yo = sesion.jugador.id;
+    const ana: VistaPoker["asientos"][number] = { asiento: 0, jugadorId: 9001, apodo: "Ana", fichas: 1000, apostado: 10, estado: "juega", conectado: true, boton: false, tieneCartas: true, cartas: null };
+    const mio: VistaPoker["asientos"][number] = { ...ana, asiento: 1, jugadorId: yo, apodo: sesion.jugador.apodo, apostado: 5 };
+    const base: VistaPoker = { ronda: 1, fase: "mano", calle: "preflop", finFase: Date.now() + 20_000, mesa: [], botes: [], turno: 9001, asientos: [ana], asientosLibres: 7, yo, misCartas: null, opciones: null, porEntrar: 0 };
+    mesa.alConectar(mensajeEstado<VistaPoker>(base));
+    await page.goto(`/p/${codigo}/poker`);
+    await expect(page.getByRole("button", { name: "Añadir 50", exact: true })).toBeVisible();
+    await comprobar(page, "Póker (mirando)");
+
+    const decidiendo: VistaPoker = { ...base, asientos: [ana, mio], turno: yo, misCartas: [c("KS"), c("KD")], opciones: { retirarse: true, pasar: false, igualar: 5, subir: { min: 20, max: 1000 }, ensenar: false } };
+    mesa.enviar(mensajeEstado<VistaPoker>(decidiendo));
+    await expect(page.getByRole("button", { name: "Igualar 5" })).toBeVisible();
+    await comprobar(page, "Póker (decidir)");
+
+    await page.getByRole("button", { name: "Subir", exact: true }).click();
+    await expect(page.getByRole("group", { name: "Subir la apuesta" })).toBeVisible();
+    await comprobar(page, "Póker (subir)");
+    await page.getByRole("button", { name: "Cancelar" }).click();
+
+    await page.getByRole("button", { name: "Añadir fichas" }).click();
+    await expect(page.getByRole("button", { name: "Añadir 50", exact: true })).toBeVisible();
+    await comprobar(page, "Póker (añadir fichas)");
+    await page.getByRole("button", { name: "Cancelar" }).click();
+
+    const resultado: VistaPoker = {
+      ...decidiendo,
+      fase: "resultado",
+      turno: null,
+      finFase: Date.now() + 6_000,
+      botes: [{ cantidad: 15, jugadores: [yo] }],
+      asientos: [ana, { ...mio, apostado: 0, fichas: 1015 }],
+      opciones: { retirarse: false, pasar: false, igualar: null, subir: null, ensenar: true },
+    };
+    mesa.enviar(mensajeEstado<VistaPoker>(resultado, [{ tipo: "bote_ganado", jugadorId: yo, cantidad: 15, indiceBote: 0 }]));
+    await expect(page.getByText("¡Ganas +15!")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Enseñar mis cartas" })).toBeVisible();
+    await comprobar(page, "Póker (resultado)");
   });
 
   test("mesa de la carrera: elegir caballo y apostar", async ({ page, request }) => {

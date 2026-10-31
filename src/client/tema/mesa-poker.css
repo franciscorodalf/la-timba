@@ -237,6 +237,31 @@
   visibility: hidden;
 }
 
+/* El mazo, en la esquina que queda bajo las cartas de la mesa: ahí no llegan ni los asientos ni lo apostado. Se sale por debajo del centro sin ensancharlo. */
+.pk-mazo {
+  position: absolute;
+  top: calc(var(--alto-mesa) + 8px);
+  right: 2px;
+}
+
+/* ---------- Fichas que vuelan ---------- */
+
+/* Cada vuelo es una capa del tamaño del tapete: así un `translate` en porcentaje recorre el tapete en las mismas medidas que sitúan los asientos.
+   Lo mueve Motion, y con movimiento reducido no se pinta. */
+.pk-vuelo {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.pk-vuelo .ficha {
+  position: absolute;
+  left: 0;
+  top: 0;
+  translate: -50% -50%;
+}
+
 /* ---------- Panel de debajo ---------- */
 
 .pk-panel {
@@ -257,11 +282,34 @@
 }
 
 .pk-mias__cartas {
+  position: relative;
+  isolation: isolate;
   flex: none;
   display: flex;
   gap: 6px;
   min-width: calc(var(--ancho-carta) * 2 + 6px);
   min-height: calc(var(--ancho-carta) * 1.4);
+}
+
+/* Los huecos siguen debajo mientras tus cartas esperan su turno en el reparto. */
+.pk-mias__cartas:not(.pk-mias__cartas--vacias)::before,
+.pk-mias__cartas:not(.pk-mias__cartas--vacias)::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  top: 0;
+  width: var(--ancho-carta);
+  height: calc(var(--ancho-carta) * 1.4);
+  border: 1.5px dashed rgba(212, 175, 55, 0.32);
+  border-radius: calc(var(--ancho-carta) * 0.08);
+}
+
+.pk-mias__cartas::before {
+  left: 0;
+}
+
+.pk-mias__cartas::after {
+  left: calc(var(--ancho-carta) + 6px);
 }
 
 /* Sin cartas, dos huecos impresos donde caerán. */
@@ -560,6 +608,10 @@
 
 .pk--ordenador .pk-bote {
   font-size: 1.0625rem;
+}
+
+.pk--ordenador .pk-mazo {
+  top: calc(var(--alto-mesa) + 10px);
 }
 
 .pk--ordenador .pk-panel {

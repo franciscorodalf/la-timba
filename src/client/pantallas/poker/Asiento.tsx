@@ -4,6 +4,7 @@ import { Ficha } from "../../componentes/Ficha";
 import { Naipe } from "../../componentes/Naipe";
 import { miles } from "../../formato";
 import { type AsientoColocado, anclaDeApuesta } from "./asientos";
+import { entradaDeCarta, type Reloj } from "./useGuion";
 
 /** La posición de algo del tapete: el centro, en porcentaje. */
 const sitio = (x: number, y: number) => ({ "--x": `${x}%`, "--y": `${y}%` }) as CSSProperties;
@@ -15,6 +16,9 @@ interface Props {
   enTurno: boolean;
   /** El ancho de las cartas pequeñas del asiento. */
   anchoCarta: number;
+  ronda: number;
+  /** De ahí sale cuándo se reparte cada carta del asiento. */
+  reloj: Reloj;
 }
 
 /** Las clases del asiento: de quién es, si habla, si está apagado y a qué lado del tapete queda (la D va hacia el centro). */
@@ -34,9 +38,11 @@ function clasesDe(a: AsientoVista, esYo: boolean, enTurno: boolean, lado: "izq" 
  * mano (o las que haya enseñado) y debajo su pila de fichas con la cantidad. El botón del repartidor es una ficha con una D al lado.
  * Tus cartas grandes no van aquí: van debajo del tapete.
  */
-export function Asiento({ colocado, esYo, enTurno, anchoCarta }: Props) {
+export function Asiento({ colocado, esYo, enTurno, anchoCarta, ronda, reloj }: Props) {
   const { asiento: a, x, y } = colocado;
   const cartas = a.cartas ?? (a.tieneCartas && !esYo ? [null, null] : null);
+  // Sin fichas y en la mano va all-in; al cobrar, aunque siga marcado así, ya enseña lo que tiene.
+  const allin = a.estado === "allin" && a.fichas === 0;
   return (
     <li className={clasesDe(a, esYo, enTurno, x > 50 ? "der" : "izq")} style={sitio(x, y)}>
       <p className="pk-placa">
@@ -48,16 +54,16 @@ export function Asiento({ colocado, esYo, enTurno, anchoCarta }: Props) {
       {cartas !== null && (
         <div className="pk-cartas" style={{ "--ancho-carta": `${anchoCarta}px` } as CSSProperties}>
           {cartas.map((carta, i) => (
-            <div key={i} className="pk-cartas__carta">
-              <Naipe carta={carta} ancho={anchoCarta} />
+            <div key={`${ronda}:${i}`} className="pk-cartas__carta">
+              <Naipe carta={carta} ancho={anchoCarta} {...entradaDeCarta(reloj, ronda, a.jugadorId, i)} />
             </div>
           ))}
         </div>
       )}
-      <p className={`pk-pila${a.estado === "allin" ? " pk-pila--allin" : ""}`}>
+      <p className={`pk-pila${allin ? " pk-pila--allin" : ""}`}>
         <Ficha tamaño={anchoCarta <= 20 ? 14 : 20} />
         <span className="solo-lectores">Fichas: </span>
-        <b>{a.estado === "allin" ? "All-in" : miles(a.fichas)}</b>
+        <b>{allin ? "All-in" : miles(a.fichas)}</b>
       </p>
       {a.boton && (
         <span className="pk-boton" role="img" aria-label="Botón del repartidor">

@@ -35,6 +35,9 @@ export const CAJA_APUESTA = { movil: { ancho: 52, alto: 18 }, ordenador: { ancho
 /** El centro: las cinco cartas de la mesa con «Bote N» debajo. `y` es el centro del conjunto, en porcentaje. */
 export const CAJA_CENTRO = { movil: { ancho: 150, alto: 64, y: 44 }, ordenador: { ancho: 312, alto: 106, y: 44 } } as const;
 
+/** Dónde está «Bote N», adonde llegan lo apostado y de donde salen las fichas de quien gana. */
+export const PUNTO_BOTE = { movil: { x: 50, y: 51 }, ordenador: { x: 50, y: 54 } } as const satisfies Record<string, Punto>;
+
 /**
  * Por dónde se sujeta lo apostado al punto que le toca: por el borde que mira al centro del tapete (el izquierdo en los asientos de
  * la izquierda, el derecho en los de la derecha) o por el medio si está en el eje. Así una cantidad larga crece hacia el centro y

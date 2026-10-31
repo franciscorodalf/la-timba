@@ -1,10 +1,12 @@
-import { type CSSProperties, useCallback, useState } from "react";
+import { type CSSProperties, type Ref, useCallback, useState } from "react";
 import type { Carta } from "../../../shared/cartas";
 import { type Jugada, nombreJugada } from "../../../shared/juegos/poker-jugadas";
+import type { JugadorId } from "../../../shared/juegos/tipos";
 import { Boton } from "../../componentes/Boton";
 import { Ficha } from "../../componentes/Ficha";
 import { Naipe } from "../../componentes/Naipe";
 import { miles } from "../../formato";
+import { entradaDeCarta, type Reloj } from "./useGuion";
 
 const CLAVE_TAPAR = "timba.poker.tapar";
 
@@ -47,13 +49,19 @@ interface Props {
   pila: number;
   /** Lo que has añadido y entra al empezar la mano siguiente. */
   porEntrar: number;
+  /** Tu pila, adonde vuelan las fichas que ganas. */
+  refPila: Ref<HTMLParagraphElement>;
+  yo: JugadorId;
+  ronda: number;
+  /** De ahí sale cuándo se reparte cada una de tus cartas. */
+  reloj: Reloj;
 }
 
 /**
  * Debajo del tapete: tus cartas grandes y, al lado, tu pila, el nombre de tu jugada («Pareja de reyes») y «Tapar», que las da la
  * vuelta solo en tu pantalla y esconde también el texto. Sin cartas reserva su sitio (la mesa no salta cuando llega la mano).
  */
-export function MisCartas({ cartas, jugada, tapadas, onAlternar, pila, porEntrar }: Props) {
+export function MisCartas({ cartas, jugada, tapadas, onAlternar, pila, porEntrar, refPila, yo, ronda, reloj }: Props) {
   return (
     <div className="pk-mias" style={{ "--ancho-carta": `${ANCHO_CARTA}px` } as CSSProperties}>
       {cartas === null ? (
@@ -64,12 +72,12 @@ export function MisCartas({ cartas, jugada, tapadas, onAlternar, pila, porEntrar
       ) : (
         <div className="pk-mias__cartas" role="group" aria-label="Tus cartas">
           {cartas.map((carta, i) => (
-            <Naipe key={i} carta={tapadas ? null : carta} ancho={ANCHO_CARTA} />
+            <Naipe key={`${ronda}:${i}`} carta={tapadas ? null : carta} ancho={ANCHO_CARTA} {...entradaDeCarta(reloj, ronda, yo, i)} />
           ))}
         </div>
       )}
       <div className="pk-mias__datos">
-        <p className="pk-mipila">
+        <p className="pk-mipila" ref={refPila}>
           <Ficha tamaño={16} />
           <span>Tu pila</span> <b>{miles(pila)}</b>
         </p>

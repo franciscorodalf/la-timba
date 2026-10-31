@@ -4,13 +4,16 @@ import { mejorJugada } from "../../shared/juegos/poker-jugadas";
 import { AvisoMesa } from "../componentes/AvisoMesa";
 import { BarraMesa } from "../componentes/BarraMesa";
 import { Boton } from "../componentes/Boton";
+import { CartelPremio } from "../componentes/CartelPremio";
 import { Confirmar } from "../componentes/Confirmar";
 import { EstadoMesa } from "../componentes/EstadoMesa";
+import { FichasVolando } from "../componentes/FichasVolando";
 import { GirarMovil } from "../componentes/GirarMovil";
 import { usePrecargarBaraja } from "../componentes/Naipe";
 import { Reconectando } from "../componentes/Reconectando";
 import { SinMesa, useSinMesa } from "../componentes/SinMesa";
 import { sonidos } from "../efectos/sonidos";
+import { usePremio } from "../efectos/usePremio";
 import { ORDENADOR_PX, useAnchoVentana } from "../efectos/ventana";
 import { usePrecargarTipografia } from "../efectos/usePrecargarTipografia";
 import { cuentaAtras } from "../formato";
@@ -24,12 +27,22 @@ import { AnadirFichas, Decidir, Mirando, textoEstado } from "./poker/controles";
 import { MisCartas, useTapadas } from "./poker/MisCartas";
 import { TablaJugadas } from "./poker/TablaJugadas";
 import { Tapete } from "./poker/Tapete";
+import { cartasRepartidas, useGuion, vistaMostrada } from "./poker/useGuion";
 
 /** La mesa de póker de la partida `codigo`: tapete ovalado, vertical en móvil y horizontal en ordenador. */
 export function MesaPoker({ codigo }: { codigo: string }) {
   const { jugador, refrescarFichas } = useSesion();
-  const { vista, enviar, error, errorDe, conectado } = useMesa<VistaPoker, AccionPoker>("mesa-poker", codigo);
+  const { vista, lote, enviar, error, errorDe, conectado } = useMesa<VistaPoker, AccionPoker>("mesa-poker", codigo);
   const ordenador = useAnchoVentana() >= ORDENADOR_PX;
+
+  // El mazo, de donde salen las cartas; el bote y tu pila, entre los que vuelan las fichas que ganas.
+  const mazo = useRef<HTMLDivElement>(null);
+  const refBote = useRef<HTMLParagraphElement>(null);
+  const refPila = useRef<HTMLParagraphElement>(null);
+  const { premio, celebrar } = usePremio();
+  const reloj = useGuion(lote, vista, mazo, conectado, celebrar);
+  // Lo que se enseña: la vista ya lo trae todo hecho y aquí se retiene lo que el guion aún no ha enseñado. Sin guion, es la vista.
+  const mostrada = vista === null ? null : vistaMostrada(vista, reloj);
 
   usePrecargarBaraja();
   usePrecargarTipografia();
@@ -88,11 +101,15 @@ export function MesaPoker({ codigo }: { codigo: string }) {
   // Salir en plena mano te retira y deja en el bote lo que llevas puesto.
   const enLaMano = fase === "mano" && (mio?.estado === "juega" || mio?.estado === "allin");
   const salida = useSalirDeMesa({ codigo, enviar, apuestaEnJuego: enLaMano, perdidas: "lo que llevas puesto en esta mano" });
-  const tuTurno = vista !== null && vista.turno !== null && vista.turno === vista.yo;
+  const tuTurno = mostrada !== null && mostrada.turno !== null && mostrada.turno === mostrada.yo;
+  // Tu pila con lo que el guion aún retiene.
+  const miPila = mostrada?.asientos.find((a) => a.jugadorId === mostrada.yo)?.fichas ?? 0;
 
-  // Tu jugada y si tienes las cartas tapadas se calculan aquí porque los usan tus cartas y la tabla de jugadas: con Tapar, la tabla no resalta nada.
+  // Tu jugada y si tienes las cartas tapadas se calculan aquí porque los usan tus cartas y la tabla de jugadas: con Tapar, la tabla
+  // no resalta nada. Solo cuentan las cartas que ya se ven: tu jugada no adelanta una carta que aún no ha salido.
   const [tapadas, alternarTapadas] = useTapadas();
-  const jugada = vista?.misCartas ? mejorJugada([...vista.misCartas, ...vista.mesa]) : null;
+  const misCartasVistas = mostrada?.misCartas && mostrada.yo !== null && cartasRepartidas(reloj, mostrada.ronda, mostrada.yo) ? mostrada.misCartas : null;
+  const jugada = misCartasVistas !== null && mostrada !== null ? mejorJugada([...misCartasVistas, ...mostrada.mesa]) : null;
   const [tablaAbierta, setTablaAbierta] = useState(false);
 
   const levantarmeYa = () => {
@@ -113,19 +130,30 @@ export function MesaPoker({ codigo }: { codigo: string }) {
         }
       />
 
-      <div className="pk-mesa aparece">{vista !== null ? <Tapete vista={vista} ordenador={ordenador} /> : <div className="pk-tapete" aria-hidden="true" />}</div>
+      <div className="pk-mesa aparece">{mostrada !== null ? <Tapete vista={mostrada} ordenador={ordenador} reloj={reloj} refMazo={mazo} refBote={refBote} /> : <div className="pk-tapete" aria-hidden="true" />}</div>
 
       <section className="pk-panel" aria-label="Tu jugada">
         {sinMesa && <SinMesa codigo={codigo} />}
         <EstadoMesa
-          texto={textoEstado(vista)}
+          texto={textoEstado(mostrada)}
           cuenta={cuenta}
           finFase={conCuenta ? vista.finFase : null}
           duracionMs={fase === "resultado" ? POKER.RESULTADO_MS : POKER.TURNO_MS}
         />
         {vista !== null && mio !== undefined && (
           <>
-            <MisCartas cartas={vista.misCartas} jugada={jugada} tapadas={tapadas} onAlternar={alternarTapadas} pila={mio.fichas} porEntrar={vista.porEntrar} />
+            <MisCartas
+              cartas={vista.misCartas}
+              jugada={jugada}
+              tapadas={tapadas}
+              onAlternar={alternarTapadas}
+              pila={miPila}
+              porEntrar={vista.porEntrar}
+              refPila={refPila}
+              yo={mio.jugadorId}
+              ronda={vista.ronda}
+              reloj={reloj}
+            />
             <Decidir
               opciones={vista.opciones}
               tuTurno={tuTurno}
@@ -177,6 +205,8 @@ export function MesaPoker({ codigo }: { codigo: string }) {
         )}
       </section>
 
+      <CartelPremio premio={premio} />
+      <FichasVolando disparo={premio?.id ?? 0} desde={refBote} hasta={refPila} />
       <AvisoMesa error={error} accion={errorDe} />
 
       {salida.dialogo}

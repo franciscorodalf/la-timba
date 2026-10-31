@@ -1,7 +1,11 @@
 import { expect, type Page, test } from "@playwright/test";
 import type { RespuestaSesion } from "../src/shared/api";
-import type { AsientoVista, OpcionesPoker, VistaPoker } from "../src/shared/juegos/poker";
+import { type AsientoVista, type OpcionesPoker, POKER, type VistaPoker } from "../src/shared/juegos/poker";
+import type { Evento } from "../src/shared/juegos/tipos";
 import { carta, entrarSimulada as baseEntrarSimulada, fichasDeApi, mensajeEstado, sinDesplazamientoHorizontal } from "./ayudas";
+
+// La mesa anima sin parar: las capturas continuas de la traza saturan la máquina con varios trabajadores (ver blackjack.spec.ts).
+test.use({ trace: { mode: "retain-on-failure", screenshots: false, snapshots: true, sources: true } });
 
 // La mesa simulada: el socket de la mesa no llega al servidor y la prueba decide qué vista manda.
 const estado = mensajeEstado<VistaPoker>;
@@ -146,6 +150,7 @@ test.describe("mesa simulada", () => {
           asientos: [...document.querySelectorAll(".pk-asiento")].map((el) => ({ nombre: el.querySelector(".pk-placa")!.textContent, ...caja(el) })),
           apuestas: [...document.querySelectorAll(".pk-apuesta")].map((el) => ({ nombre: el.textContent, ...caja(el) })),
           centro: caja(document.querySelector(".pk-centro")!),
+          mazo: caja(document.querySelector(".pk-mazo .mazo")!),
         };
       });
       type Caja = { izq: number; der: number; arr: number; aba: number };
@@ -158,6 +163,7 @@ test.describe("mesa simulada", () => {
         for (const ap of medidas.apuestas) expect(se(a, ap), `${a.nombre} pisa ${ap.nombre}`).toBe(false);
       }
       for (const ap of medidas.apuestas) expect(se(ap, medidas.centro), `${ap.nombre} pisa las cartas de la mesa`).toBe(false);
+      for (const otro of [...medidas.asientos, ...medidas.apuestas]) expect(se(medidas.mazo, otro), `el mazo pisa ${otro.nombre}`).toBe(false);
       expect(await sinDesplazamientoHorizontal(page)).toBe(true);
 
       // Los botones de la barra (volver, sonido) llegan a 44 px.
@@ -920,4 +926,343 @@ test.describe("tabla de jugadas", () => {
       expect(await sinDesplazamientoHorizontal(page)).toBe(true);
     });
   }
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// El guion: vista + eventos se convierten en lo que se ve, y la pantalla siempre acaba en la última vista.
+// ---------------------------------------------------------------------------------------------------------------------
+
+test.describe("guion", () => {
+  const MESA_ENTERA = [carta("KH"), carta("7D"), carta("2C"), carta("9S"), carta("3D")];
+  const NOMBRES_MESA = ["Rey de corazones", "7 de diamantes", "2 de tréboles", "9 de picas", "3 de diamantes"];
+  const CALLES: Evento[] = [
+    { tipo: "calle_abierta", calle: "flop", cartas: MESA_ENTERA.slice(0, 3) },
+    { tipo: "calle_abierta", calle: "turn", cartas: MESA_ENTERA.slice(3, 4) },
+    { tipo: "calle_abierta", calle: "river", cartas: MESA_ENTERA.slice(4) },
+  ];
+
+  /** Lo que se ve en un fotograma. */
+  interface Foto {
+    t: number;
+    mesa: string[];
+    jugada: string;
+    pilaAna: string;
+    miPila: string;
+    vuelos: number;
+    cartel: boolean;
+    volando: number;
+  }
+
+  /** Un bucle de fotogramas que anota lo que enseña la mesa en cada uno. Empieza a mirar al llamarlo. */
+  async function muestrear(pagina: Page): Promise<void> {
+    await pagina.evaluate(() => {
+      const w = window as unknown as { __fotos: Foto[] };
+      w.__fotos = [];
+      const texto = (el: Element | null | undefined) => el?.textContent?.trim() ?? "";
+      const fotograma = (t: number) => {
+        w.__fotos.push({
+          t,
+          mesa: [...document.querySelectorAll(".pk-mesa-cartas [role=img]")].map((el) => el.getAttribute("aria-label") ?? ""),
+          jugada: texto(document.querySelector(".pk-jugada")),
+          pilaAna: texto([...document.querySelectorAll(".pk-asiento")].find((el) => el.textContent?.includes("Ana"))?.querySelector(".pk-pila b")),
+          miPila: texto(document.querySelector(".pk-mipila b")),
+          vuelos: document.querySelectorAll(".pk-vuelo").length,
+          cartel: document.querySelector(".cartel-premio") !== null,
+          volando: document.querySelectorAll(".fichas-volando__ficha").length,
+        });
+        requestAnimationFrame(fotograma);
+      };
+      requestAnimationFrame(fotograma);
+    });
+  }
+  const fotos = (pagina: Page): Promise<Foto[]> => pagina.evaluate(() => (window as unknown as { __fotos: Foto[] }).__fotos);
+
+  /** Cuenta cada fuente de sonido que arranca: el audio se despierta con un toque en la página. */
+  async function contarSonidos(pagina: Page): Promise<void> {
+    await pagina.addInitScript(() => {
+      const w = window as unknown as { __sonidos: number; __audio: AudioContext | null };
+      w.__sonidos = 0;
+      w.__audio = null;
+      const crear = AudioContext.prototype.createDynamicsCompressor;
+      AudioContext.prototype.createDynamicsCompressor = function (...args) {
+        w.__audio = this;
+        return crear.apply(this, args);
+      };
+      const arrancar = AudioScheduledSourceNode.prototype.start;
+      AudioScheduledSourceNode.prototype.start = function (...args) {
+        w.__sonidos++;
+        return arrancar.apply(this, args);
+      };
+    });
+  }
+  const sonidos = (pagina: Page) => pagina.evaluate(() => (window as unknown as { __sonidos: number }).__sonidos);
+  async function despertarAudio(pagina: Page): Promise<void> {
+    await pagina.locator("body").click({ position: { x: 5, y: 5 } });
+    await expect.poll(() => pagina.evaluate(() => (window as unknown as { __audio: AudioContext | null }).__audio?.state ?? "sin audio"), { timeout: 15_000 }).toBe("running");
+  }
+
+  /** Tú (asiento 1, con dos reyes) contra Ana, antes del flop, y los dos con 500 puestos: la mano acaba con todas las cartas por salir. */
+  const preflop = (sesion: RespuestaSesion, resto: Partial<VistaPoker> = {}) =>
+    vista(sesion, {
+      calle: "preflop",
+      mesa: [],
+      asientos: [asientoDe(0, { fichas: 0, apostado: 500, estado: "allin" }), miAsiento(sesion, 1, { fichas: 500, apostado: 400 })],
+      misCartas: [carta("KS"), carta("KD")],
+      turno: sesion.jugador.id,
+      botes: [{ cantidad: 30, jugadores: [] }],
+      ...resto,
+    });
+  /** El final de esa mano: gana `ganador` el bote entero. */
+  const finDeLaMano = (sesion: RespuestaSesion, ganador: number): VistaPoker => {
+    const mio = ganador === sesion.jugador.id;
+    return vista(sesion, {
+      fase: "resultado",
+      calle: "river",
+      finFase: Date.now() + POKER.RESULTADO_MS + 3 * POKER.CALLE_MS,
+      mesa: MESA_ENTERA,
+      asientos: [asientoDe(0, { fichas: mio ? 0 : 1030, estado: "allin", cartas: [carta("AS"), carta("QD")] }), miAsiento(sesion, 1, { fichas: mio ? 1430 : 400, estado: "allin", cartas: [carta("KS"), carta("KD")] })],
+      misCartas: [carta("KS"), carta("KD")],
+      botes: [{ cantidad: 1030, jugadores: [] }],
+      turno: null,
+    });
+  };
+  const eventosDelFinal = (sesion: RespuestaSesion, ganador: number): Evento[] => [
+    { tipo: "accion", jugadorId: sesion.jugador.id, accion: "igualar", cantidad: 100 },
+    { tipo: "cartas_ensenadas", jugadorId: 9001, cartas: [carta("AS"), carta("QD")] },
+    { tipo: "cartas_ensenadas", jugadorId: sesion.jugador.id, cartas: [carta("KS"), carta("KD")] },
+    ...CALLES,
+    { tipo: "bote_ganado", jugadorId: ganador, cantidad: 1030, indiceBote: 0 },
+  ];
+
+  test("las cartas de la mesa se ven en orden aunque la vista ya las traiga", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    mesa.alConectar(estado(preflop(sesion)));
+    await page.goto(`/p/${codigo}/poker`);
+    await expect(page.getByText("Pareja de reyes")).toBeVisible();
+    await muestrear(page);
+
+    mesa.enviar(estado(finDeLaMano(sesion, 9001), eventosDelFinal(sesion, 9001)));
+    await expect(page.getByRole("group", { name: "Cartas de la mesa" }).getByRole("img", { name: "3 de diamantes" })).toBeVisible();
+    await expect(page.locator(".pk-hueco")).toHaveCount(0);
+
+    const muestras = await fotos(page);
+    // Cada fotograma enseña un principio de la lista: ninguna carta se adelanta ni desaparece.
+    let antes = 0;
+    for (const { mesa: cartas } of muestras) {
+      expect(cartas).toEqual(NOMBRES_MESA.slice(0, cartas.length));
+      expect(cartas.length).toBeGreaterThanOrEqual(antes);
+      antes = cartas.length;
+    }
+    expect(muestras[0].mesa).toEqual([]);
+    // Se ven los pasos intermedios: la vista ya traía las cinco.
+    const cuando = (n: number) => muestras.find((m) => m.mesa.length >= n)!.t;
+    for (const n of [1, 2, 3, 4, 5]) expect(muestras.some((m) => m.mesa.length === n), `se ven ${n} cartas`).toBe(true);
+    expect(cuando(4) - cuando(1)).toBeGreaterThanOrEqual(POKER.CALLE_MS - 50);
+    expect(cuando(5) - cuando(4)).toBeGreaterThanOrEqual(POKER.CALLE_MS - 50);
+
+    // Tu jugada no adelanta una carta que aún no ha salido: el trío de reyes llega con el rey de corazones.
+    for (const m of muestras) expect(m.jugada, `con ${m.mesa.length} cartas en la mesa`).toBe(m.mesa.length === 0 ? "Pareja de reyes" : "Trío de reyes");
+  });
+
+  test("la tabla de jugadas no resalta una carta que aún no ha salido", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    mesa.alConectar(estado(preflop(sesion)));
+    await page.goto(`/p/${codigo}/poker`);
+    await boton(page, "Jugadas").click();
+    const resaltada = page.getByRole("dialog").locator("[aria-current=true]");
+    await expect(resaltada).toContainText("Pareja");
+
+    mesa.enviar(estado(finDeLaMano(sesion, 9001), eventosDelFinal(sesion, 9001)));
+    await expect(resaltada).toContainText("Pareja");
+    await expect(resaltada).toContainText("Trío");
+  });
+
+  test("la pila del ganador no sube antes de que vuelen las fichas", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    mesa.alConectar(estado(preflop(sesion)));
+    await page.goto(`/p/${codigo}/poker`);
+    await expect(page.getByText("Pareja de reyes")).toBeVisible();
+    await muestrear(page);
+
+    mesa.enviar(estado(finDeLaMano(sesion, 9001), eventosDelFinal(sesion, 9001)));
+    const pilaAna = page.locator(".pk-asiento", { hasText: "Ana" }).locator(".pk-pila");
+    await expect(pilaAna).toContainText("1.030");
+
+    const muestras = await fotos(page);
+    const subio = muestras.findIndex((m) => m.pilaAna === "1.030");
+    const ultimaCarta = muestras.findIndex((m) => m.mesa.length === 5);
+    // Ana seguía all-in hasta que le llegaron las fichas, después de la última carta y con el vuelo por medio.
+    expect(subio).toBeGreaterThan(ultimaCarta);
+    expect(muestras.slice(0, subio).every((m) => m.pilaAna === "All-in")).toBe(true);
+    expect(muestras.slice(ultimaCarta, subio).some((m) => m.vuelos > 0), "las fichas vuelan hacia Ana").toBe(true);
+    // Tú no ganas: ni cartel ni fichas que vuelen hacia ti.
+    expect(muestras.some((m) => m.cartel || m.volando > 0)).toBe(false);
+  });
+
+  test("si ganas, tu pila sube cuando llegan las fichas, con el cartel y las fichas volando", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    mesa.alConectar(estado(preflop(sesion)));
+    await page.goto(`/p/${codigo}/poker`);
+    await expect(page.getByText("Pareja de reyes")).toBeVisible();
+    await muestrear(page);
+
+    mesa.enviar(estado(finDeLaMano(sesion, sesion.jugador.id), eventosDelFinal(sesion, sesion.jugador.id)));
+    await expect(page.getByText("¡Ganas +1.030!")).toBeVisible();
+    await expect(page.locator(".pk-mipila")).toContainText("1.430");
+
+    const muestras = await fotos(page);
+    const subio = muestras.findIndex((m) => m.miPila === "1.430");
+    const cartel = muestras.findIndex((m) => m.cartel);
+    const ultimaCarta = muestras.findIndex((m) => m.mesa.length === 5);
+    expect(cartel).toBeGreaterThan(ultimaCarta);
+    expect(subio).toBeGreaterThan(cartel);
+    // Lo que pones al igualar sale de tu pila cuando vuelan las fichas: 500 → 400, sin pasar por el resultado.
+    expect(new Set(muestras.slice(0, subio).map((m) => m.miPila))).toEqual(new Set(["500", "400"]));
+    await expect.poll(async () => (await fotos(page)).some((m) => m.volando > 0)).toBe(true);
+  });
+
+  test("la mano se reparte una a una, el turno llega con las cartas y suena cada carta", async ({ page, request }) => {
+    await contarSonidos(page);
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    const sentados = [asientoDe(0, { apostado: 0 }), miAsiento(sesion, 1), asientoDe(2)];
+    mesa.alConectar(estado(vista(sesion, { fase: "esperando", calle: null, finFase: null, mesa: [], asientos: sentados, botes: [] })));
+    await page.goto(`/p/${codigo}/poker`);
+    await expect(asientosDeLaMesa(page)).toHaveCount(3);
+    await despertarAudio(page);
+    const antes = await sonidos(page);
+
+    const yo = sesion.jugador.id;
+    const eventos: Evento[] = [
+      { tipo: "mano_empezada", ronda: 1, boton: 0 },
+      { tipo: "ciega", jugadorId: yo, cantidad: 5 },
+      { tipo: "ciega", jugadorId: 9003, cantidad: 10 },
+      ...[yo, 9003, 9001, yo, 9003, 9001].map((a) => ({ tipo: "carta_repartida", a })),
+    ];
+    mesa.enviar(
+      estado(
+        tuTurno(sesion, { igualar: 5 }, { calle: "preflop", mesa: [], botes: [], asientos: [asientoDe(0), miAsiento(sesion, 1, { fichas: 995, apostado: 5 }), asientoDe(2, { fichas: 990, apostado: 10 })] }),
+        eventos,
+      ),
+    );
+    // Aún no se ha visto ninguna carta: no se puede decidir, y tu jugada no se ve.
+    await expect(boton(page, "Igualar 5")).toHaveCount(0);
+    await expect(page.getByText("Se reparte la mano")).toBeVisible();
+    await expect(page.getByText("Pareja de reyes")).toHaveCount(0);
+    // Dos ciegas y seis cartas.
+    await expect(boton(page, "Igualar 5")).toBeVisible();
+    await expect(page.getByText("Pareja de reyes")).toBeVisible();
+    await expect.poll(async () => (await sonidos(page)) - antes).toBeGreaterThanOrEqual(8);
+  });
+
+  test("recargar a mitad de mano: tus cartas, tu turno y Tapar siguen, sin animar ni sonar, y el panel de subir cerrado", async ({ page, request }) => {
+    await contarSonidos(page);
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    const mano = () => tuTurno(sesion, { pasar: true, subir: { min: 20, max: 980 } }, { mesa: MESA_FLOP });
+    mesa.alConectar(estado(mano()));
+    await page.goto(`/p/${codigo}/poker`);
+    await boton(page, "Tapar").click();
+    await boton(page, "Apostar").click();
+    await expect(panelSubir(page)).toBeVisible();
+
+    // Cada carta se anota desde el primer fotograma: si una volara o se fundiera, se vería aquí.
+    await page.addInitScript(() => {
+      const w = window as unknown as { __animadas: string[] };
+      w.__animadas = [];
+      const fotograma = () => {
+        for (const el of document.querySelectorAll(".naipe")) {
+          const estilo = getComputedStyle(el);
+          if (Number(estilo.opacity) < 1 || estilo.transform !== "none") w.__animadas.push(`${el.getAttribute("aria-label")}: ${estilo.opacity} ${estilo.transform}`);
+        }
+        if (document.querySelector(".pk-vuelo") !== null) w.__animadas.push("una ficha vuela");
+        requestAnimationFrame(fotograma);
+      };
+      requestAnimationFrame(fotograma);
+    });
+    await page.reload();
+
+    await expect(page.getByText("Tu turno")).toBeVisible();
+    await expect(page.getByRole("group", { name: "Tus cartas" }).getByRole("img", { name: "Carta boca abajo" })).toHaveCount(2);
+    await expect(page.getByRole("group", { name: "Cartas de la mesa" }).getByRole("img")).toHaveCount(3);
+    await expect(boton(page, "Pasar")).toBeEnabled();
+    await expect(boton(page, "Destapar")).toBeVisible();
+    await expect(panelSubir(page)).toHaveCount(0);
+    await page.waitForTimeout(600);
+    expect(await page.evaluate(() => (window as unknown as { __animadas: string[] }).__animadas)).toEqual([]);
+    expect(await sonidos(page)).toBe(0);
+  });
+
+  test("al reconectar a mitad del guion salta a la vista, sin animar lo que falta ni sonar", async ({ page, request }) => {
+    await contarSonidos(page);
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    mesa.alConectar(estado(preflop(sesion)));
+    await page.goto(`/p/${codigo}/poker`);
+    await expect(page.getByText("Pareja de reyes")).toBeVisible();
+    await despertarAudio(page);
+
+    const final = finDeLaMano(sesion, sesion.jugador.id);
+    mesa.alConectar(estado(final));
+    mesa.enviar(estado(final, eventosDelFinal(sesion, sesion.jugador.id)));
+    // Las primeras cartas aún no han salido cuando se cae la conexión.
+    await expect(page.locator(".pk-mesa-cartas [role=img]")).toHaveCount(0);
+    await mesa.cerrar(1012);
+    await expect(page.locator(".pk-mesa-cartas [role=img]")).toHaveCount(5);
+    await expect(page.locator(".pk-mipila")).toContainText("1.430");
+    const antes = await sonidos(page);
+    await page.waitForTimeout(POKER.CALLE_MS * 3);
+    expect(await sonidos(page)).toBe(antes);
+    await expect(page.locator(".cartel-premio")).toHaveCount(0);
+  });
+
+  test("si llega la mano siguiente a medias, manda la nueva", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    mesa.alConectar(estado(preflop(sesion)));
+    await page.goto(`/p/${codigo}/poker`);
+    await expect(page.getByText("Pareja de reyes")).toBeVisible();
+    await muestrear(page);
+
+    const yo = sesion.jugador.id;
+    mesa.enviar(estado(finDeLaMano(sesion, yo), eventosDelFinal(sesion, yo)));
+    // Sale la primera carta del flop y, a media calle, llega la mano siguiente.
+    await page.waitForFunction(() => document.querySelectorAll(".pk-mesa-cartas [role=img]").length > 0, undefined, { polling: "raf" });
+    mesa.enviar(
+      estado(
+        tuTurno(sesion, { igualar: 5 }, { ronda: 2, calle: "preflop", mesa: [], botes: [], misCartas: [carta("2S"), carta("7H")], asientos: [asientoDe(0, { fichas: 1020, apostado: 10 }), miAsiento(sesion, 1, { fichas: 1200, apostado: 5 })] }),
+        [
+          { tipo: "mano_empezada", ronda: 2, boton: 1 },
+          { tipo: "ciega", jugadorId: yo, cantidad: 5 },
+          { tipo: "ciega", jugadorId: 9001, cantidad: 10 },
+          ...[9001, yo, 9001, yo].map((a) => ({ tipo: "carta_repartida", a })),
+        ],
+      ),
+    );
+    await expect(page.locator(".pk-mesa-cartas [role=img]")).toHaveCount(0);
+    await expect(boton(page, "Igualar 5")).toBeVisible();
+    await page.waitForTimeout(POKER.CALLE_MS * 3);
+    await expect(page.locator(".pk-mipila")).toContainText("1.200");
+
+    const muestras = await fotos(page);
+    const vacia = muestras.findIndex((m, i) => i > 0 && m.mesa.length === 0 && muestras[i - 1].mesa.length > 0);
+    // La mano vieja no vuelve: ni más cartas de la mesa, ni el premio que le quedaba, ni su pila.
+    expect(muestras.slice(vacia).every((m) => m.mesa.length === 0)).toBe(true);
+    expect(muestras.some((m) => m.cartel)).toBe(false);
+    expect(muestras.some((m) => m.miPila === "1.430")).toBe(false);
+  });
+
+  test("las hojas de subir y añadir no se tocan cuando llega una vista", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    mesa.alConectar(estado(preflop(sesion, { turno: 9001, opciones: SIN_OPCIONES })));
+    await page.goto(`/p/${codigo}/poker`);
+    await boton(page, "Añadir fichas").click();
+    await boton(page, "Añadir 100").click();
+    await expect(boton(page, "Poner 100 en la mesa")).toBeVisible();
+    const hoja = await page.locator(".pk-hoja").elementHandle();
+
+    const yo = sesion.jugador.id;
+    mesa.enviar(estado(finDeLaMano(sesion, yo), eventosDelFinal(sesion, yo)));
+    await expect(page.locator(".cartel-premio")).toBeVisible();
+    await expect(boton(page, "Poner 100 en la mesa")).toBeVisible();
+    // Es la misma hoja, sin montarse otra vez, y nada la mueve.
+    expect(await hoja!.evaluate((el) => el.isConnected)).toBe(true);
+    expect(await hoja!.evaluate((el) => el.getAnimations({ subtree: true }).length)).toBe(0);
+  });
 });
