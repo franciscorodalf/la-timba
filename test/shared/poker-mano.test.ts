@@ -127,10 +127,10 @@ describe("póker: una mano", () => {
   it("quien ya cubre todos los all-in no decide: con 2 jugadores, la grande va all-in con 3 y la pequeña puso 5", () => {
     const e = mesaCon([3, 100], T0, 0);
     expect(e.boton).toBe(1);
-    expect(asiento(e, 1)).toMatchObject({ estado: "allin", aportado: 3 });
-    expect(asiento(e, 2)).toMatchObject({ estado: "juega", aportado: 5 });
     expect(e).toMatchObject({ fase: "resultado", turno: null });
     expect(e.mesa).toHaveLength(5);
+    // Solo se disputan 3 de cada uno: los otros 2 que puso la pequeña le vuelven.
+    expect(e.botes).toEqual([{ cantidad: 6, jugadores: [1, 2] }]);
   });
 
   it("quien ya cubre todos los all-in no decide: tampoco si los demás se retiran hasta él", () => {
@@ -150,9 +150,9 @@ describe("póker: una mano", () => {
     expect(opcionesDe(e, 2)).toEqual({ retirarse: true, pasar: false, igualar: 2, subir: null, ensenar: false });
     const { estado, eventos } = aplicar(e, 2, { t: "igualar" });
     expect(eventos[0]).toEqual({ tipo: "accion", jugadorId: 2, accion: "igualar", cantidad: 2 });
-    expect(asiento(estado, 2)).toMatchObject({ fichas: 93, aportado: 7 });
     expect(estado).toMatchObject({ fase: "resultado", turno: null });
     expect(estado.mesa).toHaveLength(5);
+    expect(estado.botes).toEqual([{ cantidad: 14, jugadores: [1, 2] }]);
   });
 
   it("con otro rival que aún juega se iguala la apuesta entera, aunque la grande sea corta", () => {
@@ -173,8 +173,9 @@ describe("póker: una mano", () => {
     expect(turno(estado)).toBe(2);
     expect(opcionesDe(estado, 2)).toEqual({ retirarse: true, pasar: false, igualar: 2, subir: null, ensenar: false });
     const fin = aplicar(estado, 2, { t: "igualar" }).estado;
-    expect(asiento(fin, 2).aportado).toBe(7);
     expect(fin).toMatchObject({ fase: "resultado", turno: null });
+    // Los 40 de quien se fue van al bote; el 2 solo tuvo que poner 7, como el 3.
+    expect(fin.botes).toEqual([{ cantidad: 54, jugadores: [2, 3] }]);
   });
 
   it("flop, turn y river queman una y abren 3, 1 y 1", () => {

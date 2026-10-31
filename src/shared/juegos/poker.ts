@@ -1,5 +1,6 @@
 import { barajar, crearBaraja, type Carta, type Rng } from "../cartas";
-import { calcularBotes, type Aporte, type Bote } from "./poker-botes";
+import { calcularBotes, repartirBote, type Aporte, type Bote } from "./poker-botes";
+import { compararJugadas, mejorJugada, type Jugada } from "./poker-jugadas";
 import type { CodigoError, Evento, Juego, JugadorId, LiquidacionPaso, Paso, ResumenMesa } from "./tipos";
 
 export const POKER = {
@@ -196,7 +197,10 @@ function rangoDeSubida(e: EstadoPoker, a: AsientoPoker): OpcionesPoker["subir"] 
 export function opcionesDe(e: EstadoPoker, jugadorId: JugadorId): OpcionesPoker | null {
   const a = asientoDe(e, jugadorId);
   if (a === undefined) return null;
-  if (e.fase !== "mano" || e.turno !== a.asiento) return { retirarse: false, pasar: false, igualar: null, subir: null, ensenar: false };
+  if (e.fase !== "mano" || e.turno !== a.asiento) {
+    const ensenar = e.fase === "resultado" && a.cartas.length > 0 && !a.ensenadas;
+    return { retirarse: false, pasar: false, igualar: null, subir: null, ensenar };
+  }
   const porIgualar = apuestaAIgualar(e, a) - a.apostado;
   return {
     retirarse: true,
@@ -230,19 +234,97 @@ function abrirCalle(e: EstadoPoker, siguiente: { calle: Calle; cartas: number },
   eventos.push({ tipo: "calle_abierta", calle: siguiente.calle, cartas });
 }
 
-/** Provisional hasta que se repartan los botes: la mano solo pasa a `resultado`. */
-function cerrarMano(e: EstadoPoker, ahora: number): void {
-  e.fase = "resultado";
-  e.turno = null;
-  e.finFase = ahora + POKER.RESULTADO_MS;
+/** Lo que ha puesto cada uno en la mano, también quienes ya se levantaron; `cuanto` dice qué parte cuenta. */
+function aportesDe(e: EstadoPoker, cuanto: (a: AsientoPoker) => number): Aporte[] {
+  const aportes: Aporte[] = e.asientos.filter((a) => a.estado !== "fuera").map((a) => ({ jugadorId: a.jugadorId, aportado: cuanto(a), vivo: sigueEnLaMano(a) }));
+  for (const { jugadorId, aportado } of e.abandonos) aportes.push({ jugadorId, aportado, vivo: false });
+  return aportes;
+}
+
+/** Las calles que aún no han salido, en orden. */
+function callesPorAbrir(e: EstadoPoker): { calle: Calle; cartas: number }[] {
+  const calles: { calle: Calle; cartas: number }[] = [];
+  for (let c = e.calle === null ? undefined : CALLES_SIGUIENTES[e.calle]; c !== undefined; c = CALLES_SIGUIENTES[c.calle]) calles.push(c);
+  return calles;
+}
+
+/** Quienes siguen en la mano en el orden de enseñar: desde quien hizo la última apuesta de la ronda o, sin ella, desde la izquierda del botón. */
+function ordenAlEnsenar(e: EstadoPoker): AsientoPoker[] {
+  const anterior = e.ultimoAgresor === null ? (e.boton as number) : e.ultimoAgresor - 1;
+  return asientosDesde(e, anterior).filter(sigueEnLaMano);
+}
+
+function ensenarCartas(a: AsientoPoker, eventos: Evento[]): void {
+  a.ensenadas = true;
+  eventos.push({ tipo: "cartas_ensenadas", jugadorId: a.jugadorId, cartas: a.cartas });
+}
+
+const jugadaDe = (e: EstadoPoker, a: AsientoPoker): Jugada => mejorJugada([...a.cartas, ...e.mesa]) as Jugada;
+
+/** Quienes se llevan un bote, ordenados desde la izquierda del botón: de ahí sale quién cobra la ficha impar. Sin rival no se compara nada. */
+function ganadoresDe(e: EstadoPoker, bote: Bote): JugadorId[] {
+  const aspirantes = asientosDesde(e, e.boton as number).filter((a) => bote.jugadores.includes(a.jugadorId));
+  if (aspirantes.length === 1) return [aspirantes[0].jugadorId];
+  const jugadas = aspirantes.map((a) => ({ jugadorId: a.jugadorId, jugada: jugadaDe(e, a) }));
+  const mejor = jugadas.reduce((m, x) => (compararJugadas(x.jugada, m) > 0 ? x.jugada : m), jugadas[0].jugada);
+  return jugadas.filter((x) => compararJugadas(x.jugada, mejor) === 0).map((x) => x.jugadorId);
+}
+
+/** Se enseña la mano que gana algún bote y la que gana o empata con la mejor enseñada hasta entonces; las demás, no. */
+function ensenarAlComparar(e: EstadoPoker, ganadores: Set<JugadorId>, eventos: Evento[]): void {
+  let mejor: Jugada | null = null;
+  for (const a of ordenAlEnsenar(e)) {
+    const jugada = jugadaDe(e, a);
+    const alcanza = mejor === null || compararJugadas(jugada, mejor) >= 0;
+    if (alcanza) mejor = jugada;
+    if (alcanza || ganadores.has(a.jugadorId)) ensenarCartas(a, eventos);
+  }
 }
 
 /**
- * Da la palabra al siguiente después del asiento `desde`. Si nadie tiene que hablar, se abre la calle siguiente (y otra
- * más, si tampoco entonces hay nada que apostar) hasta el river; la mano acaba tras él o si solo queda uno.
+ * Acaba la mano y paga. Lo que nadie iguala vuelve antes de nada. Si solo queda uno, gana sin enseñar. Si aún faltan cartas
+ * de la mesa es que ya no hay más apuestas posibles: se destapan todos y `resultado` se alarga para que dé tiempo a verlas salir.
+ * Tras el river, solo se enseña lo que marca `ensenarAlComparar`, aunque alguien esté all-in: no queda nada por destapar.
+ */
+function cerrarMano(e: EstadoPoker, ahora: number, eventos: Evento[]): void {
+  const { botes, devuelto } = calcularBotes(aportesDe(e, (a) => a.aportado));
+  if (devuelto !== null) {
+    asientoDe(e, devuelto.jugadorId)!.fichas += devuelto.cantidad;
+    eventos.push({ tipo: "bote_devuelto", ...devuelto });
+  }
+
+  const hayRivales = vivos(e).length > 1;
+  const porAbrir = hayRivales ? callesPorAbrir(e) : [];
+  if (porAbrir.length > 0) for (const a of ordenAlEnsenar(e)) ensenarCartas(a, eventos);
+  for (const calle of porAbrir) abrirCalle(e, calle, eventos);
+
+  const ganadores = botes.map((bote) => ganadoresDe(e, bote));
+  if (hayRivales && porAbrir.length === 0) ensenarAlComparar(e, new Set(ganadores.flat()), eventos);
+  botes.forEach((bote, indiceBote) => {
+    for (const { jugadorId, cantidad } of repartirBote(bote.cantidad, ganadores[indiceBote])) {
+      if (cantidad === 0) continue;
+      asientoDe(e, jugadorId)!.fichas += cantidad;
+      eventos.push({ tipo: "bote_ganado", jugadorId, cantidad, indiceBote });
+    }
+  });
+
+  for (const a of e.asientos) {
+    a.apostado = 0;
+    a.aportado = 0;
+  }
+  e.abandonos = [];
+  e.botes = botes;
+  e.fase = "resultado";
+  e.turno = null;
+  e.finFase = ahora + POKER.RESULTADO_MS + POKER.CALLE_MS * porAbrir.length;
+}
+
+/**
+ * Da la palabra al siguiente después del asiento `desde`. Si nadie tiene que hablar, se abre la calle siguiente; la mano
+ * acaba tras el river, si solo queda uno o si ya nadie puede apostar a nadie.
  */
 function darTurno(e: EstadoPoker, desde: number, ahora: number, eventos: Evento[]): void {
-  if (vivos(e).length <= 1) return cerrarMano(e, ahora);
+  if (vivos(e).length <= 1) return cerrarMano(e, ahora, eventos);
   let origen = desde;
   for (;;) {
     const siguiente = asientosDesde(e, origen).find((a) => debeHablar(e, a));
@@ -252,7 +334,7 @@ function darTurno(e: EstadoPoker, desde: number, ahora: number, eventos: Evento[
       return;
     }
     const calle = e.calle === null ? undefined : CALLES_SIGUIENTES[e.calle];
-    if (calle === undefined) return cerrarMano(e, ahora);
+    if (calle === undefined || e.asientos.filter((a) => a.estado === "juega").length <= 1) return cerrarMano(e, ahora, eventos);
     abrirCalle(e, calle, eventos);
     origen = e.boton as number;
   }
@@ -363,8 +445,12 @@ function anadir(e: EstadoPoker, jugadorId: JugadorId, fichas: number): Paso<Esta
   const a = asientoDe(s, jugadorId)!;
   a.comprado += fichas;
   a.porEntrar += fichas;
+  a.faltas = 0;
   return exito(s);
 }
+
+/** Todo lo que paga el libro de fichas al cerrar la sesión de `a`: lo que tenga en la mesa más lo añadido que aún no había entrado. */
+const liquidacionDe = (a: AsientoPoker): LiquidacionPaso => ({ ronda: a.sesion, filas: [{ jugadorId: a.jugadorId, apuesta: a.comprado, pago: a.fichas + a.porEntrar }] });
 
 /**
  * Levantarse liquida la sesión: vuelve lo que tenga en la mesa más lo añadido que aún no había entrado, y lo aportado a la
@@ -375,7 +461,7 @@ function levantarse(e: EstadoPoker, jugadorId: JugadorId, ahora: number): Paso<E
   if (!asientoDe(e, jugadorId)) return exito(e);
   const s = structuredClone(e);
   const a = asientoDe(s, jugadorId)!;
-  const liquidacion: LiquidacionPaso = { ronda: a.sesion, filas: [{ jugadorId, apuesta: a.comprado, pago: a.fichas + a.porEntrar }] };
+  const liquidacion = liquidacionDe(a);
   if (a.aportado > 0) s.abandonos.push({ jugadorId, aportado: a.aportado });
   s.asientos = s.asientos.filter((x) => x !== a);
 
@@ -410,7 +496,8 @@ function subir(e: EstadoPoker, a: AsientoPoker, hasta: number): void {
   e.ultimoAgresor = a.asiento;
 }
 
-function decidir(e: EstadoPoker, jugadorId: JugadorId, accion: Decision, ahora: number): Paso<EstadoPoker> {
+/** `faltas`, con las que se queda: decidir por tu cuenta las borra, y solo el tiempo que se acaba las suma. */
+function decidir(e: EstadoPoker, jugadorId: JugadorId, accion: Decision, ahora: number, faltas = 0): Paso<EstadoPoker> {
   if (e.fase !== "mano") return fallo("fase_incorrecta");
   if (e.turno !== asientoDe(e, jugadorId)!.asiento) return fallo("accion_invalida");
   const opciones = opcionesDe(e, jugadorId)!;
@@ -428,15 +515,65 @@ function decidir(e: EstadoPoker, jugadorId: JugadorId, accion: Decision, ahora: 
   if (accion.t === "igualar") poner(a, opciones.igualar!);
   if (accion.t === "subir") subir(s, a, accion.hasta);
   a.actuo = true;
+  a.faltas = faltas;
 
   const eventos: Evento[] = [{ tipo: "accion", jugadorId, accion: a.estado === "allin" ? "allin" : accion.t, cantidad: antes - a.fichas }];
   darTurno(s, a.asiento, ahora, eventos);
   return exito(s, eventos);
 }
 
-/** Solo vence la espera de quien está solo: te levanta y la mesa se duerme. */
-function tick(e: EstadoPoker, ahora: number): Paso<EstadoPoker> {
-  if (e.fase !== "esperando" || e.finFase === null || ahora < e.finFase) return exito(e);
+function ensenar(e: EstadoPoker, jugadorId: JugadorId): Paso<EstadoPoker> {
+  if (e.fase !== "resultado") return fallo("fase_incorrecta");
+  if (!opcionesDe(e, jugadorId)!.ensenar) return fallo("accion_invalida");
+  const s = structuredClone(e);
+  const a = asientoDe(s, jugadorId)!;
+  a.faltas = 0;
+  const eventos: Evento[] = [];
+  ensenarCartas(a, eventos);
+  return exito(s, eventos);
+}
+
+/** Se acabó el tiempo de quien tiene la palabra: pasa si puede y si no, se retira. Cuenta como una falta. */
+function agotarTurno(e: EstadoPoker, ahora: number): Paso<EstadoPoker> {
+  const a = e.asientos.find((x) => x.asiento === e.turno)!;
+  return decidir(e, a.jugadorId, { t: opcionesDe(e, a.jugadorId)!.pasar ? "pasar" : "retirarse" }, ahora, a.faltas + 1);
+}
+
+const noSigue = (a: AsientoPoker) => !a.conectado || a.faltas >= POKER.FALTAS_MAX || a.fichas + a.porEntrar === 0;
+
+/** Sin mano a la vista: nadie conserva cartas y quien queda solo tiene `POKER.SOLO_MS` para encontrar rival. */
+function pasarAEsperar(e: EstadoPoker, ahora: number): void {
+  e.fase = "esperando";
+  e.calle = null;
+  e.finFase = null;
+  e.baraja = [];
+  e.mesa = [];
+  e.botes = [];
+  for (const a of e.asientos) {
+    a.estado = "fuera";
+    a.cartas = [];
+    a.ensenadas = false;
+  }
+  esperarRival(e, ahora);
+}
+
+/** Se levantan aquí, y no al repartir, quienes no siguen: así ven el final de la mano. Después, otra mano si hay con quién. */
+function cerrarResultado(e: EstadoPoker, ahora: number, rng: Rng): Paso<EstadoPoker> {
+  const s = structuredClone(e);
+  const liquidaciones = s.asientos.filter(noSigue).map(liquidacionDe);
+  s.asientos = s.asientos.filter((a) => !noSigue(a));
+
+  const eventos: Evento[] = [];
+  if (s.asientos.filter(puedeJugar).length >= POKER.MIN_JUGADORES) empezarMano(s, ahora, rng, eventos);
+  else pasarAEsperar(s, ahora);
+  return liquidaciones.length > 0 ? { ok: true, estado: s, eventos, liquidaciones } : exito(s, eventos);
+}
+
+function tick(e: EstadoPoker, ahora: number, rng: Rng): Paso<EstadoPoker> {
+  if (e.finFase === null || ahora < e.finFase) return exito(e);
+  if (e.fase === "mano") return agotarTurno(e, ahora);
+  if (e.fase === "resultado") return cerrarResultado(e, ahora, rng);
+  // Vence la espera de quien está solo: te levanta y la mesa se duerme.
   return levantarse(e, e.asientos[0].jugadorId, ahora);
 }
 
@@ -452,11 +589,7 @@ function desconectar(e: EstadoPoker, jugadorId: JugadorId, ahora: number): Paso<
 /** Durante la mano no hay botes hechos: se enseña lo de las rondas cerradas y lo que dejaron quienes se fueron. */
 function botesALaVista(e: EstadoPoker): Bote[] {
   if (e.fase !== "mano") return e.botes;
-  const aportes: Aporte[] = e.asientos
-    .filter((a) => a.estado !== "fuera")
-    .map((a) => ({ jugadorId: a.jugadorId, aportado: a.aportado - a.apostado, vivo: sigueEnLaMano(a) }));
-  for (const { jugadorId, aportado } of e.abandonos) aportes.push({ jugadorId, aportado, vivo: false });
-  return calcularBotes(aportes).botes;
+  return calcularBotes(aportesDe(e, (a) => a.aportado - a.apostado)).botes;
 }
 
 /** Lo que ve `jugadorId`: nunca la baraja, ni las cartas quemadas, ni las de otro antes de enseñarse. */
@@ -545,8 +678,7 @@ export const poker: Omit<Juego<EstadoPoker, AccionPoker>, "id"> & { id: "poker" 
       case "subir":
         return decidir(e, jugadorId, accion, ahora);
       case "ensenar":
-        // Aún no hay manos que enseñar: llega con el final de la mano.
-        return fallo("accion_invalida");
+        return ensenar(e, jugadorId);
       default:
         return fallo("mensaje_invalido");
     }
