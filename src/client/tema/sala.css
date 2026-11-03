@@ -272,17 +272,6 @@
   filter: brightness(1.07);
 }
 
-.sala-mesa--proxima {
-  opacity: 0.45;
-  box-shadow: none;
-}
-
-.sala-mesa--proxima:hover {
-  transform: none;
-  border-color: rgba(212, 175, 55, 0.26);
-  box-shadow: none;
-}
-
 /* Esta noche. */
 .sala-ranking {
   display: flex;

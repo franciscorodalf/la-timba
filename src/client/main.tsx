@@ -34,6 +34,8 @@ import "./tema/mesa-carrera-caballos.css";
 import "./tema/mesa-carrera-carta.css";
 import "./tema/mesa-carrera-apuestas.css";
 import "./tema/mesa-carrera-ordenador.css";
+import "./tema/mesa-poker.css";
+import "./tema/tabla-jugadas.css";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

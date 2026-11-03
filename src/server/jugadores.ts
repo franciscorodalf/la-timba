@@ -77,6 +77,8 @@ const ESQUEMA = [
     victorias_blackjack INTEGER DEFAULT 0,
     partidas_carrera INTEGER DEFAULT 0,
     victorias_carrera INTEGER DEFAULT 0,
+    partidas_poker INTEGER DEFAULT 0,
+    victorias_poker INTEGER DEFAULT 0,
     creado_en INTEGER
   )`,
   // El historial: una fila por jugador y ronda. Nada lo lee durante el juego, así que no lleva índices.
@@ -96,6 +98,9 @@ const ESQUEMA = [
   "CREATE TABLE IF NOT EXISTS cobros_anulados (cobro_id TEXT PRIMARY KEY) WITHOUT ROWID",
   "CREATE TABLE IF NOT EXISTS intentos (apodo TEXT PRIMARY KEY COLLATE NOCASE, fallos INTEGER, bloqueado_hasta INTEGER)",
 ];
+
+/** Columnas nacidas después de la primera versión del esquema: las bases ya creadas las ganan al arrancar (`ponerAlDiaEsquema`). */
+const COLUMNAS_NUEVAS = ["partidas_poker", "victorias_poker"];
 
 /** Una consulta por orden que devuelve (id, apodo, valor) solo de los jugadores que clasifican en él. Todas leen solo `jugadores`. */
 const ORIGEN_RANKING: Record<OrdenRanking, string> = {
@@ -122,6 +127,8 @@ type FilaPerfil = FilaJugador & {
   victorias_blackjack: number;
   partidas_carrera: number;
   victorias_carrera: number;
+  partidas_poker: number;
+  victorias_poker: number;
 };
 
 type ResultadoEntrar =
@@ -183,6 +190,14 @@ async function intentarEntrar(sql: SqlStorage, apodo: string, pin: string, ahora
   return registrarFallo(sql, fila.apodo, ahora);
 }
 
+/** `CREATE TABLE IF NOT EXISTS` no toca una tabla que ya existe: lo que le falte a la de `jugadores` se añade aquí. */
+function ponerAlDiaEsquema(sql: SqlStorage): void {
+  const { sql: definicion } = sql.exec<{ sql: string }>("SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'jugadores'").one();
+  for (const columna of COLUMNAS_NUEVAS) {
+    if (!definicion.includes(columna)) sql.exec(`ALTER TABLE jugadores ADD COLUMN ${columna} INTEGER DEFAULT 0`);
+  }
+}
+
 /** El Durable Object `Jugadores`: una única instancia global. */
 export const jugadoresGlobal = (env: Env) => env.Jugadores.get(env.Jugadores.idFromName("global"));
 
@@ -205,6 +220,7 @@ export class Jugadores extends DurableObject<Env> {
     this.sql = ctx.storage.sql;
     void ctx.blockConcurrencyWhile(async () => {
       for (const sentencia of ESQUEMA) this.sql.exec(sentencia);
+      ponerAlDiaEsquema(this.sql);
     });
   }
 
@@ -283,6 +299,7 @@ export class Jugadores extends DurableObject<Env> {
       porJuego: {
         blackjack: { partidas: j.partidas_blackjack, victorias: j.victorias_blackjack },
         carrera: { partidas: j.partidas_carrera, victorias: j.victorias_carrera },
+        poker: { partidas: j.partidas_poker, victorias: j.victorias_poker },
       },
     };
   }
@@ -358,7 +375,10 @@ export class Jugadores extends DurableObject<Env> {
         const neto = pago - apuesta;
         const resultado = neto > 0 ? "gana" : neto < 0 ? "pierde" : "empata";
         const gana = resultado === "gana" ? 1 : 0;
+        // Cada una vale 1 en el juego de esta ronda y 0 en los demás.
         const blackjack = l.juego === "blackjack" ? 1 : 0;
+        const carrera = l.juego === "carrera" ? 1 : 0;
+        const poker = l.juego === "poker" ? 1 : 0;
         // En un UPDATE de SQLite todas las expresiones ven los valores anteriores de la fila. Empatar no toca la racha.
         const fila = this.sql
           .exec<{ apodo: string }>(
@@ -373,7 +393,9 @@ export class Jugadores extends DurableObject<Env> {
                partidas_blackjack = partidas_blackjack + ?,
                victorias_blackjack = victorias_blackjack + ?,
                partidas_carrera = partidas_carrera + ?,
-               victorias_carrera = victorias_carrera + ?
+               victorias_carrera = victorias_carrera + ?,
+               partidas_poker = partidas_poker + ?,
+               victorias_poker = victorias_poker + ?
              WHERE id = ? RETURNING apodo`,
             pago,
             resultado,
@@ -383,8 +405,10 @@ export class Jugadores extends DurableObject<Env> {
             Math.max(neto, 0),
             blackjack,
             blackjack * gana,
-            1 - blackjack,
-            (1 - blackjack) * gana,
+            carrera,
+            carrera * gana,
+            poker,
+            poker * gana,
             jugadorId,
           )
           .toArray()[0];

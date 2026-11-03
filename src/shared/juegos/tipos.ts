@@ -1,7 +1,7 @@
 import type { Rng } from "../cartas";
 
 export type JugadorId = number;
-export type IdJuego = "blackjack" | "carrera";
+export type IdJuego = "blackjack" | "carrera" | "poker";
 export interface Evento {
   tipo: string;
   [k: string]: unknown;
@@ -12,6 +12,8 @@ export interface FilaLiquidacion {
   apuesta: number;
   pago: number;
 }
+/** Lo que paga un cambio de una ronda; `visibleEn`, como en `Paso.liquidacion`. */
+export type LiquidacionPaso = { ronda: number; filas: FilaLiquidacion[]; visibleEn?: number };
 export type CodigoError =
   | "fase_incorrecta"
   | "apuesta_invalida"
@@ -19,6 +21,10 @@ export type CodigoError =
   | "mesa_llena"
   /** No queda ninguna casilla de apuesta libre en la mesa. */
   | "sin_casilla"
+  /** No queda ningún asiento libre en una mesa con asientos numerados (el póker). */
+  | "sin_asiento"
+  /** Sentarse y levantarse más de `POKER.SESIONES_POR_HORA` veces en una hora: protege la cuota diaria gratuita. */
+  | "demasiadas_sesiones"
   | "no_sentado"
   | "sin_fichas"
   | "demasiados_mensajes"
@@ -36,7 +42,9 @@ export type Paso<E> =
        * La ronda que cierra este cambio. Con `visibleEn`, su resultado no se ve hasta ese instante (lo anuncia el reloj): la
        * mesa la guarda ya, pero no la paga antes, para que las fichas no se adelanten a lo que se ve.
        */
-      liquidacion?: { ronda: number; filas: FilaLiquidacion[]; visibleEn?: number };
+      liquidacion?: LiquidacionPaso;
+      /** Cuando un mismo cambio cierra varias rondas: en el póker, cada jugador que se levanta tiene su sesión. */
+      liquidaciones?: LiquidacionPaso[];
       /**
        * Solo en un `tick`: el cambio aplica lo que el reloj ya trajo y ya se anunció (la vista y `eventosEntre` lo enseñaron a
        * su hora), sin nada que pagar. La mesa no lo guarda ni lo envía ahora: va con la siguiente escritura que haya, y si
@@ -64,7 +72,10 @@ export interface Juego<E extends { ronda: number }, A extends { t: string }> {
   sentar(e: E, jugadorId: JugadorId, apodo: string, ahora: number): Paso<E>;
   /** Fichas a cobrar antes de aplicar la acción. */
   costo(e: E, jugadorId: JugadorId, accion: A): number;
-  aplicar(e: E, jugadorId: JugadorId, accion: A, ahora: number, rng: Rng): Paso<E>;
+  /** La ronda a cuya cuenta se cobra esa acción. Sin este método, `e.ronda`. */
+  rondaDelCobro?(e: E, jugadorId: JugadorId, accion: A): number;
+  /** `apodo` es el del jugador que actúa: una acción puede ocupar un asiento, y su nombre no se le pide al cliente. */
+  aplicar(e: E, jugadorId: JugadorId, accion: A, ahora: number, rng: Rng, apodo?: string): Paso<E>;
   desconectar(e: E, jugadorId: JugadorId, ahora: number, rng: Rng): Paso<E>;
   /** No-op (ok, sin eventos) si `ahora < finFase`. */
   tick(e: E, ahora: number, rng: Rng): Paso<E>;

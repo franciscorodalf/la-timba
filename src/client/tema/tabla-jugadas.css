@@ -1,0 +1,124 @@
+/* Tabla de jugadas del póker: diálogo modal con las diez jugadas de mayor a menor y la tuya resaltada. */
+
+.tabla-jugadas {
+  width: min(92vw, 420px);
+  max-height: min(92dvh, 640px);
+  padding: 0;
+  border: 1px solid rgba(212, 175, 55, 0.5);
+  border-radius: 20px;
+  color: var(--crema);
+  background:
+    linear-gradient(160deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.015)),
+    #0b3a24;
+  box-shadow:
+    0 30px 80px rgba(0, 0, 0, 0.6),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.tabla-jugadas[open] {
+  display: flex;
+  flex-direction: column;
+  animation: aparecer 0.3s var(--curva) both;
+}
+
+.tabla-jugadas::backdrop {
+  background: rgba(2, 14, 8, 0.72);
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
+}
+
+.tabla-jugadas__cuerpo {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  gap: 6px;
+  min-height: 0;
+  padding: 12px 14px 14px;
+}
+
+.tabla-jugadas__cabeza {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.tabla-jugadas__titulo {
+  font-size: 1.25rem;
+  line-height: 1.2;
+}
+
+.tabla-jugadas__cerrar {
+  min-height: 44px;
+  padding: 0 16px;
+}
+
+/* Reserva el alto de «Tu turno 0:13» aunque no te toque, para que la tabla no salte cuando llega tu turno. */
+.tabla-jugadas__aviso {
+  display: flex;
+  align-items: center;
+  min-height: 24px;
+}
+
+.tabla-jugadas__lista {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.tabla-jugadas__fila {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  column-gap: 10px;
+  min-height: 42px;
+  padding: 4px 10px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.tabla-jugadas__nombre {
+  font: 600 0.9375rem/1.25 var(--fuente-titulo);
+}
+
+.tabla-jugadas__desc {
+  grid-column: 1;
+  color: var(--crema-tenue);
+  font-size: 0.78125rem;
+  line-height: 1.25;
+}
+
+/* La tuya: borde y fondo dorados, y el texto «tienes esta» a la derecha (no solo el color: se lee y se anuncia). */
+.tabla-jugadas__fila--tuya {
+  border-color: var(--oro);
+  background: rgba(212, 175, 55, 0.2);
+  box-shadow: inset 3px 0 0 var(--oro);
+}
+
+.tabla-jugadas__fila--tuya .tabla-jugadas__nombre {
+  color: var(--oro-claro);
+}
+
+.tabla-jugadas__tienes {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--oro);
+  color: var(--tinta);
+  font-size: 0.75rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tabla-jugadas[open] {
+    animation-duration: 0.2s;
+  }
+}

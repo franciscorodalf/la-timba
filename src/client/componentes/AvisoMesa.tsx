@@ -6,6 +6,8 @@ import { Aviso } from "./Aviso";
 const TEXTO_ERROR: Partial<Record<CodigoError, string>> = {
   sin_fichas: "No tienes fichas suficientes",
   sin_casilla: "Ya no quedan casillas libres",
+  sin_asiento: "La mesa está completa",
+  demasiadas_sesiones: "Has entrado y salido demasiadas veces. Espera un rato para volver a sentarte",
   descansando: MENSAJE_DESCANSANDO,
 };
 

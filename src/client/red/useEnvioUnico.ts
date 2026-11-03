@@ -15,6 +15,11 @@ export function useEnvioUnico(firma: string | null, error: CodigoError | null, c
   useEffect(() => {
     setEnviadoCon(null);
   }, [conectado]);
+  // Cuando lo tuyo ya ha cambiado, la espera se acaba para siempre: si más tarde vuelve a ser igual (te sientas, te levantas y
+  // vuelves a sentarte), no es la respuesta de aquel envío, y el botón no debe quedarse esperando.
+  useEffect(() => {
+    if (enviadoCon !== null && firma !== enviadoCon) setEnviadoCon(null);
+  }, [firma, enviadoCon]);
   const marcarEnviado = useCallback(() => setEnviadoCon(firma), [firma]);
   return { esperando: enviadoCon !== null && enviadoCon === firma, marcarEnviado };
 }

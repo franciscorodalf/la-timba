@@ -1,4 +1,4 @@
-import { type Ref, useState } from "react";
+import { type ReactNode, type Ref, useState } from "react";
 import { sonidos } from "../efectos/sonidos";
 import { useSesion } from "../red/sesion";
 import { Contador } from "./Contador";
@@ -10,6 +10,8 @@ interface Props {
   onVolver(): void;
   /** El contador de fichas, para que lleguen ahí las fichas que vuelan al ganar. */
   refFichas?: Ref<HTMLParagraphElement>;
+  /** Un control más de la mesa (el póker pone aquí «Jugadas»), a la izquierda del sonido. */
+  extra?: ReactNode;
 }
 
 const trazo = { fill: "none", stroke: "currentColor", strokeWidth: 1.9, strokeLinecap: "round", strokeLinejoin: "round" } as const;
@@ -35,16 +37,17 @@ function BotonSilencio() {
   );
 }
 
-/** La barra de arriba de una mesa: volver a la sala, el nombre de la mesa, el sonido y tus fichas (que cuentan al cambiar). */
-export function BarraMesa({ titulo, onVolver, refFichas }: Props) {
+/** La barra de arriba de una mesa: volver a la sala, el nombre de la mesa, lo extra que ponga la mesa, el sonido y tus fichas (que cuentan al cambiar). */
+export function BarraMesa({ titulo, onVolver, refFichas, extra }: Props) {
   const { jugador } = useSesion();
   return (
-    <header className="barra-mesa">
+    <header className={`barra-mesa${extra ? " barra-mesa--extra" : ""}`}>
       <button type="button" className="barra-mesa__volver" aria-label="Volver a la sala" onClick={onVolver}>
         <span aria-hidden="true">←</span> Sala
       </button>
       <h1 className="barra-mesa__titulo">{titulo}</h1>
       <div className="barra-mesa__derecha">
+        {extra}
         <BotonSilencio />
         <p className="barra-mesa__fichas" ref={refFichas}>
           <Ficha tamaño={20} />

@@ -7,6 +7,7 @@ import { Entrada } from "./pantallas/Entrada";
 import { Inicio } from "./pantallas/Inicio";
 import { MesaBlackjack } from "./pantallas/MesaBlackjack";
 import { MesaCarrera } from "./pantallas/MesaCarrera";
+import { MesaPoker } from "./pantallas/MesaPoker";
 import { Perfil } from "./pantallas/Perfil";
 import { Ranking } from "./pantallas/Ranking";
 import { Sala } from "./pantallas/Sala";
@@ -61,6 +62,9 @@ function LayoutPartida({ codigo }: { codigo: string }) {
         </Route>
         <Route path="/carrera">
           <MesaCarrera codigo={codigo} />
+        </Route>
+        <Route path="/poker">
+          <MesaPoker codigo={codigo} />
         </Route>
         <Route>
           <Redirect to="/" replace />

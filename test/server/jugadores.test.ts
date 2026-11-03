@@ -1,4 +1,4 @@
-import { runInDurableObject } from "cloudflare:test";
+import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { ORDENES_RANKING } from "../../src/shared/api";
@@ -656,7 +656,7 @@ describe("perfil", () => {
     expect(await nuevo().perfil(42)).toBeNull();
   });
 
-  it("sin partidas: todo a cero y ambos juegos presentes", async () => {
+  it("sin partidas: todo a cero y todos los juegos presentes", async () => {
     const j = nuevo();
     const id = await crear(j);
     expect(await j.perfil(id)).toEqual({
@@ -669,7 +669,7 @@ describe("perfil", () => {
       partidas: 0,
       gananciasTotales: 0,
       mayorPremio: 0,
-      porJuego: { blackjack: { partidas: 0, victorias: 0 }, carrera: { partidas: 0, victorias: 0 } },
+      porJuego: { blackjack: { partidas: 0, victorias: 0 }, carrera: { partidas: 0, victorias: 0 }, poker: { partidas: 0, victorias: 0 } },
     });
   });
 
@@ -703,8 +703,42 @@ describe("perfil", () => {
       partidas: 4,
       gananciasTotales: 250,
       mayorPremio: 300,
-      porJuego: { blackjack: { partidas: 2, victorias: 1 }, carrera: { partidas: 2, victorias: 1 } },
+      porJuego: { blackjack: { partidas: 2, victorias: 1 }, carrera: { partidas: 2, victorias: 1 }, poker: { partidas: 0, victorias: 0 } },
     });
+  });
+
+  it("una sesión de póker cuenta en partidas_poker, no en la carrera", async () => {
+    const j = nuevo();
+    const id = await crear(j);
+    await jugar(j, id, 100, 300, { juego: "poker" }); // +200
+    await jugar(j, id, 100, 40, { juego: "poker" }); // -60
+
+    expect(await j.perfil(id)).toMatchObject({
+      fichas: 1140,
+      partidas: 2,
+      gananciasTotales: 140,
+      mayorPremio: 200,
+      porJuego: { blackjack: { partidas: 0, victorias: 0 }, carrera: { partidas: 0, victorias: 0 }, poker: { partidas: 2, victorias: 1 } },
+    });
+  });
+
+  it("una base sin las columnas de póker las gana al arrancar", async () => {
+    const j = nuevo();
+    const id = await crear(j);
+    await jugar(j, id, 100, 300, { juego: "carrera" });
+    await runInDurableObject(j, (_i, state) => {
+      state.storage.sql.exec("ALTER TABLE jugadores DROP COLUMN partidas_poker");
+      state.storage.sql.exec("ALTER TABLE jugadores DROP COLUMN victorias_poker");
+    });
+
+    // Al arrancar de nuevo, la base ya creada gana las columnas y conserva lo que tenía.
+    await evictDurableObject(j);
+    expect((await j.perfil(id))!.porJuego).toEqual({ blackjack: { partidas: 0, victorias: 0 }, carrera: { partidas: 1, victorias: 1 }, poker: { partidas: 0, victorias: 0 } });
+    await jugar(j, id, 100, 200, { juego: "poker" });
+
+    // Y el siguiente arranque no las vuelve a añadir.
+    await evictDurableObject(j);
+    expect((await j.perfil(id))!.porJuego.poker).toEqual({ partidas: 1, victorias: 1 });
   });
 });
 

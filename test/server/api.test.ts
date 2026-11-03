@@ -216,7 +216,7 @@ describe("GET /api/yo", () => {
       partidas: 0,
       gananciasTotales: 0,
       mayorPremio: 0,
-      porJuego: { blackjack: { partidas: 0, victorias: 0 }, carrera: { partidas: 0, victorias: 0 } },
+      porJuego: { blackjack: { partidas: 0, victorias: 0 }, carrera: { partidas: 0, victorias: 0 }, poker: { partidas: 0, victorias: 0 } },
     });
   });
 

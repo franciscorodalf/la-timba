@@ -10,7 +10,7 @@ interface Props {
   resumen: ResumenMesa;
 }
 
-const NOMBRES: Record<IdJuego, string> = { blackjack: "Blackjack", carrera: "Carrera" };
+const NOMBRES: Record<IdJuego, string> = { blackjack: "Blackjack", carrera: "Carrera", poker: "Póker" };
 
 /** Cuántos avatares caben en la tarjeta antes de resumir el resto en «+N». */
 const AVATARES_VISIBLES = 5;
@@ -34,19 +34,30 @@ const FASES: Record<IdJuego, Record<string, TextoFase>> = {
     carrera: { cuenta: false, texto: () => "¡Corren los caballos!" },
     resultado: { cuenta: true, texto: (c) => <>Nueva carrera en {c}</> },
   },
+  poker: {
+    mano: { cuenta: false, texto: () => "Jugando" },
+    resultado: { cuenta: true, texto: (c) => <>Nueva mano en {c}</> },
+  },
 };
 const FASE_DESCONOCIDA: TextoFase = { cuenta: false, texto: () => "En juego" };
 
-/** Pica para el blackjack y herradura para la carrera. */
+/** Lo que dice la tarjeta de una mesa en `esperando`: libre, o con alguien sentado que espera apuestas (en póker, rivales). */
+export function textoDeEspera(juego: IdJuego, sentados: number): string {
+  if (sentados === 0) return "Mesa libre";
+  return juego === "poker" ? "Esperando rivales" : "Esperando apuestas";
+}
+
+/** Pica para el blackjack, herradura para la carrera y diamante para el póker. */
 function Icono({ juego }: { juego: IdJuego }) {
   return (
     <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true" focusable="false">
-      {juego === "blackjack" ? (
+      {juego === "blackjack" && (
         <path
           fill="currentColor"
           d="M12 2.5C12 2.5 4 8.6 4 13.6a4.2 4.2 0 0 0 7.2 2.9c-.1 1.7-.7 3.2-2.2 5h6c-1.5-1.8-2.1-3.3-2.2-5A4.2 4.2 0 0 0 20 13.6C20 8.6 12 2.5 12 2.5Z"
         />
-      ) : (
+      )}
+      {juego === "carrera" && (
         <>
           <path fill="none" stroke="currentColor" strokeWidth="3.6" strokeLinecap="round" d="M6.5 4.5v7a5.5 5.5 0 0 0 11 0v-7" />
           <g className="sala-mesa__clavos">
@@ -57,6 +68,7 @@ function Icono({ juego }: { juego: IdJuego }) {
           </g>
         </>
       )}
+      {juego === "poker" && <path fill="currentColor" d="M12 2.5 20 12l-8 9.5L4 12z" />}
     </svg>
   );
 }
@@ -70,7 +82,7 @@ export function TarjetaMesa({ juego, resumen }: Props) {
   const ahora = useAhoraServidor(conCuenta);
 
   let estado: ReactNode;
-  if (fase === "esperando") estado = jugadores.length === 0 ? "Mesa libre" : "Esperando apuestas";
+  if (fase === "esperando") estado = textoDeEspera(juego, jugadores.length);
   else estado = textoFase.texto(conCuenta ? <b className="sala-mesa__cuenta">{cuentaAtras(finFase - ahora)}</b> : null);
 
   return (

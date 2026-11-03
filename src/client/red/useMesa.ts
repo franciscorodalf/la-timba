@@ -69,7 +69,7 @@ export interface Mesa<V, A> {
  * Conexión con una mesa de la partida `codigo` (`/parties/<party>/<codigo>`). No supone que el primer mensaje sea la foto
  * inicial: cada `estado` trae la vista completa y sus eventos. Cada mensaje pone al día la hora del servidor.
  */
-export function useMesa<V, A extends { t: string }>(party: "mesa-blackjack" | "mesa-carrera", codigo: string): Mesa<V, A> {
+export function useMesa<V, A extends { t: string }>(party: "mesa-blackjack" | "mesa-carrera" | "mesa-poker", codigo: string): Mesa<V, A> {
   const [recibido, setRecibido] = useState<Recibido<V>>({ vista: null, lote: SIN_EVENTOS, n: 0 });
   const pintado = useRef(0);
   useLayoutEffect(() => {

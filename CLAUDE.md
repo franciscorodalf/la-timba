@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Qué es
 
-La Timba es una web gratuita para jugar a las cartas con amigos. Alguien crea una **partida** con un código de 4 caracteres, QR o enlace. Dentro hay una **mesa por juego** (ahora Blackjack y Carrera de caballos). Las fichas y el ranking son globales.
+La Timba es una web gratuita para jugar a las cartas con amigos. Alguien crea una **partida** con un código de 4 caracteres, QR o enlace. Dentro hay una **mesa por juego** (ahora Blackjack, Carrera de caballos y Póker). Las fichas y el ranking son globales.
 
 - **Despliegue:** un único Cloudflare Worker con Durable Objects (SQLite) en el **plan gratuito**.
 - **Producción:** https://la-timba.franteleco1278.workers.dev. Despliega el usuario con su cuenta; no despliegues tú.
@@ -13,6 +13,7 @@ La Timba es una web gratuita para jugar a las cartas con amigos. Alguien crea un
   - Plan original: `docs/superpowers/plans/2026-10-17-la-timba.md`
   - Spec del blackjack completo y de la carrera de seis tramos (amplía el anterior y, si chocan, manda): `docs/superpowers/specs/2026-10-29-blackjack-completo-design.md`, con su plan en `docs/superpowers/plans/2026-10-29-blackjack-completo.md`
   - Estado del desarrollo (qué queda y qué viene después): `docs/ESTADO.md`
+  - Spec del póker (amplía los anteriores y, si chocan, manda; incluye el límite de 10 sesiones por hora, `POKER.SESIONES_POR_HORA`, que protege la cuota diaria): `docs/superpowers/specs/2026-10-31-poker-design.md`, con su plan en `docs/superpowers/plans/2026-10-31-poker.md`
   - README de portfolio: `README.md`
 
 ## Comandos
@@ -54,16 +55,16 @@ npm run deploy                   # build + wrangler deploy (lo hace el usuario)
 
 - **`index.ts` (el Worker):**
   - Atiende `/api/*` con el mapa `RUTAS`.
-  - Atiende `/parties/*` solo para las salas permitidas en `RUTA_PARTY` (`partida`, `mesa-blackjack`, `mesa-carrera`), mediante `routePartykitRequest`. Antes, `onBeforeConnect` valida el token HMAC.
+  - Atiende `/parties/*` solo para las salas permitidas en `RUTA_PARTY` (`partida`, `mesa-blackjack`, `mesa-carrera`, `mesa-poker`), mediante `routePartykitRequest`. Antes, `onBeforeConnect` valida el token HMAC.
   - La identidad llega a los Durable Objects **solo** en las cabeceras `x-jugador-id` y `x-apodo` que pone el Worker. Las cabeceras `x-partykit-*` del cliente, `_pk` y `token` se eliminan.
   - El resto de rutas son la SPA, servida como estáticos.
 - **`Jugadores` (`jugadores.ts`):** una instancia global y la **única que toca las fichas**. Guarda perfiles, PIN (PBKDF2 con 10.000 iteraciones, por el límite de 10 ms de CPU del plan gratuito), bloqueos, el libro de apuestas, estadísticas en columnas de `jugadores` y rankings. Además aplica límites anti-abuso en memoria: registros por IP y partidas por jugador.
 - **`Partida` (`partida.ts`):** un objeto por código. Es la sala: quién está conectado, el resumen de cada mesa y el ranking de la noche (que se va sumando con lo que mandan las mesas). Se cierra tras 30 min sin nadie.
   - Los resúmenes viven solo en memoria y solo se escribe al cambiar el ranking. Si la sala sale de memoria, antes de enseñar nada le pregunta su resumen a cada mesa que no sepa (`Mesa.resumenSala`).
-- **`Mesa` (`mesa-base.ts`):** la clase genérica de las mesas. `MesaBlackjack` y `MesaCarrera` solo le dan su `juego`. Se encarga de:
+- **`Mesa` (`mesa-base.ts`):** la clase genérica de las mesas. `MesaBlackjack`, `MesaCarrera` y `MesaPoker` solo le dan su `juego`. Se encarga de:
   - una cola por mesa y aplicar `tick` antes de cada acción;
-  - el **cobro en dos fases**: guarda la intención (`cobroId`), llama a `Jugadores.apostar(…, rondaId, cobroId)` y confirma en la misma escritura que la jugada; los cobros a medias se anulan con `anular`;
-  - las liquidaciones idempotentes por `rondaId` (`${codigo}:${juego}:${ronda}`), que quedan pendientes y se reintentan si falla; una con `visibleEn` se guarda ya, pero se paga cuando se ve (o ya, si el juego no tiene más avisos por delante);
+  - el **cobro en dos fases**: guarda la intención (`cobroId`), llama a `Jugadores.apostar(…, rondaId, cobroId)` y confirma en la misma escritura que la jugada; los cobros a medias se anulan con `anular`. La ronda a la que se cobra es `e.ronda`, salvo que el juego defina `rondaDelCobro` (el póker cobra a cuenta de la sesión);
+  - las liquidaciones idempotentes por `rondaId` (`${codigo}:${juego}:${ronda}`), que quedan pendientes y se reintentan si falla. Un `Paso` lleva una `liquidacion` o, si varios jugadores cierran a la vez (los que se levantan al acabar una mano), una lista en `liquidaciones`; una con `visibleEn` se guarda ya, pero se paga cuando se ve (o ya, si el juego no tiene más avisos por delante);
   - lo que trae el reloj sin decisiones de nadie, desde memoria y sin escribir: los avisos (`proximoAviso`/`eventosEntre`) y los `tick` marcados `anunciado`, que guarda la siguiente escritura. La memoria puede ir por delante del almacenamiento, pero solo con lo que se puede rehacer igual;
   - las alarmas, el límite de mensajes, la pausa tras un `sin_fichas` (`PAUSA_SIN_FICHAS_MS`: las jugadas con coste de ese jugador se rechazan sin escribir ni preguntar), los avisos a la sala y las tramas de error.
 
@@ -71,7 +72,16 @@ npm run deploy                   # build + wrangler deploy (lo hace el usuario)
 
 - Son reductores puros que implementan `Juego<E, A>` de `tipos.ts`: `crear`, `sentar`, `costo`, `aplicar`, `desconectar`, `tick`, `proximaAlarma`, `vista` y `resumen`, más los opcionales `proximoAviso`, `eventosEntre` y `normalizar` (rellena en memoria lo que falte a un estado guardado por una versión anterior de las reglas; la mesa lo llama al cargar).
 - El tiempo y el azar entran como parámetros.
-- `vista(estado, jugador, ahora)` es lo único que sale del servidor. Nunca incluye información oculta: la baraja, la carta tapada de la banca o los pasos futuros de la carrera.
+- `vista(estado, jugador, ahora)` es lo único que sale del servidor. Nunca incluye información oculta: la baraja, la carta tapada de la banca, los pasos futuros de la carrera, las cartas quemadas y futuras del póker ni las de un jugador hasta que las enseña. Los eventos son iguales para todos: `carta_repartida` del póker no lleva la carta y cada uno ve las suyas en `misCartas`.
+- **Póker**, en tres módulos puros:
+  - `poker.ts` (`POKER` y el reductor): asientos, ciegas, rondas de apuestas, opciones, `tick`, faltas y desalojos, y la vista;
+  - `poker-jugadas.ts`: `mejorJugada`, `compararJugadas` y `nombreJugada`, que usan también la pantalla y la tabla de jugadas;
+  - `poker-botes.ts`: `calcularBotes` y `repartirBote` a partir de lo que aportó cada jugador (botes por nivel de all-in, lo que nadie iguala y la ficha impar).
+- **Fichas del póker:** las de la mesa se cobran al sentarte y vuelven al levantarte; durante las manos solo se mueven dentro del reductor, nunca en `Jugadores`.
+  - Cada vez que te sientas abres una **sesión**, y esa sesión es la ronda del libro (`${codigo}:poker:${sesion}`). Sentarse y `anadir` son cobros a cuenta de ella; levantarse la liquida con una fila (`apuesta` = todo lo comprado; `pago` = lo que queda en la mesa más lo añadido que aún no había entrado).
+  - Sus `apuestas_pendientes` siguen vivas mientras estás sentado, así que el rescate responde `apuestas_pendientes`.
+  - Cada sesión cuenta como una partida (`partidas_poker`, `victorias_poker`) y los rankings se actualizan al levantarte.
+  - Invariante: montones, `porEntrar`, lo aportado a la mano y `abandonos` suman lo comprado menos lo pagado.
 - La carrera se sortea entera al cerrar las apuestas. Sus pasos los anuncia un temporizador en memoria (`proximoAviso`/`eventosEntre`), sin escrituras.
 - La carrera tiene 6 tramos (`CARRERA.TRAMOS`), en las líneas 1 a 6. La línea 7 se dibuja sin carta: un tramo se gira cuando todos lo han pasado y llegar a la casilla 8 termina la carrera, así que un séptimo casi nunca podría girarse.
 - En el blackjack, la banca juega al cerrarse las decisiones y la ronda queda liquidada en esa escritura (fase `resultado`). La vista enseña la banca durante `BANCA_MS`, después el resultado y, al acabar, la ronda siguiente, todo desde memoria. En la banca, `resumen` devuelve `null` y la sala no se entera.
@@ -100,6 +110,11 @@ npm run deploy                   # build + wrangler deploy (lo hace el usuario)
     - `useEspacio.ts`: mide el hueco real entre los vecinos. Si tus manos no caben ahí, se colocan al fondo del tapete.
     - `controles.tsx`: los paneles `Apostar`, `Decidir` y `PanelSeguro`, y `textoEstado`.
   - Carrera: `pantallas/carrera/escena.ts` (`planDeLote`, puro; la carta de cada paso sale `REVELADO_MS` antes de que avance el caballo), `cola.ts` (una cola ordenada con un solo temporizador) y `useEscena`.
+  - Póker: `pantallas/poker/`.
+    - `guion.ts` (`guionDelLote`, puro: en qué momento sale cada carta y vuela cada ficha) y `useGuion` (lo anima y retiene de la vista lo que aún no se ha visto).
+    - `Tapete` y `Asiento`, con las posiciones de `asientos.ts` (en porcentaje del tapete).
+    - `MisCartas` (tus cartas, tu jugada y Tapar), `controles.tsx` (`Sentarse`, `Decidir`, `PanelSubir`, `AnadirFichas` y `textoEstado`) y `subir.ts` (los límites y la cantidad escrita).
+    - `TablaJugadas`: el diálogo con las diez jugadas y la tuya resaltada.
 - **Piezas de mesa compartidas** en `componentes/` y `efectos/`:
   - `FichasApuesta` (bandeja con «Todo») y `CasillaApuesta` (la pila en el tapete);
   - `CartelPremio`, `EstadoMesa`, `AvisoMesa`, `FichasVolando`, `BarraMesa` y `SinMesa`;
@@ -111,21 +126,21 @@ npm run deploy                   # build + wrangler deploy (lo hace el usuario)
 
 1. Escribe el reductor en `src/shared/juegos/<juego>.ts` y amplía `IdJuego` y `CodigoError` si hace falta.
 2. Crea `class MesaX extends Mesa` en `src/server/`.
-3. Añade el binding en `wrangler.jsonc`, con una **migración nueva** (`v2`, `new_sqlite_classes`). La `v1` ya está desplegada: no la edites.
+3. Añade el binding en `wrangler.jsonc`, con una **migración nueva** (`new_sqlite_classes`): la siguiente será `v3`. La `v1` y la `v2` (`MesaPoker`) no se editan.
 4. Añade el juego a `RUTA_PARTY` y a los resúmenes de `Partida`.
 5. Crea la pantalla en `src/client/pantallas/` y su ruta en `App.tsx`.
 
 ## Restricciones que no hay que romper
 
-- **Plan gratuito:** una noche típica (8 jugadores, 3 h) no puede pasar del **30 % de ningún límite diario** (filas escritas, peticiones, filas leídas). Lo vigila `test/server/presupuesto.test.ts`.
+- **Plan gratuito:** una noche típica (8 jugadores, 3 h) no puede pasar del **30 % de ningún límite diario** (filas escritas, peticiones, filas leídas). Lo vigila `test/server/presupuesto.test.ts`: con blackjack y carrera da el 27,2 % de las filas escritas y con blackjack y póker (330 rondas y 150 manos, unas 25 filas por mano), el 19,7 %.
   - Por eso la mesa guarda una sola clave por cambio, reprograma la alarma solo si cambia su hora y solo avisa a la sala cuando cambia lo que la sala enseña. Lo que trae el reloj sin decisiones no escribe.
   - Las lecturas de fichas, perfil y ranking son de coste constante, no recorren el historial.
 - **El libro de fichas tiene que cuadrar siempre**, también con reconexiones, desalojos, reintentos de alarmas y varias pestañas. No muevas fichas fuera de `Jugadores` ni te saltes el cobro en dos fases.
 - **El servidor manda:** el cliente solo envía intenciones. La reconexión a mitad de una ronda tiene que funcionar.
-- **Apuestas:** sin tope; desde 10 fichas hasta todas las tuyas. En el blackjack, cada casilla lleva su apuesta, y la segunda casilla, doblar, dividir y el seguro se cobran cada uno con su cobro en dos fases.
+- **Apuestas:** sin tope; desde 10 fichas hasta todas las tuyas. En el póker, lo mismo al sentarte (`COMPRA_MIN`) y al añadir. En el blackjack, cada casilla lleva su apuesta, y la segunda casilla, doblar, dividir y el seguro se cobran cada uno con su cobro en dos fases.
 
 ## E2E: mesas simuladas
 
 `e2e/ayudas.ts` tiene `entrarSimulada`, `simularMesa` y `mensajeEstado`. Con ellas una prueba sustituye el socket de la mesa por uno simulado (`routeWebSocket`) y manda vistas y eventos exactos. Así se prueban animaciones, errores y reconexiones de forma determinista.
 
-Los demás helpers son `registrar`, `apodoUnico`, `conSesion`, `abrirPartida` y `fichasDeApi`. Las pruebas «de verdad» (`registrar` y una partida real) se reservan para el flujo completo.
+Los demás helpers son `registrar`, `apodoUnico`, `conSesion`, `abrirPartida` y `fichasDeApi`. Las pruebas «de verdad» (`registrar` y una partida real) se reservan para el flujo completo; la del póker abre dos contextos de navegador, juega una mano y comprueba contra `/api/fichas` que las dos cuentas siguen sumando lo mismo.

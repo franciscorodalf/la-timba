@@ -5,7 +5,7 @@ export type ResultadoErrorRescate = { tipo: "aviso"; texto: string } | { tipo: "
 
 export function errorRescate(e: unknown): ResultadoErrorRescate {
   if (e instanceof ErrorApi && e.status === 409) {
-    if (e.error === "apuestas_pendientes") return { tipo: "aviso", texto: "Espera a que acabe tu ronda" };
+    if (e.error === "apuestas_pendientes") return { tipo: "aviso", texto: "Tienes fichas en juego: espera a que acabe tu ronda o levántate de la mesa de póker" };
     if (e.error === "tiene_fichas") return { tipo: "tiene_fichas" };
   }
   return { tipo: "aviso", texto: mensajeError(e) };

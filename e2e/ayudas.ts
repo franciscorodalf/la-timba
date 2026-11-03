@@ -49,7 +49,7 @@ export interface MesaSimulada<V> {
 }
 
 /** Intercepta el socket de la mesa `party` de esta página: nada llega al servidor; la prueba manda lo que quiera. */
-export async function simularMesa<V>(pagina: Page, party: "mesa-blackjack" | "mesa-carrera"): Promise<MesaSimulada<V>> {
+export async function simularMesa<V>(pagina: Page, party: "mesa-blackjack" | "mesa-carrera" | "mesa-poker"): Promise<MesaSimulada<V>> {
   let socket: WebSocketRoute | null = null;
   let inicial: MensajeMesa<V> | null = null;
   let cierre: number | null = null;
@@ -82,7 +82,7 @@ let version = 0;
 export const mensajeEstado = <V>(vista: V, eventos: Evento[] = []): MensajeMesa<V> => ({ t: "estado", version: ++version, ahora: Date.now(), vista, eventos });
 
 /** Registra un jugador, abre una partida, deja su sesión en el navegador e intercepta el socket de la mesa `party`. */
-export async function entrarSimulada<V>(pagina: Page, request: APIRequestContext, party: "mesa-blackjack" | "mesa-carrera") {
+export async function entrarSimulada<V>(pagina: Page, request: APIRequestContext, party: "mesa-blackjack" | "mesa-carrera" | "mesa-poker") {
   const sesion = await registrar(request, apodoUnico(), "1234");
   const codigo = await abrirPartida(request, sesion);
   await conSesion(pagina, sesion);
