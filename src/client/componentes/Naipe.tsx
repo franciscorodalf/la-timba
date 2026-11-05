@@ -155,15 +155,27 @@ export function Naipe({ carta, ancho, retardo = 0, origen = null, clave, espiand
     // Solo al aparecer: `entrada` no cambia y `reducido` cuenta como estaba en ese momento.
   }, []);
 
+  // Se gira en los dos sentidos (tus cartas del póker se pueden volver a tapar). Lo que deja Motion en línea pisaría a la regla
+  // de `.naipe--tapada`: al acabar, o al cortarse el giro por otro cambio, se quita y vuelve a mandar el CSS. Sin eso, una carta
+  // tapada tras un giro se quedaba de cara y en blanco, y una cortada a medio giro, de canto.
   useLayoutEffect(() => {
     const antes = estabaTapada.current;
     estabaTapada.current = tapada;
-    if (!antes || tapada) return;
-    if (reducido) {
-      if (cara.current) return detener(animar(cara.current, { opacity: [0, 1] }, { duration: FUNDIDO_S, ease: "easeOut" }));
-    } else if (giro.current) {
-      return detener(animar(giro.current, { transform: ["rotateY(180deg)", "rotateY(0deg)"] }, { duration: GIRO_S, ease: CURVA_GIRO }));
-    }
+    if (antes === tapada) return;
+    const el = reducido ? cara.current : giro.current;
+    if (el === null) return;
+    const limpiar = () => {
+      el.style.transform = "";
+      el.style.opacity = "";
+    };
+    const animacion = reducido
+      ? animar(el, { opacity: tapada ? [1, 0] : [0, 1] }, { duration: FUNDIDO_S, ease: "easeOut" })
+      : animar(el, { transform: tapada ? ["rotateY(0deg)", "rotateY(180deg)"] : ["rotateY(180deg)", "rotateY(0deg)"] }, { duration: GIRO_S, ease: CURVA_GIRO });
+    animacion.then(limpiar);
+    return () => {
+      animacion.stop();
+      limpiar();
+    };
   }, [tapada, reducido, animar]);
 
   // La tapada sube unos píxeles y baja. Se deja terminar sola: al acabar la mirada el valor vuelve a falso y pararla ahí la dejaría torcida.
@@ -176,7 +188,12 @@ export function Naipe({ carta, ancho, retardo = 0, origen = null, clave, espiand
     // Solo al empezar a espiar: el ancho es el de ese momento.
   }, [espiando]);
 
-  const Cara = carta !== null && caras !== null ? caras[codigoCarta(carta)] : undefined;
+  // Al taparse, la cara sigue pintada con la última carta: se ve mientras se da la vuelta y queda escondida detrás del reverso. Una
+  // carta que nunca se ha visto (la tapada de la banca, las de los demás) no tiene ninguna que recordar.
+  const ultimaCarta = useRef(carta);
+  if (carta !== null) ultimaCarta.current = carta;
+  const enLaCara = ultimaCarta.current;
+  const Cara = enLaCara !== null && caras !== null ? caras[codigoCarta(enLaCara)] : undefined;
   return (
     <div
       ref={caja}
@@ -188,7 +205,7 @@ export function Naipe({ carta, ancho, retardo = 0, origen = null, clave, espiand
     >
       <div ref={giro} className="naipe__giro">
         <div ref={cara} className="naipe__cara">
-          {carta !== null && caraLista && (Cara ? <Cara aria-hidden="true" focusable="false" /> : <CaraProvisional carta={carta} />)}
+          {enLaCara !== null && caraLista && (Cara ? <Cara aria-hidden="true" focusable="false" /> : <CaraProvisional carta={enLaCara} />)}
         </div>
         <Reverso />
       </div>

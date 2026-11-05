@@ -30,17 +30,19 @@ function clasesDe(a: AsientoVista, esYo: boolean, enTurno: boolean, lado: "izq" 
   if (a.estado === "retirado") clases.push("pk-asiento--retirado");
   if (a.estado === "fuera") clases.push("pk-asiento--fuera");
   if (!a.conectado) clases.push("pk-asiento--desconectado");
+  // Tus cartas solo se ven en tu asiento cuando las enseñas: entonces se dan la vuelta en el tapete, como las ven los demás.
+  if (esYo && a.cartas !== null) clases.push("pk-asiento--ensenadas");
   return clases.join(" ");
 }
 
 /**
  * Un asiento del tapete: la placa con el nombre (nunca con la cantidad), debajo dos cartas pequeñas boca abajo si sigue en la
  * mano (o las que haya enseñado) y debajo su pila de fichas con la cantidad. El botón del repartidor es una ficha con una D al lado.
- * Tus cartas grandes no van aquí: van debajo del tapete.
+ * Tus cartas grandes van debajo del tapete; aquí las tuyas siguen boca abajo y escondidas hasta que las enseñas, y entonces se giran.
  */
 export function Asiento({ colocado, esYo, enTurno, anchoCarta, ronda, reloj }: Props) {
   const { asiento: a, x, y } = colocado;
-  const cartas = a.cartas ?? (a.tieneCartas && !esYo ? [null, null] : null);
+  const cartas = a.cartas ?? (a.tieneCartas ? [null, null] : null);
   // Sin fichas y en la mano va all-in; al cobrar, aunque siga marcado así, ya enseña lo que tiene.
   const allin = a.estado === "allin" && a.fichas === 0;
   return (

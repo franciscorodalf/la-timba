@@ -31,7 +31,6 @@ import "./tema/resultado.css";
 import "./tema/mesa-blackjack.css";
 import "./tema/mesa-carrera.css";
 import "./tema/mesa-carrera-caballos.css";
-import "./tema/mesa-carrera-carta.css";
 import "./tema/mesa-carrera-apuestas.css";
 import "./tema/mesa-carrera-ordenador.css";
 import "./tema/mesa-poker.css";
