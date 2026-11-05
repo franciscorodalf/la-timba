@@ -45,6 +45,8 @@ interface Props {
   /** Si las tienes tapadas (el estado vive en la mesa, que también se lo pasa a la tabla de jugadas). */
   tapadas: boolean;
   onAlternar(): void;
+  /** Las has enseñado (o se enseñaron en el enfrentamiento): las ven todos. */
+  ensenadas: boolean;
   /** Tu pila en la mesa. */
   pila: number;
   /** Lo que has añadido y entra al empezar la mano siguiente. */
@@ -61,9 +63,9 @@ interface Props {
  * Debajo del tapete: tus cartas grandes y, al lado, tu pila, el nombre de tu jugada («Pareja de reyes») y «Tapar», que las da la
  * vuelta solo en tu pantalla y esconde también el texto. Sin cartas reserva su sitio (la mesa no salta cuando llega la mano).
  */
-export function MisCartas({ cartas, jugada, tapadas, onAlternar, pila, porEntrar, refPila, yo, ronda, reloj }: Props) {
+export function MisCartas({ cartas, jugada, tapadas, onAlternar, ensenadas, pila, porEntrar, refPila, yo, ronda, reloj }: Props) {
   return (
-    <div className="pk-mias" style={{ "--ancho-carta": `${ANCHO_CARTA}px` } as CSSProperties}>
+    <div className={`pk-mias${ensenadas ? " pk-mias--ensenadas" : ""}`} style={{ "--ancho-carta": `${ANCHO_CARTA}px` } as CSSProperties}>
       {cartas === null ? (
         <div className="pk-mias__cartas pk-mias__cartas--vacias" aria-hidden="true">
           <span className="pk-mias__hueco" />
@@ -82,6 +84,9 @@ export function MisCartas({ cartas, jugada, tapadas, onAlternar, pila, porEntrar
           <span>Tu pila</span> <b>{miles(pila)}</b>
         </p>
         {porEntrar > 0 && <p className="pk-mias__entra">+{miles(porEntrar)} en la próxima mano</p>}
+        <p className="pk-mias__ensenadas" role="status">
+          {ensenadas && cartas !== null ? "Enseñadas: las ven todos" : ""}
+        </p>
         {cartas !== null && (
           <>
             <p className="pk-jugada">{tapadas || jugada === null ? "" : nombreJugada(jugada)}</p>

@@ -732,6 +732,57 @@ test.describe("tus cartas", () => {
     await expect(page.getByRole("group", { name: "Tus cartas" }).getByRole("img", { name: "Rey de picas" })).toBeVisible();
   });
 
+  /** Qué lado se ve de cada una de tus cartas, mirando cómo ha quedado pintada (no su etiqueta): «reverso», «cara» o «canto» si está de lado. */
+  const ladosDeMisCartas = (pagina: Page) =>
+    pagina.locator(".pk-mias .naipe").evaluateAll((naipes) =>
+      naipes.map((naipe) => {
+        const giro = getComputedStyle(naipe.querySelector(".naipe__giro")!).transform;
+        const cara = Number(getComputedStyle(naipe.querySelector(".naipe__cara")!).opacity);
+        // El coseno del giro en Y: 1 de cara, −1 del revés y cerca de 0 de canto (invisible).
+        const coseno = giro === "none" ? 1 : new DOMMatrixReadOnly(giro).m11;
+        if (Math.abs(coseno) < 0.5) return "canto";
+        if (coseno < 0) return "reverso";
+        return cara > 0.5 ? "cara" : "reverso";
+      }),
+    );
+
+  test("taparlas después de destaparlas las deja boca abajo, sin quedarse en blanco ni de canto", async ({ page, request }) => {
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    mesa.alConectar(estado(tuTurno(sesion, { pasar: true }, { mesa: MESA_FLOP, misCartas: [carta("KS"), carta("KD")] })));
+    await page.goto(`/p/${codigo}/poker`);
+    await expect(page.getByText("Pareja de reyes")).toBeVisible();
+
+    // Tapar, destapar (se giran) y volver a tapar: tienen que verse del revés, no de cara y en blanco.
+    await boton(page, "Tapar").click();
+    await boton(page, "Destapar").click();
+    await expect.poll(() => ladosDeMisCartas(page)).toEqual(["cara", "cara"]);
+    await boton(page, "Tapar").click();
+    await expect.poll(() => ladosDeMisCartas(page)).toEqual(["reverso", "reverso"]);
+
+    // Tocarlo varias veces seguidas, en pleno giro, acaba siempre en el último estado y nunca de canto.
+    await boton(page, "Destapar").click();
+    await boton(page, "Tapar").click();
+    await boton(page, "Destapar").click();
+    await expect.poll(() => ladosDeMisCartas(page)).toEqual(["cara", "cara"]);
+    await boton(page, "Tapar").click();
+    await boton(page, "Destapar").click();
+    await boton(page, "Tapar").click();
+    await expect.poll(() => ladosDeMisCartas(page)).toEqual(["reverso", "reverso"]);
+  });
+
+  test("con movimiento reducido, taparlas después de destaparlas también las deja boca abajo", async ({ page, request }) => {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    const { sesion, codigo, mesa } = await entrarSimulada(page, request);
+    mesa.alConectar(estado(tuTurno(sesion, { pasar: true }, { mesa: MESA_FLOP, misCartas: [carta("KS"), carta("KD")] })));
+    await page.goto(`/p/${codigo}/poker`);
+    await expect(page.getByText("Pareja de reyes")).toBeVisible();
+    await boton(page, "Tapar").click();
+    await boton(page, "Destapar").click();
+    await expect.poll(() => ladosDeMisCartas(page)).toEqual(["cara", "cara"]);
+    await boton(page, "Tapar").click();
+    await expect.poll(() => ladosDeMisCartas(page)).toEqual(["reverso", "reverso"]);
+  });
+
   test("la jugada se calcula con las cartas de la mesa, y antes del flop es la que tienes en la mano", async ({ page, request }) => {
     const { sesion, codigo, mesa } = await entrarSimulada(page, request);
     mesa.alConectar(estado(tuTurno(sesion, { pasar: true }, { mesa: [], calle: "preflop", misCartas: [carta("AS"), carta("7D")] })));
@@ -769,9 +820,23 @@ test.describe("tus cartas", () => {
     await boton(page, "Enseñar mis cartas").click();
     await expect.poll(() => acciones(mesa)).toContainEqual({ t: "ensenar" });
 
-    // Ya enseñadas, el servidor deja de ofrecerlo.
-    mesa.enviar(estado(resultado(false)));
+    // Ya enseñadas, el servidor deja de ofrecerlo, y se nota: el aviso, el marco dorado y tus cartas boca arriba en tu asiento.
+    await expect(page.getByText("Enseñadas: las ven todos")).toHaveCount(0);
+    await expect(page.locator(".pk-asiento--yo .pk-cartas")).toBeHidden();
+    const ensenadas = tuTurno(
+      sesion,
+      { retirarse: false, ensenar: false },
+      { fase: "resultado", turno: null, mesa: [...MESA_FLOP, carta("KS"), carta("3D")].slice(0, 5), calle: "river", finFase: Date.now() + 6_000 },
+      { estado: "juega", apostado: 0, cartas: [carta("KS"), carta("KD")] },
+    );
+    mesa.enviar(estado(ensenadas, [{ tipo: "cartas_ensenadas", jugadorId: sesion.jugador.id, cartas: [carta("KS"), carta("KD")] }]));
     await expect(boton(page, /^Enseñar/, false)).toHaveCount(0);
+    await expect(page.getByText("Enseñadas: las ven todos")).toBeVisible();
+    await expect(page.locator(".pk-mias--ensenadas")).toHaveCount(1);
+    const miAsientoEnLaMesa = page.locator(".pk-asiento--yo .pk-cartas");
+    await expect(miAsientoEnLaMesa).toBeVisible();
+    await expect(miAsientoEnLaMesa.getByRole("img", { name: "Rey de picas" })).toBeVisible();
+    await expect(miAsientoEnLaMesa.getByRole("img", { name: "Rey de diamantes" })).toBeVisible();
     expect(acciones(mesa).filter((m) => m.t === "ensenar")).toHaveLength(1);
   });
 });

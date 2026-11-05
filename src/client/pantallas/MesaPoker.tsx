@@ -149,6 +149,7 @@ export function MesaPoker({ codigo }: { codigo: string }) {
               jugada={jugada}
               tapadas={tapadas}
               onAlternar={alternarTapadas}
+              ensenadas={mostrada?.asientos.find((a) => a.jugadorId === mio.jugadorId)?.cartas != null}
               pila={miPila}
               porEntrar={vista.porEntrar}
               refPila={refPila}
