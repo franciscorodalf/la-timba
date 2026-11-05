@@ -12,7 +12,7 @@ Notas para retomar el trabajo en local. Última actualización: 31/10/2026.
 | Tarea | Qué | Estado |
 |---|---|---|
 | 1 | Carrera con 6 tramos | hecha y revisada |
-| 2 | La carta de cada paso sale del mazo | hecha y revisada |
+| 2 | La carta de cada paso sale del mazo | deshecha el 05/11/2026: iba demasiado rápida y no se veía qué carta era |
 | 3 | Blackjack: 7 casillas, dos manos, una liquidación por jugador | hecha y revisada |
 | 4 | Seguro, la banca mira, rendirse | hecha y revisada |
 | 5 | Dividir | hecha y revisada |

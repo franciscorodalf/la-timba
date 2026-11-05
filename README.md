@@ -24,7 +24,7 @@ Una web para jugar a las cartas con amigos: **Blackjack**, **póker** (Texas Hol
    - **Dividir.** Dos cartas del mismo valor (10, J, Q y K valen 10) se separan en dos manos por otra apuesta igual, y la ventana se alarga 10 s. Cada jugador llega como mucho a 4 manos; con dos casillas, cada una se divide una vez. Los ases se dividen una sola vez, reciben una carta cada uno y se plantan solos.
    - **Rendirse.** Como primera decisión de una mano sin dividir: recuperas la mitad de la apuesta.
    - **Banca y pagos.** La banca pide hasta 17 y se planta en cualquier 17 o más. Ganar paga 1:1, blackjack natural 3:2 (un 21 tras dividir paga 1:1) y un empate devuelve la apuesta.
-5. **Carrera de caballos.** Los cuatro ases son los caballos. Apuesta durante 20 s a uno o a varios (desde 10 fichas, sin tope por caballo, hasta 12 jugadores). Cada 800 ms sale una carta del mazo, se gira en el centro de la pista y avanza el caballo de su palo. La pista tiene 6 tramos con una carta boca abajo: cuando todos los caballos pasan un tramo se gira su carta y el caballo de ese palo retrocede. Gana el primero que llega a la meta y paga ×4 (apuesta incluida).
+5. **Carrera de caballos.** Los cuatro ases son los caballos. Apuesta durante 20 s a uno o a varios (desde 10 fichas, sin tope por caballo, hasta 12 jugadores). Cada 800 ms se levanta una carta y avanza el caballo de su palo. La pista tiene 6 tramos con una carta boca abajo: cuando todos los caballos pasan un tramo se gira su carta y el caballo de ese palo retrocede. Gana el primero que llega a la meta y paga ×4 (apuesta incluida).
 6. **Póker.** Texas Hold'em sin límite, de 2 a 8 jugadores y con ciegas de 5/10. Entrar en la mesa no te sienta: miras hasta que pulsas «Sentarme» y eliges con cuántas fichas (desde 10 hasta todas las tuyas, sin máximo). Si llegas a mitad de una mano, esperas a la siguiente.
    - **La mano.** Empieza sola en cuanto hay dos jugadores sentados y conectados con fichas. Cada uno recibe dos cartas y hay cuatro rondas de apuestas (antes del flop, flop, turn y river). El botón avanza cada mano y las ciegas las ponen los dos siguientes (con dos jugadores, el botón pone la pequeña).
    - **Tu turno.** Tienes 20 s para *Retirarte*, *Pasar* o *Igualar*, y *Apostar* o *Subir*: un deslizador, − y + para afinar, la cantidad escrita o *All-in*. La subida mínima es lo que subió el anterior o, si nadie ha subido, la ciega grande. Si se acaba el tiempo pasas (o te retiras si no puedes pasar) y cuenta como una falta; con dos seguidas te levantas al acabar la mano.
@@ -38,7 +38,7 @@ Una web para jugar a las cartas con amigos: **Blackjack**, **póker** (Texas Hol
 - **Tres juegos** con reglas completas, temporizadores y reconexión: si se corta la conexión o cierras la pestaña a mitad de ronda, al volver (dentro de esa misma ronda) sigues en tu mesa con tu mano. En blackjack, mientras estás desconectado tus manos se plantan solas (y, si se corta durante el seguro, no lo coges), y quien sigue desconectado cuando acaba la ronda deja la mesa. En el póker, tu turno se resuelve por tiempo y, si sigues desconectado al acabar la mano, te levantas con tus fichas.
 - **Blackjack de casino**: hasta dos casillas por jugador y cuatro manos dividiendo, seguro, la banca que mira su carta, doblar, dividir y rendirse. Tus manos se encogen para caber en fila también en un móvil de 360 px.
 - **Texas Hold'em sin límite** con todas sus reglas: ciegas, subidas mínimas, all-in cortos que no reabren las apuestas, botes paralelos con empates y ficha impar, y las diez jugadas con sus desempates. Los rivales se sientan alrededor de un tapete ovalado, también en el móvil, con tu pila delante y tus cartas grandes debajo. La tabla de jugadas resalta la que llevas, y las cartas de los demás no salen del servidor hasta que se enseñan.
-- **Carrera de seis tramos**: la carta de cada paso se ve salir del mazo y girarse en el centro de la pista antes de que avance el caballo.
+- **Carrera de seis tramos**: cada tramo lleva su carta boca abajo, y todos se pueden llegar a girar.
 - **Partidas con código, QR y enlace**; la sala se cierra sola tras 30 minutos sin nadie.
 - **Fichas globales**: cada jugador tiene su propio saldo, el mismo en todas las partidas y mesas. En el póker, las fichas con las que te sientas salen de ese saldo y vuelven a él al levantarte.
 - **Ranking global** (fichas, ganancias, % de victorias, mayor premio, mejor racha y quiebras) y **ranking de cada noche**, además de un perfil con estadísticas por juego.
@@ -61,10 +61,10 @@ Una web para jugar a las cartas con amigos: **Blackjack**, **póker** (Texas Hol
   <img src="docs/capturas/carrera-ganador-escritorio.png" alt="Mesa de la carrera en el ordenador: gana el caballo de corazones y se cobra" width="48%">
 </p>
 
-Un paso de la carrera, fotograma a fotograma: sale un 8 de picas y se gira en el centro de la pista, su caballo avanza dejando estela, todos han pasado ya el tramo 2 y se gira su carta, un 7 de diamantes, así que el caballo de diamantes retrocede.
+Un paso de la carrera, fotograma a fotograma: sale un 8 de picas y su caballo avanza dejando estela, todos han pasado ya el tramo 2 y se gira su carta, un 7 de diamantes, así que el caballo de diamantes retrocede.
 
 <p align="center">
-  <img src="docs/capturas/carrera-paso.png" alt="Cuatro fotogramas de un paso de la carrera: la carta en el centro, avance de picas, giro del tramo y retroceso de diamantes" width="100%">
+  <img src="docs/capturas/carrera-paso.png" alt="Cuatro fotogramas de un paso de la carrera: avance de picas, giro del tramo y retroceso de diamantes" width="100%">
 </p>
 
 ## Arquitectura

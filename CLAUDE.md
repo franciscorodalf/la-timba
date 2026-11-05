@@ -109,7 +109,7 @@ npm run deploy                   # build + wrangler deploy (lo hace el usuario)
     - `useDeslizar.ts`: al dividir, las cartas se deslizan a su sitio nuevo sin desaparecer en ningún fotograma.
     - `useEspacio.ts`: mide el hueco real entre los vecinos. Si tus manos no caben ahí, se colocan al fondo del tapete.
     - `controles.tsx`: los paneles `Apostar`, `Decidir` y `PanelSeguro`, y `textoEstado`.
-  - Carrera: `pantallas/carrera/escena.ts` (`planDeLote`, puro; la carta de cada paso sale `REVELADO_MS` antes de que avance el caballo), `cola.ts` (una cola ordenada con un solo temporizador) y `useEscena`.
+  - Carrera: `pantallas/carrera/escena.ts` (`planDeLote`, puro), `cola.ts` (una cola ordenada con un solo temporizador) y `useEscena`.
   - Póker: `pantallas/poker/`.
     - `guion.ts` (`guionDelLote`, puro: en qué momento sale cada carta y vuela cada ficha) y `useGuion` (lo anima y retiene de la vista lo que aún no se ha visto).
     - `Tapete` y `Asiento`, con las posiciones de `asientos.ts` (en porcentaje del tapete).
